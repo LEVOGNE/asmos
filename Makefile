@@ -15,7 +15,8 @@ DISK_LABEL    := MONOLITH
 DEVICES := -device ramfb -device virtio-mouse-device -global virtio-mmio.force-legacy=false -drive file=$(DISK),if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 
 CHECK_SECONDS := 3
-CHECK_EXPECT  := asmos
+CHECK_EXPECT  := BOOT OK
+CHECK_FORBID  := PANIC
 CHECK_LOG     := serial.log
 SHOT          := screen.png
 
@@ -34,16 +35,16 @@ kernel.elf: kernel.o linker.ld
 kernel.bin: kernel.elf
 	$(OBJCOPY) -O binary $< $@
 
-run: kernel.elf
+run: kernel.bin
 	$(QEMU) -machine $(MACHINE) -cpu $(CPU) $(DEVICES) -serial stdio -kernel kernel.bin
 
-serial: kernel.elf
+serial: kernel.bin
 	$(QEMU) -machine $(MACHINE) -cpu $(CPU) $(DEVICES) -nographic -kernel kernel.bin
 
-debug: kernel.elf
+debug: kernel.bin
 	$(QEMU) -machine $(MACHINE) -cpu $(CPU) $(DEVICES) -nographic -kernel kernel.bin -s -S
 
-shot: kernel.elf
+shot: kernel.bin
 	@rm -f $(SHOT)
 	@( sleep 2; echo "screendump $(SHOT) -f png"; sleep 1; echo quit ) | \
 	  $(QEMU) -machine $(MACHINE) -cpu $(CPU) $(DEVICES) -display none -serial null -monitor stdio -kernel kernel.bin >/dev/null 2>&1
@@ -53,31 +54,36 @@ shot: kernel.elf
 	  echo "FEHLER: kein $(SHOT) erzeugt"; exit 1; \
 	fi
 
-check: kernel.elf
+check: kernel.bin
 	@rm -f $(CHECK_LOG)
 	@$(QEMU) -machine $(MACHINE) -cpu $(CPU) $(DEVICES) -display none -serial file:$(CHECK_LOG) -kernel kernel.bin & \
 	  QPID=$$!; sleep $(CHECK_SECONDS); kill $$QPID 2>/dev/null; wait $$QPID 2>/dev/null; true
 	@echo "--- $(CHECK_LOG) ---"
 	@cat $(CHECK_LOG) 2>/dev/null || echo "(leer)"
 	@echo "--------------------"
-	@if grep -q '$(CHECK_EXPECT)' $(CHECK_LOG) 2>/dev/null; then \
-	  echo "OK: '$(CHECK_EXPECT)' gefunden"; \
+	@if grep -qa '$(CHECK_FORBID)' $(CHECK_LOG) 2>/dev/null; then \
+	  echo "FEHLER: '$(CHECK_FORBID)' im Log"; exit 1; \
+	elif grep -qa '$(CHECK_EXPECT)' $(CHECK_LOG) 2>/dev/null; then \
+	  echo "OK: '$(CHECK_EXPECT)' erreicht, kein '$(CHECK_FORBID)'"; \
 	else \
-	  echo "FEHLER: '$(CHECK_EXPECT)' nicht in $(CHECK_LOG)"; exit 1; \
+	  echo "FEHLER: '$(CHECK_EXPECT)' nicht erreicht"; exit 1; \
 	fi
 
 disk:
 	@rm -f $(DISK)
 	@dd if=/dev/zero of=$(DISK) bs=1m count=$(DISK_MB) 2>/dev/null
 	@DEV=$$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage ./$(DISK) | head -1 | awk '{print $$1}'); \
-	  newfs_msdos -F 32 -v $(DISK_LABEL) $$DEV >/dev/null 2>&1; \
+	  if [ -z "$$DEV" ]; then echo "FEHLER: konnte $(DISK) nicht einbinden"; exit 1; fi; \
+	  newfs_msdos -F 32 -v $(DISK_LABEL) $$DEV >/dev/null 2>&1 || { hdiutil detach $$DEV >/dev/null 2>&1; echo "FEHLER: newfs_msdos"; exit 1; }; \
 	  hdiutil detach $$DEV >/dev/null 2>&1
-	@hdiutil attach ./$(DISK) >/dev/null 2>&1
-	@printf 'MONOLITH FAT32 TEST\nZeile zwei\n' > /Volumes/$(DISK_LABEL)/HELLO.TXT
-	@printf 'zweite datei\n' > /Volumes/$(DISK_LABEL)/DATA.BIN
-	@python3 -c "print(''.join('Zeile %04d ABCDEFGHIJKLMNOPQRSTUVWXYZ\n' % i for i in range(60)), end='')" > /Volumes/$(DISK_LABEL)/BIG.TXT
-	@hdiutil detach /Volumes/$(DISK_LABEL) >/dev/null 2>&1
-	@echo "OK: $(DISK) mit FAT32 und Testdateien erzeugt"
+	@MP=$$(hdiutil attach ./$(DISK) | grep -o '/Volumes/.*$$' | head -1); \
+	  if [ -z "$$MP" ] || [ ! -d "$$MP" ]; then echo "FEHLER: kein Einhängepunkt"; exit 1; fi; \
+	  printf 'asmos FAT32 TEST\nZeile zwei\n' > "$$MP/HELLO.TXT"; \
+	  printf 'zweite datei\n' > "$$MP/DATA.BIN"; \
+	  : > "$$MP/EMPTY.TXT"; \
+	  python3 -c "print(''.join('Zeile %04d ABCDEFGHIJKLMNOPQRSTUVWXYZ\n' % i for i in range(60)), end='')" > "$$MP/BIG.TXT"; \
+	  hdiutil detach "$$MP" >/dev/null 2>&1; \
+	  echo "OK: $(DISK) erzeugt, war eingebunden unter $$MP"
 
 dtb:
 	$(QEMU) -machine $(MACHINE),dumpdtb=virt.dtb -cpu $(CPU) -nographic

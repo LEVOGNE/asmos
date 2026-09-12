@@ -177,6 +177,11 @@
 .equ BPB_NUM_FATS,          0x10
 .equ BPB_SEC_PER_FAT32,     0x24
 .equ BPB_ROOT_CLUSTER,      0x2c
+.equ BPB_FAT_SZ16,          0x16
+.equ BPB_EXT_FLAGS,         0x28
+.equ EXT_FLAGS_NO_MIRROR,   0x80
+.equ EXT_FLAGS_ACTIVE,      0x0f
+.equ FAT_MIN_CLUSTER,       2
 .equ BPB_SIGNATURE,         0x1fe
 .equ BPB_SIG_VALUE,         0xaa55
 
@@ -279,6 +284,12 @@
 .equ FB_CFG_STRIDE,         24
 .equ FB_CFG_SIZE,           28
 
+.equ CLIP_X,                0
+.equ CLIP_Y,                4
+.equ CLIP_X2,               8
+.equ CLIP_Y2,               12
+.equ CLIP_SIZE,             16
+
 .equ CURSOR_STATE_X,        0
 .equ CURSOR_STATE_Y,        4
 .equ CURSOR_STATE_W,        8
@@ -295,6 +306,34 @@
 .equ CURSOR_W,              8
 .equ CURSOR_H,              12
 .equ CURSOR_BACKING_SIZE,   (CURSOR_W * CURSOR_H * FB_BPP)
+
+.equ WIN_X,                 0
+.equ WIN_Y,                 4
+.equ WIN_W,                 8
+.equ WIN_H,                 12
+.equ WIN_TITLE,             16
+.equ WIN_SIZE,              24
+.equ WIN_MAX,               8
+.equ WIN_BORDER,            2
+.equ WIN_TITLEBAR_H,        16
+.equ WIN_TEXT_PAD,          4
+
+.equ DIRTY_X,               0
+.equ DIRTY_Y,               4
+.equ DIRTY_X2,              8
+.equ DIRTY_Y2,              12
+.equ DIRTY_SIZE,            16
+.equ DIRTY_MAX,             16
+
+.equ WIN_FORCE_FULL,        0
+.equ FB_COUNT_PIXELS,       0
+.equ WIN_SELFTEST,          1
+
+.equ COLOR_WIN_BORDER,      0x00202830
+.equ COLOR_WIN_TITLE,       0x00384858
+.equ COLOR_WIN_TITLE_ACT,   0x00206090
+.equ COLOR_WIN_BODY,        0x00c8ccd0
+.equ COLOR_WIN_TEXT,        0x00ffffff
 
 .equ COLOR_CURSOR,          0x00ffffff
 .equ COLOR_BACKGROUND,      0x00102030
@@ -420,7 +459,11 @@ boot_el1_entry:
     mov     w0, #UART_INTID
     bl      gic_enable_irq
     bl      fb_init
-    bl      fb_testcard
+    bl      fb_clip_full
+    bl      win_demo
+.if WIN_SELFTEST
+    bl      win_selftest
+.endif
     bl      mouse_init
     bl      cursor_show
     bl      virtio_scan
@@ -433,6 +476,14 @@ boot_el1_entry:
     ladr    x0, fat_cat_label
     bl      uart_puts
     ladr    x0, fat_hello_name
+    bl      fat_cat
+    ladr    x0, fat_empty_label
+    bl      uart_puts
+    ladr    x0, fat_empty_name
+    bl      fat_cat
+    ladr    x0, fat_missing_label
+    bl      uart_puts
+    ladr    x0, fat_missing_name
     bl      fat_cat
 .endif
 .if FS_SELFTEST_BIG
@@ -450,6 +501,8 @@ boot_el1_entry:
     brk     #0
 .endif
 
+    ladr    x0, boot_ok_msg
+    bl      uart_puts
     b       console_run
 
 boot_clear_bss:
@@ -483,8 +536,8 @@ fwcfg_dma:
     str     x2, [x3, #8]
     rev     x4, x3
     mov     x5, #FWCFG_BASE
-    str     x4, [x5, #FWCFG_DMA]
     dsb     sy
+    str     x4, [x5, #FWCFG_DMA]
     ldr     x6, =FWCFG_TIMEOUT
 
 fwcfg_dma_wait:
@@ -619,6 +672,36 @@ fb_clear_loop:
     b.ne    fb_clear_loop
     ret
 
+fb_clip_full:
+    ladr    x0, fb_clip
+    str     wzr, [x0, #CLIP_X]
+    str     wzr, [x0, #CLIP_Y]
+    mov     w1, #FB_WIDTH
+    str     w1, [x0, #CLIP_X2]
+    mov     w1, #FB_HEIGHT
+    str     w1, [x0, #CLIP_Y2]
+    ret
+
+fb_clip_set:
+    ladr    x4, fb_clip
+    add     w2, w0, w2
+    add     w3, w1, w3
+    cmp     w0, wzr
+    csel    w0, wzr, w0, lt
+    cmp     w1, wzr
+    csel    w1, wzr, w1, lt
+    mov     w5, #FB_WIDTH
+    cmp     w2, w5
+    csel    w2, w5, w2, gt
+    mov     w5, #FB_HEIGHT
+    cmp     w3, w5
+    csel    w3, w5, w3, gt
+    str     w0, [x4, #CLIP_X]
+    str     w1, [x4, #CLIP_Y]
+    str     w2, [x4, #CLIP_X2]
+    str     w3, [x4, #CLIP_Y2]
+    ret
+
 fb_pixel_addr:
     mov     x9, #FB_STRIDE
     madd    x9, x1, x9, xzr
@@ -629,82 +712,135 @@ fb_pixel_addr:
 
 fb_fill_rect:
     stp     x29, x30, [sp, #-16]!
+    ladr    x9, fb_clip
+    add     w2, w0, w2
+    add     w3, w1, w3
+    ldr     w10, [x9, #CLIP_X]
+    cmp     w0, w10
+    csel    w0, w10, w0, lt
+    ldr     w10, [x9, #CLIP_Y]
+    cmp     w1, w10
+    csel    w1, w10, w1, lt
+    ldr     w10, [x9, #CLIP_X2]
+    cmp     w2, w10
+    csel    w2, w10, w2, gt
+    ldr     w10, [x9, #CLIP_Y2]
+    cmp     w3, w10
+    csel    w3, w10, w3, gt
+    subs    w2, w2, w0
+    b.le    fb_fill_rect_done
+    subs    w3, w3, w1
+    b.le    fb_fill_rect_done
+.if FB_COUNT_PIXELS
+    ladr    x9, fb_pixel_count
+    ldr     x10, [x9]
+    umull   x11, w2, w3
+    add     x10, x10, x11
+    str     x10, [x9]
+.endif
     bl      fb_pixel_addr
     mov     x5, x0
-    ldp     x29, x30, [sp], #16
 
 fb_fill_rect_row:
-    cbz     x3, fb_fill_rect_done
-    mov     x6, x2
+    cbz     w3, fb_fill_rect_done
+    mov     w6, w2
     mov     x7, x5
 
 fb_fill_rect_col:
-    cbz     x6, fb_fill_rect_next
+    cbz     w6, fb_fill_rect_next
     str     w4, [x7], #4
-    sub     x6, x6, #1
+    sub     w6, w6, #1
     b       fb_fill_rect_col
 
 fb_fill_rect_next:
     mov     x6, #FB_STRIDE
     add     x5, x5, x6
-    sub     x3, x3, #1
+    sub     w3, w3, #1
     b       fb_fill_rect_row
 
 fb_fill_rect_done:
+    ldp     x29, x30, [sp], #16
     ret
 
 fb_glyph:
-    stp     x29, x30, [sp, #-48]!
+    stp     x29, x30, [sp, #-96]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
     sub     w19, w2, #FONT_FIRST_CHAR
     cmp     w19, #FONT_CHAR_COUNT
     b.hs    fb_glyph_done
-    mov     w4, #(FB_WIDTH - FONT_WIDTH)
-    cmp     w0, w4
-    b.hi    fb_glyph_done
-    mov     w4, #(FB_HEIGHT - FONT_HEIGHT)
-    cmp     w1, w4
-    b.hi    fb_glyph_done
     mov     w20, w3
-    ladr    x21, font_data
-    add     x21, x21, x19, lsl #3
-    bl      fb_pixel_addr
-    mov     x22, x0
-    mov     w19, #0
+    mov     w21, w0
+    mov     w22, w1
+    ladr    x9, font_data
+    add     x19, x9, x19, lsl #3
+    ladr    x9, fb_clip
+    ldr     w10, [x9, #CLIP_X]
+    subs    w23, w10, w21
+    csel    w23, wzr, w23, lt
+    ldr     w10, [x9, #CLIP_X2]
+    sub     w24, w10, w21
+    mov     w11, #FONT_WIDTH
+    cmp     w24, w11
+    csel    w24, w11, w24, gt
+    cmp     w23, w24
+    b.ge    fb_glyph_done
+    ldr     w10, [x9, #CLIP_Y]
+    subs    w25, w10, w22
+    csel    w25, wzr, w25, lt
+    ldr     w10, [x9, #CLIP_Y2]
+    sub     w26, w10, w22
+    mov     w11, #FONT_HEIGHT
+    cmp     w26, w11
+    csel    w26, w11, w26, gt
+    cmp     w25, w26
+    b.ge    fb_glyph_done
 
 fb_glyph_row:
-    cmp     w19, #FONT_HEIGHT
+    cmp     w25, w26
     b.hs    fb_glyph_done
-    ldrb    w0, [x21, w19, uxtw]
-    mov     w1, #0
-    mov     x2, x22
+    ldrb    w0, [x19, w25, uxtw]
+    mov     w1, w23
 
 fb_glyph_col:
-    cmp     w1, #FONT_WIDTH
+    cmp     w1, w24
     b.hs    fb_glyph_next
-    mov     w3, #(FONT_WIDTH - 1)
-    sub     w3, w3, w1
-    lsr     w4, w0, w3
-    tst     w4, #1
+    mov     w2, #(FONT_WIDTH - 1)
+    sub     w2, w2, w1
+    lsr     w3, w0, w2
+    tst     w3, #1
     b.eq    fb_glyph_skip
-    str     w20, [x2]
+    add     w2, w21, w1
+    add     w3, w22, w25
+    stp     x0, x1, [sp, #80]
+    mov     w0, w2
+    mov     w1, w3
+    bl      fb_pixel_addr
+    str     w20, [x0]
+.if FB_COUNT_PIXELS
+    ladr    x2, fb_pixel_count
+    ldr     x3, [x2]
+    add     x3, x3, #1
+    str     x3, [x2]
+.endif
+    ldp     x0, x1, [sp, #80]
 
 fb_glyph_skip:
-    add     x2, x2, #FB_BPP
     add     w1, w1, #1
     b       fb_glyph_col
 
 fb_glyph_next:
-    mov     x3, #FB_STRIDE
-    add     x22, x22, x3
-    add     w19, w19, #1
+    add     w25, w25, #1
     b       fb_glyph_row
 
 fb_glyph_done:
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #48
+    ldp     x29, x30, [sp], #96
     ret
 
 fb_text:
@@ -783,9 +919,9 @@ cursor_show:
     stp     x21, x22, [sp, #32]
     str     x23, [sp, #48]
     ladr    x19, cursor_state
-    ladr    x0, mouse_x
-    ldr     w20, [x0]
-    ldr     w21, [x0, #4]
+    bl      mouse_get_pos
+    mov     w20, w0
+    mov     w21, w1
     mov     w0, #FB_WIDTH
     sub     w22, w0, w20
     mov     w0, #CURSOR_W
@@ -864,6 +1000,307 @@ cursor_update:
     bl      cursor_show
     ldp     x29, x30, [sp], #16
     ret
+
+dirty_reset:
+    ladr    x9, dirty_count
+    str     wzr, [x9]
+    strb    wzr, [x9, #4]
+    ret
+
+dirty_all:
+    ladr    x9, dirty_count
+    str     wzr, [x9]
+    mov     w10, #1
+    strb    w10, [x9, #4]
+    ret
+
+dirty_add:
+    ladr    x9, dirty_count
+    ldrb    w10, [x9, #4]
+    cbnz    w10, dirty_add_done
+    add     w2, w0, w2
+    add     w3, w1, w3
+    ldr     w10, [x9]
+    ladr    x11, dirty_list
+    mov     w12, #0
+
+dirty_add_merge:
+    cmp     w12, w10
+    b.hs    dirty_add_new
+    mov     x13, #DIRTY_SIZE
+    madd    x13, x12, x13, x11
+    ldr     w14, [x13, #DIRTY_X]
+    cmp     w2, w14
+    b.le    dirty_add_next
+    ldr     w15, [x13, #DIRTY_X2]
+    cmp     w0, w15
+    b.ge    dirty_add_next
+    ldr     w14, [x13, #DIRTY_Y]
+    cmp     w3, w14
+    b.le    dirty_add_next
+    ldr     w15, [x13, #DIRTY_Y2]
+    cmp     w1, w15
+    b.ge    dirty_add_next
+    ldr     w14, [x13, #DIRTY_X]
+    cmp     w0, w14
+    csel    w0, w0, w14, lt
+    str     w0, [x13, #DIRTY_X]
+    ldr     w14, [x13, #DIRTY_Y]
+    cmp     w1, w14
+    csel    w1, w1, w14, lt
+    str     w1, [x13, #DIRTY_Y]
+    ldr     w14, [x13, #DIRTY_X2]
+    cmp     w2, w14
+    csel    w2, w2, w14, gt
+    str     w2, [x13, #DIRTY_X2]
+    ldr     w14, [x13, #DIRTY_Y2]
+    cmp     w3, w14
+    csel    w3, w3, w14, gt
+    str     w3, [x13, #DIRTY_Y2]
+    ret
+
+dirty_add_next:
+    add     w12, w12, #1
+    b       dirty_add_merge
+
+dirty_add_new:
+    cmp     w10, #DIRTY_MAX
+    b.hs    dirty_add_overflow
+    mov     x13, #DIRTY_SIZE
+    madd    x13, x10, x13, x11
+    str     w0, [x13, #DIRTY_X]
+    str     w1, [x13, #DIRTY_Y]
+    str     w2, [x13, #DIRTY_X2]
+    str     w3, [x13, #DIRTY_Y2]
+    add     w10, w10, #1
+    str     w10, [x9]
+
+dirty_add_done:
+    ret
+
+dirty_add_overflow:
+    str     wzr, [x9]
+    mov     w10, #1
+    strb    w10, [x9, #4]
+    ret
+
+win_dirty_rect:
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x0, x10, x9
+    ldr     w0, [x9, #WIN_X]
+    ldr     w1, [x9, #WIN_Y]
+    ldr     w2, [x9, #WIN_W]
+    ldr     w3, [x9, #WIN_H]
+    b       dirty_add
+
+win_repaint:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+.if WIN_FORCE_FULL
+    bl      dirty_all
+.endif
+    ladr    x19, dirty_count
+    ldrb    w0, [x19, #4]
+    cbnz    w0, win_repaint_full
+    ldr     w20, [x19]
+    cbz     w20, win_repaint_end
+    mov     w19, #0
+
+win_repaint_loop:
+    cmp     w19, w20
+    b.hs    win_repaint_end
+    ladr    x9, dirty_list
+    mov     x10, #DIRTY_SIZE
+    madd    x9, x19, x10, x9
+    ldr     w0, [x9, #DIRTY_X]
+    ldr     w1, [x9, #DIRTY_Y]
+    ldr     w2, [x9, #DIRTY_X2]
+    ldr     w3, [x9, #DIRTY_Y2]
+    sub     w2, w2, w0
+    sub     w3, w3, w1
+    bl      fb_clip_set
+    bl      win_draw_all
+    add     w19, w19, #1
+    b       win_repaint_loop
+
+win_repaint_full:
+    bl      fb_clip_full
+    bl      win_draw_all
+
+win_repaint_end:
+    bl      fb_clip_full
+    bl      dirty_reset
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+win_move:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     w19, w0
+    mov     w20, w1
+    mov     w21, w2
+    bl      win_dirty_rect
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x19, x10, x9
+    ldr     w0, [x9, #WIN_X]
+    add     w0, w0, w20
+    str     w0, [x9, #WIN_X]
+    ldr     w0, [x9, #WIN_Y]
+    add     w0, w0, w21
+    str     w0, [x9, #WIN_Y]
+    mov     w0, w19
+    bl      win_dirty_rect
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+win_add:
+    ladr    x9, win_count
+    ldr     w10, [x9]
+    cmp     w10, #WIN_MAX
+    b.hs    win_add_done
+    ladr    x11, win_list
+    mov     x12, #WIN_SIZE
+    madd    x11, x10, x12, x11
+    str     w0, [x11, #WIN_X]
+    str     w1, [x11, #WIN_Y]
+    str     w2, [x11, #WIN_W]
+    str     w3, [x11, #WIN_H]
+    str     x4, [x11, #WIN_TITLE]
+    add     w10, w10, #1
+    str     w10, [x9]
+
+win_add_done:
+    ret
+
+win_draw_one:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    ladr    x19, win_list
+    mov     x9, #WIN_SIZE
+    madd    x19, x0, x9, x19
+    mov     w20, w1
+    ldr     w0, [x19, #WIN_X]
+    ldr     w1, [x19, #WIN_Y]
+    ldr     w2, [x19, #WIN_W]
+    ldr     w3, [x19, #WIN_H]
+    ldr     w4, =COLOR_WIN_BORDER
+    bl      fb_fill_rect
+    ldr     w0, [x19, #WIN_X]
+    add     w0, w0, #WIN_BORDER
+    ldr     w1, [x19, #WIN_Y]
+    add     w1, w1, #WIN_BORDER
+    ldr     w2, [x19, #WIN_W]
+    sub     w2, w2, #(WIN_BORDER * 2)
+    mov     w3, #WIN_TITLEBAR_H
+    cbz     w20, win_draw_one_inactive
+    ldr     w4, =COLOR_WIN_TITLE_ACT
+    b       win_draw_one_title
+
+win_draw_one_inactive:
+    ldr     w4, =COLOR_WIN_TITLE
+
+win_draw_one_title:
+    bl      fb_fill_rect
+    ldr     w0, [x19, #WIN_X]
+    add     w0, w0, #WIN_BORDER
+    ldr     w1, [x19, #WIN_Y]
+    add     w1, w1, #(WIN_BORDER + WIN_TITLEBAR_H)
+    ldr     w2, [x19, #WIN_W]
+    sub     w2, w2, #(WIN_BORDER * 2)
+    ldr     w3, [x19, #WIN_H]
+    sub     w3, w3, #(WIN_BORDER * 2 + WIN_TITLEBAR_H)
+    ldr     w4, =COLOR_WIN_BODY
+    bl      fb_fill_rect
+    ldr     w0, [x19, #WIN_X]
+    add     w0, w0, #(WIN_BORDER + WIN_TEXT_PAD)
+    ldr     w1, [x19, #WIN_Y]
+    add     w1, w1, #(WIN_BORDER + WIN_TEXT_PAD)
+    ldr     x2, [x19, #WIN_TITLE]
+    ldr     w3, =COLOR_WIN_TEXT
+    bl      fb_text
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+win_draw_all:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    mov     w0, #0
+    mov     w1, #0
+    mov     w2, #FB_WIDTH
+    mov     w3, #FB_HEIGHT
+    ldr     w4, =COLOR_BACKGROUND
+    bl      fb_fill_rect
+    ladr    x9, win_count
+    ldr     w20, [x9]
+    mov     w19, #0
+
+win_draw_all_loop:
+    cmp     w19, w20
+    b.hs    win_draw_all_done
+    mov     w0, w19
+    sub     w1, w20, #1
+    cmp     w19, w1
+    cset    w1, eq
+    bl      win_draw_one
+    add     w19, w19, #1
+    b       win_draw_all_loop
+
+win_draw_all_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+win_selftest:
+    stp     x29, x30, [sp, #-16]!
+    mov     w0, #0
+    mov     w1, #3
+    mov     w2, #2
+    bl      win_move
+    ladr    x9, fb_pixel_count
+    str     xzr, [x9]
+    bl      win_repaint
+.if FB_COUNT_PIXELS
+    ladr    x0, win_pixels_label
+    ladr    x1, fb_pixel_count
+    ldr     x1, [x1]
+    bl      uart_field
+    ladr    x0, uart_newline
+    bl      uart_puts
+.endif
+    ldp     x29, x30, [sp], #16
+    ret
+
+win_demo:
+    stp     x29, x30, [sp, #-16]!
+    mov     w0, #40
+    mov     w1, #60
+    mov     w2, #240
+    mov     w3, #160
+    ladr    x4, win_title_1
+    bl      win_add
+    mov     w0, #180
+    mov     w1, #180
+    mov     w2, #260
+    mov     w3, #140
+    ladr    x4, win_title_2
+    bl      win_add
+    mov     w0, #330
+    mov     w1, #90
+    mov     w2, #250
+    mov     w3, #170
+    ladr    x4, win_title_3
+    bl      win_add
+    ldp     x29, x30, [sp], #16
+    b       win_draw_all
 
 fb_testcard:
     stp     x29, x30, [sp, #-16]!
@@ -979,6 +1416,7 @@ pmm_init:
     ladr    x1, ram_base
     ldr     x2, [x1]
     ldr     x3, [x1, #8]
+    and     x3, x3, #~(BLOCK_SIZE - 1)
     add     x2, x2, x3
     subs    x2, x2, x0
     b.ls    pmm_init_none
@@ -1096,7 +1534,7 @@ pmm_reserve:
     subs    x1, x1, x3
     b.ls    pmm_reserve_done
     subs    x0, x0, x3
-    b.lo    pmm_reserve_done
+    csel    x0, xzr, x0, lo
     lsr     x0, x0, #PAGE_SHIFT
     lsr     x1, x1, #PAGE_SHIFT
     ladr    x5, pmm_bitmap
@@ -1175,6 +1613,9 @@ mmu_init:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
+    ladr    x0, ram_base
+    ldr     x0, [x0, #8]
+    cbz     x0, mmu_init_no_ram
     ladr    x19, mmu_l1_table
     ladr    x20, mmu_l2_table
 
@@ -1235,6 +1676,14 @@ mmu_init_tables_done:
     msr     sctlr_el1, x0
     isb
     ladr    x0, mmu_ready_msg
+    bl      uart_puts
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+mmu_init_no_ram:
+    ladr    x0, mmu_skip_msg
     bl      uart_puts
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
@@ -1575,15 +2024,39 @@ fat_init:
     str     w1, [x20, #FAT_COUNT]
     mov     x1, #BPB_SEC_PER_FAT32
     bl      mem_read32
+    cbz     w0, fat_init_fail
     str     w0, [x20, #FAT_SECTORS]
     ldr     w1, [x20, #FAT_COUNT]
+    cbz     w1, fat_init_fail
     mul     w0, w0, w1
     ldr     w1, [x20, #FAT_START]
     add     w0, w0, w1
     str     w0, [x20, #FAT_DATA_START]
     mov     x0, x19
+    mov     x1, #BPB_FAT_SZ16
+    bl      mem_read16
+    cbnz    w0, fat_init_fail
+    mov     x0, x19
+    mov     x1, #BPB_EXT_FLAGS
+    bl      mem_read16
+    tst     w0, #EXT_FLAGS_NO_MIRROR
+    b.eq    fat_init_root
+    and     w0, w0, #EXT_FLAGS_ACTIVE
+    ldr     w1, [x20, #FAT_COUNT]
+    cmp     w0, w1
+    b.hs    fat_init_fail
+    ldr     w1, [x20, #FAT_SECTORS]
+    mul     w0, w0, w1
+    ldr     w1, [x20, #FAT_START]
+    add     w0, w0, w1
+    str     w0, [x20, #FAT_START]
+
+fat_init_root:
+    mov     x0, x19
     mov     x1, #BPB_ROOT_CLUSTER
     bl      mem_read32
+    cmp     w0, #FAT_MIN_CLUSTER
+    b.lo    fat_init_fail
     str     w0, [x20, #FAT_ROOT_CLUSTER]
     ladr    x0, fat_label_res
     ldr     w1, [x20, #FAT_START]
@@ -1613,12 +2086,18 @@ fat_init_fail:
     ret
 
 fat_cluster_to_sector:
+    cmp     w0, #FAT_MIN_CLUSTER
+    b.lo    fat_cluster_invalid
     ladr    x1, fat_state
     ldr     w2, [x1, #FAT_SEC_PER_CLUS]
     sub     w0, w0, #2
     mul     w0, w0, w2
     ldr     w2, [x1, #FAT_DATA_START]
     add     w0, w0, w2
+    ret
+
+fat_cluster_invalid:
+    mov     w0, #0
     ret
 
 fat_list_root:
@@ -1695,7 +2174,7 @@ fat_next_cluster:
     ret
 
 fat_next_cluster_end:
-    ldr     w0, =FAT_EOC
+    mov     w0, #0
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
@@ -1739,8 +2218,9 @@ fat_find_loop:
     mov     x0, x19
     mov     x1, #DIR_SIZE
     bl      mem_read32
-    mov     w1, w0
-    mov     w0, w21
+    mov     w2, w0
+    mov     w1, w21
+    mov     w0, #1
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
@@ -1754,6 +2234,7 @@ fat_find_next:
 fat_find_none:
     mov     w0, #0
     mov     w1, #0
+    mov     w2, #0
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
@@ -1783,19 +2264,21 @@ fat_cat:
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
     str     x23, [sp, #48]
-    mov     x23, x0
     bl      fat_find
     cbz     w0, fat_cat_missing
-    mov     w19, w0
-    mov     w20, w1
+    mov     w19, w1
+    mov     w20, w2
 
 fat_cat_cluster:
+    cbz     w20, fat_cat_done
     ldr     w0, =FAT_EOC
     cmp     w19, w0
-    b.hs    fat_cat_done
-    cbz     w20, fat_cat_done
+    b.hs    fat_cat_short
+    cmp     w19, #FAT_MIN_CLUSTER
+    b.lo    fat_cat_error
     mov     w0, w19
     bl      fat_cluster_to_sector
+    cbz     w0, fat_cat_error
     mov     w21, w0
     ladr    x0, fat_state
     ldr     w22, [x0, #FAT_SEC_PER_CLUS]
@@ -1806,7 +2289,7 @@ fat_cat_sector:
     mov     w0, w21
     ladr    x1, blk_buffer
     bl      blk_read
-    cbnz    w0, fat_cat_done
+    cbnz    w0, fat_cat_error
     mov     w1, #BLK_SECTOR_SIZE
     cmp     w20, w1
     csel    w1, w20, w1, lo
@@ -1822,6 +2305,15 @@ fat_cat_advance:
     bl      fat_next_cluster
     mov     w19, w0
     b       fat_cat_cluster
+
+fat_cat_short:
+    ladr    x0, fat_short_msg
+    bl      uart_puts
+    b       fat_cat_done
+
+fat_cat_error:
+    ladr    x0, fat_error_msg
+    bl      uart_puts
 
 fat_cat_done:
     ladr    x0, uart_newline
@@ -1928,6 +2420,7 @@ blk_read:
     add     x7, x4, x6, lsl #1
     strh    wzr, [x7, #VRING_AVAIL_RING]
     add     w5, w5, #1
+    dmb     ishst
     strh    w5, [x4, #VRING_AVAIL_IDX]
     dsb     sy
     str     wzr, [x19, #VIRTIO_REG_QUEUE_NOTIFY]
@@ -1937,10 +2430,17 @@ blk_read_wait:
     ladr    x4, blk_used
     ldrh    w5, [x4, #VRING_USED_IDX]
     cmp     w5, w21
-    b.ne    blk_read_check
+    b.ne    blk_read_ready
     subs    x20, x20, #1
     b.ne    blk_read_wait
+    ladr    x0, blk_base
+    str     xzr, [x0]
+    ladr    x0, blk_timeout_msg
+    bl      uart_puts
     b       blk_read_fail
+
+blk_read_ready:
+    dmb     ishld
 
 blk_read_check:
     ldr     w0, [x19, #VIRTIO_REG_INT_STATUS]
@@ -1973,6 +2473,7 @@ virtio_input_poll:
     str     w0, [x19, #VIRTIO_REG_INT_ACK]
     ladr    x0, virtio_used
     ldrh    w20, [x0, #VRING_USED_IDX]
+    dmb     ishld
     ladr    x0, virtio_last_used
     ldrh    w21, [x0]
 
@@ -2022,6 +2523,21 @@ mouse_init:
     str     w1, [x0]
     mov     w1, #(FB_HEIGHT / 2)
     str     w1, [x0, #4]
+    ret
+
+click_init:
+    mov     x2, #CLICK_WINDOW_MS
+    mul     x2, x0, x2
+    mov     x3, #MS_PER_SECOND
+    udiv    x2, x2, x3
+    ladr    x1, click_window
+    str     x2, [x1]
+    ret
+
+mouse_get_pos:
+    ladr    x2, mouse_x
+    ldr     w0, [x2]
+    ldr     w1, [x2, #4]
     ret
 
 mouse_clamp:
@@ -2134,6 +2650,7 @@ virtio_input_fill_loop:
     add     w3, w3, #1
     cmp     w3, #VIRTIO_QUEUE_SIZE
     b.lo    virtio_input_fill_loop
+    dmb     ishst
     strh    w3, [x2, #VRING_AVAIL_IDX]
     dsb     sy
     ret
@@ -2166,16 +2683,13 @@ gic_enable_irq:
     ret
 
 timer_init:
+    stp     x29, x30, [sp, #-16]!
     mrs     x0, cntfrq_el0
     cbz     x0, timer_unavailable
     ladr    x1, timer_freq
     str     x0, [x1]
-    mov     x2, #CLICK_WINDOW_MS
-    mul     x2, x0, x2
-    mov     x3, #MS_PER_SECOND
-    udiv    x2, x2, x3
-    ladr    x1, click_window
-    str     x2, [x1]
+    bl      click_init
+    mrs     x0, cntfrq_el0
     mov     x2, #TIMER_HZ
     udiv    x0, x0, x2
     ladr    x1, timer_interval
@@ -2185,10 +2699,12 @@ timer_init:
     msr     cntp_ctl_el0, x0
     isb
     mov     w0, #TIMER_INTID
+    ldp     x29, x30, [sp], #16
     b       gic_enable_irq
 
 timer_unavailable:
     ladr    x0, timer_error
+    ldp     x29, x30, [sp], #16
     b       uart_puts
 
 timer_tick:
@@ -2262,6 +2778,8 @@ console_run_loop:
     bl      console_drain
     wfi
     msr     daifclr, #DAIF_I
+    ladr    x0, boot_ok_msg
+    bl      uart_puts
     b       console_run_loop
 
 console_drain:
@@ -2527,6 +3045,9 @@ vec_table:
 
 .section .rodata
 
+boot_ok_msg:
+    .asciz  "BOOT OK\r\n"
+
 boot_banner:
     .asciz  "asmos\r\n"
 
@@ -2591,6 +3112,20 @@ fat_hello_name:
     .ascii  "HELLO   TXT"
     .byte   0
 
+fat_empty_name:
+    .ascii  "EMPTY   TXT"
+    .byte   0
+
+fat_empty_label:
+    .asciz  "\r\n--- EMPTY.TXT ---\r\n"
+
+fat_missing_name:
+    .ascii  "NOSUCH  TXT"
+    .byte   0
+
+fat_missing_label:
+    .asciz  "--- NOSUCH.TXT ---\r\n"
+
 fat_big_name:
     .ascii  "BIG     TXT"
     .byte   0
@@ -2603,6 +3138,12 @@ fat_big_end:
 
 fat_cat_label:
     .asciz  "\r\n--- HELLO.TXT ---\r\n"
+
+fat_short_msg:
+    .asciz  "\r\nFAT CHAIN SHORT\r\n"
+
+fat_error_msg:
+    .asciz  "\r\nFAT READ ERROR\r\n"
 
 fat_missing_msg:
     .asciz  "\r\nFILE NOT FOUND\r\n"
@@ -2625,6 +3166,9 @@ blk_oem_label:
 blk_read_fail_msg:
     .asciz  "BLK READ FAILED\r\n"
 
+blk_timeout_msg:
+    .asciz  "BLK TIMEOUT, GERAET GESPERRT\r\n"
+
 blk_ready_msg:
     .asciz  "BLK READY\r\n"
 
@@ -2636,6 +3180,18 @@ virtio_ready_msg:
 
 virtio_fail_msg:
     .asciz  "INPUT UNAVAILABLE\r\n"
+
+win_pixels_label:
+    .asciz  "\r\nREPAINT pixel="
+
+win_title_1:
+    .asciz  "Fenster A"
+
+win_title_2:
+    .asciz  "Fenster B"
+
+win_title_3:
+    .asciz  "asmos"
 
 fb_title:
     .asciz  "asmos 0.1 - Assembler Operating System"
@@ -2766,6 +3322,9 @@ fdt_reg_name:
 mmu_ready_msg:
     .asciz  "MMU ON\r\n"
 
+mmu_skip_msg:
+    .asciz  "MMU SKIPPED, RAM UNKNOWN\r\n"
+
 pmm_used_label:
     .asciz  "\r\nPMM used="
 
@@ -2891,6 +3450,32 @@ fwcfg_entry:
 fb_config:
     .space  FB_CFG_SIZE
 
+.balign 4
+fb_clip:
+    .space  CLIP_SIZE
+
+.balign 8
+fb_pixel_count:
+    .space  8
+
+.balign 8
+win_count:
+    .space  4
+
+.balign 8
+win_list:
+    .space  (WIN_SIZE * WIN_MAX)
+
+.balign 8
+dirty_count:
+    .space  4
+dirty_flag_all:
+    .space  1
+
+.balign 8
+dirty_list:
+    .space  (DIRTY_SIZE * DIRTY_MAX)
+
 .balign 16
 virtio_input_base:
     .space  8
@@ -2940,6 +3525,8 @@ virtio_events:
 .balign 16
 blk_base:
     .space  8
+
+.balign 16
 blk_desc:
     .space  (VRING_DESC_SIZE * BLK_QUEUE_SIZE)
 

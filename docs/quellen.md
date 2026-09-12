@@ -131,7 +131,7 @@ Reihenfolge der Einträge, Index wie im Code in `x0` übergeben:
 | 6 | FIQ EL1h | 14 | FIQ 32-bit EL0 |
 | 7 | Error EL1h | 15 | Error 32-bit EL0 |
 
-Im Build verifiziert: `vec_table` liegt auf `0x40081000`, die 16 Einträge folgen in Abständen von exakt `0x80`, der letzte auf `0x40081780`.
+Im Build verifiziert: die 16 Einträge folgen in Abständen von exakt `0x80`. Die absolute Lage von `vec_table` verschiebt sich mit dem Codeumfang, sie ist über `aarch64-elf-nm` nachprüfbar.
 
 ### Register des Panic-Handlers
 
@@ -269,7 +269,7 @@ Gesamtgröße **28 Byte**, aus den Feldern gerechnet (8 + fünf mal 4). Eine Zus
 
 `FB_FOURCC_XR24` = `0x34325258`. Beleg: Linux `include/uapi/drm/drm_fourcc.h`, `DRM_FORMAT_XRGB8888 = fourcc_code('X','R','2','4')` mit `fourcc_code(a,b,c,d) = a | b<<8 | c<<16 | d<<24`. Der Kommentar dort lautet `[31:0] x:R:G:B 8:8:8:8 little endian`, ein Pixel ist also ein 32-Bit-Wort der Form `0x00RRGGBB`.
 
-Auflösung 640 mal 480, Stride 2560 Byte, Gesamtgröße 1.228.800 Byte. Im Build verifiziert: `fb_memory` liegt auf `0x40083000`, der Bereich bis `__bss_end` auf `0x401af000` ist exakt `0x12c000` groß.
+Auflösung 640 mal 480, Stride 2560 Byte, Gesamtgröße 1.228.800 Byte, also `0x12c000`. `fb_memory` liegt seit Einführung der MMU auf einer 2-MB-Grenze, die konkrete Adresse verschiebt sich mit dem Codeumfang und ist über `aarch64-elf-nm` nachprüfbar.
 
 ### Speicher und Sichtbarkeit
 
@@ -445,6 +445,42 @@ Der Originalfont legt das **niederwertigste** Bit nach links. Der Mauszeiger im 
 Zeichen außerhalb von `0x20` bis `0x7e` werden übersprungen, ebenso Positionen, an denen das Zeichen über den rechten oder unteren Rand ragen würde. Ohne diese Prüfung würde über das Ende des Framebuffers hinaus geschrieben.
 
 Im Lauf bestätigt: Groß- und Kleinbuchstaben, Ziffern und Satzzeichen erscheinen korrekt im Testbild.
+
+---
+
+## Externe Durchsicht, zweite Runde
+
+Eine unabhängige Durchsicht brachte zwölf Befunde plus zwei bedingte. Alle wurden nachgeprüft und behoben. Die drei zuerst genannten wogen am schwersten, weil sie **jedes andere Testergebnis entwerteten**.
+
+### Befunde an der Werkzeugkette
+
+| # | Befund | Warum es zählt | Behebung |
+|---|---|---|---|
+| 1 | `run`, `check`, `shot` hingen von `kernel.elf` ab, starteten aber `kernel.bin` | Nach einer Quelländerung wurde das ELF neu gebaut, gestartet aber ein **veralteter** Kernel | Alle Startziele hängen jetzt am tatsächlich gestarteten Artefakt |
+| 11 | `check` prüfte nur, ob `asmos` im Log steht | Dieses Banner erscheint als **erstes**, vor Speicher, Grafik und Dateisystem. Ein Absturz danach blieb unentdeckt | Der Kernel meldet am Ende der Startfolge `BOOT OK`. `check` verlangt diese Marke **und** verbietet `PANIC`. Gegenprobe: mit eingeschaltetem Panic-Selbsttest meldet `check` jetzt einen Fehler |
+| 12 | `make disk` schrieb auf den festen Pfad `/Volumes/MONOLITH` | Existiert dort ein **fremdes** Volume gleichen Namens, werden dessen Dateien überschrieben | Der tatsächliche Einhängepfad wird aus der Ausgabe von `hdiutil` übernommen und geprüft |
+
+### Befunde im Kernel
+
+| # | Befund | Behebung |
+|---|---|---|
+| 2 | `blk_desc` lag acht Byte neben der geforderten 16-Byte-Grenze, im ELF nachgemessen | eigene Ausrichtung vor der Deskriptortabelle |
+| 3 | Speicherbarrieren fehlten an den Übergabestellen: `avail.idx` wurde veröffentlicht, bevor die Deskriptoren sichtbar waren, und nach dem Lesen von `used.idx` fehlte die Lesebarriere. `fwcfg_dma` löste den Auftrag aus, bevor die Struktur abgesichert war | `dmb ishst` vor dem Veröffentlichen, `dmb ishld` nach dem Lesen, bei fw_cfg `dsb sy` **vor** dem Auslösen |
+| 4 | Nach einer Zeitüberschreitung beim Blockgerät wurden dieselben Puffer wiederverwendet. Eine verspätete Fertigmeldung konnte als Abschluss des **nächsten** Auftrags gelten | Das Gerät wird gesperrt und gemeldet, weitere Zugriffe scheitern kontrolliert |
+| 5 | Schlug die RAM-Erkennung fehl, wurde die MMU trotzdem aktiviert, mit leeren Tabellen. Damit fehlten Abbildungen für den laufenden Code, die Diagnose endete in Folgefehlern | `mmu_init` bricht bei unbekanntem RAM ab und meldet `MMU SKIPPED`. Im Lauf bestätigt: Start ohne Device Tree erreicht sauber `BOOT OK` |
+| 6 | Der Allokator rechnete in 4-KB-Seiten, die Abbildung in 2-MB-Blöcken. Bei 129 MB RAM wären 256 vergebene Seiten nicht abgebildet gewesen | Der Allokator rundet seine Obergrenze auf dieselbe Blockgrenze ab |
+| 7 | Ein Lesefehler in der Clusterkette lieferte das Kettenende-Kennzeichen und sah aus wie ein normales Dateiende. Eine Datei konnte stillschweigend abgeschnitten erscheinen | Lesefehler liefern Cluster `0`, das ist als Kettenglied ungültig. `fat_cat` meldet `FAT READ ERROR` und bei zu kurzer Kette `FAT CHAIN SHORT` |
+| 8 | Eine vorhandene **leere** Datei hat Startcluster 0, das wurde als "nicht gefunden" gewertet | `fat_find` gibt Fund und Werte getrennt zurück. Im Lauf bestätigt: leere Datei erzeugt keine Ausgabe und keine Fehlmeldung, fehlende Datei meldet weiterhin `FILE NOT FOUND` |
+| 9 | `BPB_ExtFlags` wurde nicht ausgewertet, es wurde immer die erste FAT gelesen. Bei abgeschalteter Spiegelung wäre eine veraltete Kette verfolgt worden | Ist die Spiegelung aus, zeigt der FAT-Anfang auf die aktive Kopie |
+| 10 | Die FAT32-Erkennung ließ auch FAT16-Bootsektoren durch, und Cluster 1 adressierte vor den Datenbereich | Zusätzlich geprüft: `FATSz32` ungleich null, `FATSz16` gleich null, Wurzelcluster mindestens 2. Cluster unter 2 gelten als ungültig |
+| A | `pmm_reserve` verwarf Bereiche vollständig, die unterhalb des verwalteten Anfangs begannen, aber hineinreichten | Der Anfang wird auf den verwalteten Bereich geklemmt |
+| B | Die Interrupt-Sperre umfasste die **gesamte** Konsolenausgabe samt Wartezeit auf die Sendeleitung | Gesperrt wird nur noch die kurze Zustandsprüfung vor dem Schlafenlegen |
+
+### Verstoß gegen die eigene Kapselungsregel
+
+`cursor_show` las direkt `mouse_x`, `timer_init` schrieb direkt `click_window`. Nach Goldener Regel 2 darf kein Block fremden Zustand direkt anfassen. Behoben über `mouse_get_pos` und `click_init`.
+
+Dabei ist mir prompt derselbe Fehler unterlaufen, vor dem die Regel warnt: `timer_init` hatte keinen Stack-Rahmen, das eingefügte `bl` zerstörte die Rücksprungadresse. Der neue `check` hat es sofort gemeldet, genau dafür wurde er gebaut.
 
 ---
 
