@@ -271,9 +271,16 @@
 
 .equ FB_WIDTH,              640
 .equ FB_HEIGHT,             480
-.equ FB_BPP,                4
+.equ FB_BPP,                8
 .equ FB_STRIDE,             (FB_WIDTH * FB_BPP)
 .equ FB_SIZE,               (FB_STRIDE * FB_HEIGHT)
+.equ OUT_BPP,               4
+.equ OUT_STRIDE,            (FB_WIDTH * OUT_BPP)
+.equ OUT_SIZE,              (OUT_STRIDE * FB_HEIGHT)
+.equ CH_SHIFT_R,            0
+.equ CH_SHIFT_G,            16
+.equ CH_SHIFT_B,            32
+.equ CH_SHIFT_A,            48
 .equ FB_FOURCC_XR24,        0x34325258
 
 .equ FB_CFG_ADDR,           0
@@ -329,17 +336,17 @@
 .equ FB_COUNT_PIXELS,       0
 .equ WIN_SELFTEST,          1
 
-.equ COLOR_WIN_BORDER,      0x00202830
-.equ COLOR_WIN_TITLE,       0x00384858
-.equ COLOR_WIN_TITLE_ACT,   0x00206090
-.equ COLOR_WIN_BODY,        0x00c8ccd0
-.equ COLOR_WIN_TEXT,        0x00ffffff
+.equ COLOR_WIN_BORDER,      0xffff303028282020
+.equ COLOR_WIN_TITLE,       0xffff585848483838
+.equ COLOR_WIN_TITLE_ACT,   0xffff909060602020
+.equ COLOR_WIN_BODY,        0xffffd0d0ccccc8c8
+.equ COLOR_WIN_TEXT,        0xffffffffffffffff
 
-.equ COLOR_CURSOR,          0x00ffffff
-.equ COLOR_BACKGROUND,      0x00102030
-.equ COLOR_RED,             0x00ff0000
-.equ COLOR_GREEN,           0x0000ff00
-.equ COLOR_BLUE,            0x000000ff
+.equ COLOR_CURSOR,          0xffffffffffffffff
+.equ COLOR_BACKGROUND,      0xffff303020201010
+.equ COLOR_RED,             0xffff00000000ffff
+.equ COLOR_GREEN,           0xffff0000ffff0000
+.equ COLOR_BLUE,            0xffffffff00000000
 
 .equ DAIF_I,                2
 
@@ -625,7 +632,7 @@ fb_init:
     b.eq    fb_init_missing
     mov     w19, w0
     ladr    x0, fb_config
-    ladr    x1, fb_memory
+    ladr    x1, fb_output
     rev     x1, x1
     str     x1, [x0, #FB_CFG_ADDR]
     ldr     w1, =FB_FOURCC_XR24
@@ -638,7 +645,7 @@ fb_init:
     mov     w1, #FB_HEIGHT
     rev     w1, w1
     str     w1, [x0, #FB_CFG_HEIGHT]
-    mov     w1, #FB_STRIDE
+    mov     w1, #OUT_STRIDE
     rev     w1, w1
     str     w1, [x0, #FB_CFG_STRIDE]
     lsl     w0, w19, #16
@@ -661,15 +668,73 @@ fb_init_missing:
     ret
 
 fb_clear:
-    ladr    x1, fb_memory
+    ladr    x1, fb_render
     mov     x2, #FB_HEIGHT
-    mov     x3, #FB_STRIDE
+    mov     x3, #FB_WIDTH
     mul     x2, x2, x3
 
 fb_clear_loop:
-    str     w0, [x1], #4
-    subs    x2, x2, #FB_BPP
+    str     x0, [x1], #FB_BPP
+    subs    x2, x2, #1
     b.ne    fb_clear_loop
+    ret
+
+fb_present_all:
+    mov     w0, #0
+    mov     w1, #0
+    mov     w2, #FB_WIDTH
+    mov     w3, #FB_HEIGHT
+    b       fb_present
+
+fb_present:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    str     x23, [sp, #48]
+    mov     w19, w0
+    mov     w20, w1
+    mov     w21, w2
+    mov     w22, w3
+    cbz     w21, fb_present_done
+    cbz     w22, fb_present_done
+
+fb_present_row:
+    cbz     w22, fb_present_done
+    mov     w0, w19
+    mov     w1, w20
+    bl      fb_pixel_addr
+    mov     x23, x0
+    mov     w0, w19
+    mov     w1, w20
+    bl      out_pixel_addr
+    mov     x1, x0
+    mov     w2, w21
+
+fb_present_col:
+    cbz     w2, fb_present_next
+    ldr     x3, [x23], #FB_BPP
+    lsr     x4, x3, #(CH_SHIFT_B + 8)
+    and     x4, x4, #0xff
+    lsr     x5, x3, #(CH_SHIFT_G + 8)
+    and     x5, x5, #0xff
+    orr     x4, x4, x5, lsl #8
+    lsr     x5, x3, #(CH_SHIFT_R + 8)
+    and     x5, x5, #0xff
+    orr     x4, x4, x5, lsl #16
+    str     w4, [x1], #OUT_BPP
+    sub     w2, w2, #1
+    b       fb_present_col
+
+fb_present_next:
+    add     w20, w20, #1
+    sub     w22, w22, #1
+    b       fb_present_row
+
+fb_present_done:
+    ldr     x23, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
     ret
 
 fb_clip_full:
@@ -705,7 +770,15 @@ fb_clip_set:
 fb_pixel_addr:
     mov     x9, #FB_STRIDE
     madd    x9, x1, x9, xzr
-    ladr    x10, fb_memory
+    ladr    x10, fb_render
+    add     x9, x10, x9
+    add     x0, x9, x0, lsl #3
+    ret
+
+out_pixel_addr:
+    mov     x9, #OUT_STRIDE
+    madd    x9, x1, x9, xzr
+    ladr    x10, fb_output
     add     x9, x10, x9
     add     x0, x9, x0, lsl #2
     ret
@@ -748,7 +821,7 @@ fb_fill_rect_row:
 
 fb_fill_rect_col:
     cbz     w6, fb_fill_rect_next
-    str     w4, [x7], #4
+    str     x4, [x7], #FB_BPP
     sub     w6, w6, #1
     b       fb_fill_rect_col
 
@@ -771,7 +844,7 @@ fb_glyph:
     sub     w19, w2, #FONT_FIRST_CHAR
     cmp     w19, #FONT_CHAR_COUNT
     b.hs    fb_glyph_done
-    mov     w20, w3
+    mov     x20, x3
     mov     w21, w0
     mov     w22, w1
     ladr    x9, font_data
@@ -818,7 +891,7 @@ fb_glyph_col:
     mov     w0, w2
     mov     w1, w3
     bl      fb_pixel_addr
-    str     w20, [x0]
+    str     x20, [x0]
 .if FB_COUNT_PIXELS
     ladr    x2, fb_pixel_count
     ldr     x3, [x2]
@@ -850,14 +923,14 @@ fb_text:
     mov     w19, w0
     mov     w20, w1
     mov     x21, x2
-    mov     w22, w3
+    mov     x22, x3
 
 fb_text_loop:
     ldrb    w2, [x21], #1
     cbz     w2, fb_text_done
     mov     w0, w19
     mov     w1, w20
-    mov     w3, w22
+    mov     x3, x22
     bl      fb_glyph
     add     w19, w19, #FONT_WIDTH
     b       fb_text_loop
@@ -877,8 +950,8 @@ cursor_copy_row:
 
 cursor_copy_col:
     cbz     w6, cursor_copy_next
-    ldr     w9, [x8], #4
-    str     w9, [x7], #4
+    ldr     x9, [x8], #FB_BPP
+    str     x9, [x7], #FB_BPP
     sub     w6, w6, #1
     b       cursor_copy_col
 
@@ -907,6 +980,11 @@ cursor_hide:
     mov     x4, #FB_STRIDE
     mov     x5, #(CURSOR_W * FB_BPP)
     bl      cursor_copy
+    ldr     w0, [x19, #CURSOR_STATE_X]
+    ldr     w1, [x19, #CURSOR_STATE_Y]
+    ldr     w2, [x19, #CURSOR_STATE_W]
+    ldr     w3, [x19, #CURSOR_STATE_H]
+    bl      fb_present
 
 cursor_hide_done:
     ldr     x19, [sp, #16]
@@ -971,11 +1049,11 @@ cursor_show_draw_col:
     lsr     w9, w7, w8
     tst     w9, #1
     b.eq    cursor_show_draw_skip
-    ldr     w10, =COLOR_CURSOR
-    str     w10, [x5]
+    ldr     x10, =COLOR_CURSOR
+    str     x10, [x5]
 
 cursor_show_draw_skip:
-    add     x5, x5, #4
+    add     x5, x5, #FB_BPP
     add     w4, w4, #1
     b       cursor_show_draw_col
 
@@ -988,6 +1066,11 @@ cursor_show_draw_next:
 cursor_show_done:
     mov     w0, #1
     strb    w0, [x19, #CURSOR_STATE_VISIBLE]
+    ldr     w0, [x19, #CURSOR_STATE_X]
+    ldr     w1, [x19, #CURSOR_STATE_Y]
+    ldr     w2, [x19, #CURSOR_STATE_W]
+    ldr     w3, [x19, #CURSOR_STATE_H]
+    bl      fb_present
     ldr     x23, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
@@ -1121,12 +1204,23 @@ win_repaint_loop:
     sub     w3, w3, w1
     bl      fb_clip_set
     bl      win_draw_all
+    ladr    x9, dirty_list
+    mov     x10, #DIRTY_SIZE
+    madd    x9, x19, x10, x9
+    ldr     w0, [x9, #DIRTY_X]
+    ldr     w1, [x9, #DIRTY_Y]
+    ldr     w2, [x9, #DIRTY_X2]
+    ldr     w3, [x9, #DIRTY_Y2]
+    sub     w2, w2, w0
+    sub     w3, w3, w1
+    bl      fb_present
     add     w19, w19, #1
     b       win_repaint_loop
 
 win_repaint_full:
     bl      fb_clip_full
     bl      win_draw_all
+    bl      fb_present_all
 
 win_repaint_end:
     bl      fb_clip_full
@@ -1190,7 +1284,7 @@ win_draw_one:
     ldr     w1, [x19, #WIN_Y]
     ldr     w2, [x19, #WIN_W]
     ldr     w3, [x19, #WIN_H]
-    ldr     w4, =COLOR_WIN_BORDER
+    ldr     x4, =COLOR_WIN_BORDER
     bl      fb_fill_rect
     ldr     w0, [x19, #WIN_X]
     add     w0, w0, #WIN_BORDER
@@ -1200,11 +1294,11 @@ win_draw_one:
     sub     w2, w2, #(WIN_BORDER * 2)
     mov     w3, #WIN_TITLEBAR_H
     cbz     w20, win_draw_one_inactive
-    ldr     w4, =COLOR_WIN_TITLE_ACT
+    ldr     x4, =COLOR_WIN_TITLE_ACT
     b       win_draw_one_title
 
 win_draw_one_inactive:
-    ldr     w4, =COLOR_WIN_TITLE
+    ldr     x4, =COLOR_WIN_TITLE
 
 win_draw_one_title:
     bl      fb_fill_rect
@@ -1216,14 +1310,14 @@ win_draw_one_title:
     sub     w2, w2, #(WIN_BORDER * 2)
     ldr     w3, [x19, #WIN_H]
     sub     w3, w3, #(WIN_BORDER * 2 + WIN_TITLEBAR_H)
-    ldr     w4, =COLOR_WIN_BODY
+    ldr     x4, =COLOR_WIN_BODY
     bl      fb_fill_rect
     ldr     w0, [x19, #WIN_X]
     add     w0, w0, #(WIN_BORDER + WIN_TEXT_PAD)
     ldr     w1, [x19, #WIN_Y]
     add     w1, w1, #(WIN_BORDER + WIN_TEXT_PAD)
     ldr     x2, [x19, #WIN_TITLE]
-    ldr     w3, =COLOR_WIN_TEXT
+    ldr     x3, =COLOR_WIN_TEXT
     bl      fb_text
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
@@ -1237,7 +1331,7 @@ win_draw_all:
     mov     w1, #0
     mov     w2, #FB_WIDTH
     mov     w3, #FB_HEIGHT
-    ldr     w4, =COLOR_BACKGROUND
+    ldr     x4, =COLOR_BACKGROUND
     bl      fb_fill_rect
     ladr    x9, win_count
     ldr     w20, [x9]
@@ -1299,45 +1393,47 @@ win_demo:
     mov     w3, #170
     ladr    x4, win_title_3
     bl      win_add
+    bl      win_draw_all
+    bl      fb_present_all
     ldp     x29, x30, [sp], #16
-    b       win_draw_all
+    ret
 
 fb_testcard:
     stp     x29, x30, [sp, #-16]!
-    ldr     w0, =COLOR_BACKGROUND
+    ldr     x0, =COLOR_BACKGROUND
     bl      fb_clear
     mov     x0, #40
     mov     x1, #40
     mov     x2, #160
     mov     x3, #120
-    ldr     w4, =COLOR_RED
+    ldr     x4, =COLOR_RED
     bl      fb_fill_rect
     mov     x0, #240
     mov     x1, #180
     mov     x2, #160
     mov     x3, #120
-    ldr     w4, =COLOR_GREEN
+    ldr     x4, =COLOR_GREEN
     bl      fb_fill_rect
     mov     x0, #440
     mov     x1, #320
     mov     x2, #160
     mov     x3, #120
-    ldr     w4, =COLOR_BLUE
+    ldr     x4, =COLOR_BLUE
     bl      fb_fill_rect
     mov     w0, #16
     mov     w1, #16
     ladr    x2, fb_title
-    ldr     w3, =COLOR_CURSOR
+    ldr     x3, =COLOR_CURSOR
     bl      fb_text
     mov     w0, #16
     mov     w1, #440
     ladr    x2, fb_charset
-    ldr     w3, =COLOR_CURSOR
+    ldr     x3, =COLOR_CURSOR
     bl      fb_text
     mov     w0, #16
     mov     w1, #456
     ladr    x2, fb_charset2
-    ldr     w3, =COLOR_CURSOR
+    ldr     x3, =COLOR_CURSOR
     bl      fb_text
     ldp     x29, x30, [sp], #16
     ret
@@ -1624,7 +1720,7 @@ mmu_init:
     orr     x0, x20, #DESC_TABLE
     str     x0, [x19, #8]
 
-    ladr    x21, fb_memory
+    ladr    x21, fb_output
     mov     x0, #RAM_BASE_FIXED
     sub     x21, x21, x0
     lsr     x21, x21, #BLOCK_SHIFT
@@ -3594,6 +3690,10 @@ cursor_state:
 cursor_backing:
     .space  CURSOR_BACKING_SIZE
 
-.balign BLOCK_SIZE
-fb_memory:
+.balign 64
+fb_render:
     .space  FB_SIZE
+
+.balign BLOCK_SIZE
+fb_output:
+    .space  OUT_SIZE

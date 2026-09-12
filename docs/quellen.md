@@ -448,6 +448,77 @@ Im Lauf bestätigt: Groß- und Kleinbuchstaben, Ziffern und Satzzeichen erschein
 
 ---
 
+## Raspberry Pi 5, belegte Werte für die spätere Portierung
+
+Stand der Vorarbeit. **Noch kein Code**, nur Belege. Quellen: Device Tree des Linux-Kernels für den BCM2712 und die Platine Pi 5 B, sowie die Raspberry-Pi-Dokumentation zu `config.txt`.
+
+### Der entscheidende Unterschied zu QEMU: zwei Adressräume
+
+Der BCM2712 unterscheidet **Busadressen** und **CPU-Adressen**. Der Device Tree nennt Busadressen, die über die `ranges`-Eigenschaft des `soc`-Knotens umgerechnet werden:
+
+```
+ranges = <0x00000000  0x10 0x00000000  0x80000000>
+```
+
+Das bedeutet: Busadresse `0x0` entspricht der CPU-Adresse `0x10_00000000`, der Bereich ist 2 GB groß. **Jede Peripherieadresse aus dem Device Tree muss also um `0x10_00000000` erhöht werden.**
+
+Wer das übersieht, schreibt ins Leere und sucht tagelang.
+
+### Umgerechnete Adressen
+
+| Was | Busadresse | **CPU-Adresse** | Fundstelle |
+|---|---|---|---|
+| System-UART (PL011) | `0x7d001000` | **`0x10_7d001000`** | `bcm2712.dtsi`, Knoten `uart10`, Größe `0x200` |
+| GIC-400 Distributor | `0x7fff9000` | **`0x10_7fff9000`** | ebenda, `compatible = "arm,gic-400"`, Größe `0x1000` |
+| GIC-400 CPU-Interface | `0x7fffa000` | **`0x10_7fffa000`** | ebenda, Größe `0x2000` |
+
+Die Peripherie liegt damit bei rund **66 GB**. Unser virtueller Adressraum mit 39 Bit reicht dafür aus, aber die Seitentabelle muss einen völlig anderen Eintrag der obersten Ebene abbilden als heute. Bisher belegen wir nur die Einträge 0 und 1.
+
+### Interrupts
+
+| Was | Nummer | Ergibt INTID |
+|---|---|---|
+| System-UART | GIC_SPI 121 | 32 + 121 = **153** |
+| Generic Timer, phys. non-secure | GIC_PPI 14 | **30** |
+
+Der Interrupt-Controller ist ein **GIC-400**, also GICv2, dieselbe Bauart wie in unserer QEMU-Maschine. Unser vorhandener Treiber sollte mit geänderten Basisadressen funktionieren.
+
+Die Timer-Interruptnummern sind **identisch** mit QEMU, PPI 13, 14, 11, 10.
+
+### Welche UART ist der Debug-Anschluss
+
+Im Board-Device-Tree `bcm2712-rpi-5-b.dts` ist genau eine UART mit dem Kommentar "The system UART" aktiviert:
+
+```
+// The system UART
+uart10: &_uart0 { status = "okay"; };
+```
+
+Diese UART sitzt **im BCM2712**, nicht im RP1. Eine zweite UART namens `uarta` ist für Bluetooth vorgesehen.
+
+**Noch offen und vor dem ersten Code zu klären:** ob der dreipolige Debug-Stecker auf der Platine physisch an dieser `uart10` hängt. Der Device Tree belegt, dass die UART im Hauptprozessor existiert und aktiv ist, nicht, wo ihre Leitungen enden. Dafür braucht es den Schaltplan der Platine.
+
+Ausdrücklich **nicht** derselbe Weg: `enable_uart=1` in der `config.txt` schaltet die serielle Konsole auf die GPIO-Pins 14 und 15, und die laufen über den RP1.
+
+### Startdateien
+
+| Was | Wert | Quelle |
+|---|---|---|
+| Kernel-Dateiname Pi 5 | `kernel_2712.img`, Rückfall `kernel8.img` | Raspberry-Pi-Dokumentation zu `config.txt` |
+| 64-Bit-Modus | `arm_64bit=1` | ebenda |
+| Abweichender Name | `kernel=` | ebenda |
+
+### Noch nicht belegt
+
+- Physische Verbindung des Debug-Steckers zur `uart10`
+- Ladeadresse, an die die Firmware den Kernel legt, und Registerzustand beim Einsprung
+- Taktfrequenz der System-UART, für den Baudratenteiler nötig
+- Weg zum Bildspeicher: ob die Mailbox-Schnittstelle wie beim Pi 4 funktioniert
+- Anbindung von SD-Karte und Netzwerk, jeweils ob am BCM2712 oder am RP1
+- PCIe-Einrichtung für den Zugriff auf den RP1
+
+---
+
 ## Externe Durchsicht, zweite Runde
 
 Eine unabhängige Durchsicht brachte zwölf Befunde plus zwei bedingte. Alle wurden nachgeprüft und behoben. Die drei zuerst genannten wogen am schwersten, weil sie **jedes andere Testergebnis entwerteten**.
