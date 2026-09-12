@@ -159,28 +159,33 @@ Im Betrieb belegt der Kernel zusätzlich **3,3 MB** Arbeitsspeicher. Davon sind 
 > **Kurz: heute noch nicht.** Ein USB-Stick mit Balena Etcher bringt nichts, und zwar aus zwei voneinander unabhängigen Gründen.
 
 **Grund 1: Die Adressen stimmen nicht.**
-Ein Betriebssystem spricht mit Hardware, indem es an bestimmte Speicheradressen schreibt. Dieser Kernel schreibt Zeichen an `0x09000000`, weil dort in der emulierten Maschine die serielle Schnittstelle sitzt. Auf einem Raspberry Pi 4 liegt dieselbe Schnittstelle bei `0xFE201000`. Das gilt für **alles**: Unterbrechungssteuerung, Grafik, Eingabe, Datenträger. Andere Adressen, teils völlig andere Bausteine. Der Kernel würde ins Leere schreiben. Kein Absturz, keine Meldung, einfach nichts.
+Ein Betriebssystem spricht mit Hardware, indem es an bestimmte Speicheradressen schreibt. Dieser Kernel schreibt Zeichen an `0x09000000`, weil dort in der emulierten Maschine die serielle Schnittstelle sitzt. Auf einem Raspberry Pi liegt dieselbe Schnittstelle an einer völlig anderen Adresse. Das gilt für **alles**: Unterbrechungssteuerung, Grafik, Eingabe, Datenträger. Andere Adressen, teils völlig andere Bausteine. Der Kernel würde ins Leere schreiben. Kein Absturz, keine Meldung, einfach nichts.
 
 **Grund 2: Es gibt kein startfähiges Medium.**
 Ein Raspberry Pi startet nicht einfach irgendeine Datei. Seine Grafikchip-Firmware sucht auf einer FAT-Partition eine `kernel8.img` und eine `config.txt`. Beides erzeugen wir nicht.
 
 <details>
-<summary><b>Was nötig wäre, damit es auf einem Pi 4 läuft</b></summary>
+<summary><b>Was nötig wäre, damit es auf einem Raspberry Pi 5 läuft</b></summary>
 
 <br>
 
+Der Pi 5 lagert fast die gesamte Peripherie in einen eigenen Chip namens **RP1** aus, der über PCIe angebunden ist: Eingabe, Netzwerk, die GPIO-geführten seriellen Schnittstellen.
+
+Entscheidend ist deshalb ein Detail: Der Pi 5 hat einen **eigenen dreipoligen Debug-Anschluss** für die serielle Schnittstelle. Nach derzeitigem Kenntnisstand hängt der direkt am Hauptprozessor und nicht am RP1. Trifft das zu, ist das erste Lebenszeichen ohne PCIe möglich.
+
 | Aufgabe | Aufwand |
 |---|---|
-| Serielle Schnittstelle auf Pi-Adressen umstellen, GPIO konfigurieren | etwa ein Tag |
-| Unterbrechungssteuerung: Pi 4 hat GIC-400 statt GICv2 | zwei bis drei Tage |
+| Serielle Ausgabe über den Debug-Anschluss | etwa ein Tag, **sofern er wirklich am Hauptprozessor hängt** |
+| Speicher, Unterbrechungen, Zeitgeber auf den BCM2712 umstellen | wenige Tage |
 | Bild über die Mailbox-Schnittstelle der Grafikeinheit statt `ramfb` | drei bis fünf Tage |
-| Datenträger über den EMMC-Controller statt virtio | etwa eine Woche |
+| Datenträger, noch zu klären ob am Hauptprozessor oder am RP1 | etwa eine Woche |
+| **PCIe hochfahren und den RP1 ansprechen** | **offen, danach erst Eingabe und Netzwerk** |
 | **Maus und Tastatur: vollständiger USB-Stack mit HID-Protokoll** | **mehrere Wochen** |
 | Startdateien `kernel8.img` und `config.txt` erzeugen | etwa ein Tag |
 
-Der USB-Punkt ist der Brocken, für sich genommen ein eigenes Projekt. Wer ihn umgehen will, nutzt am Anfang die serielle Konsole über die GPIO-Pins mit einem USB-Seriell-Adapter für rund zehn Euro. Dann sieht man die Ausgabe ohne einen einzigen USB-Treiber.
+Für die serielle Ausgabe braucht es einen USB-Seriell-Adapter mit passendem Kabel, rund zehn bis fünfzehn Euro. Ohne ihn arbeitet man auf echter Hardware buchstäblich im Dunkeln.
 
-**Pi 4, nicht Pi 5.** Der Pi 5 hat einen neuen Zusatzchip namens RP1, für den es kaum Unterlagen für hardwarenahe Programmierung gibt. Dort ließe sich die Regel, keinen Wert zu raten, nicht einhalten.
+**Alle konkreten Adressen werden erst belegt, wenn die Portierung ansteht.** Gerade zum Pi 5 kursiert viel Halbwissen, und im Projekt gilt: kein Wert ohne Quelle. Sollte sich zeigen, dass auch der Debug-Anschluss über den RP1 läuft, wäre ein Pi 4 als Zwischenschritt die bessere Wahl.
 
 </details>
 
@@ -238,7 +243,7 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 10. Netzwerk bis TCP | offen |
 | 11. Verschlüsselte Verbindungen | offen |
 | 12. Vektorgrafik | offen |
-| 13. Portierung auf Raspberry Pi 4 | offen |
+| 13. Portierung auf Raspberry Pi 5 | offen |
 
 Zusätzlich fertig: Bitmap-Zeichensatz mit 95 Zeichen.
 
@@ -280,6 +285,6 @@ Zusätzlich fertig: Bitmap-Zeichensatz mit 95 Zeichen.
 | Dokumentation | 29 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
 | Entwicklungsziel | QEMU `virt` |
-| Späteres Hardwareziel | Raspberry Pi 4 |
+| Späteres Hardwareziel | Raspberry Pi 5 |
 
 </div>
