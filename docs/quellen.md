@@ -448,6 +448,36 @@ Im Lauf bestätigt: Groß- und Kleinbuchstaben, Ziffern und Satzzeichen erschein
 
 ---
 
+## Durchsicht nach dem Schriftrenderer
+
+Statische Prüfung sauber: keine doppelten Marken, keine offenen Sprungziele, keine ungesicherten Register, Stackrahmen überall ausgeglichen. Fünf Befunde aus der Durchsicht des Verhaltens.
+
+| # | Befund | Wirkung | Behebung |
+|---|---|---|---|
+| 1 | Die Hauptschleife gab bei **jedem Durchlauf** `BOOT OK` aus | Eine frühere Ersetzung hatte nicht nur den Sprung am Ende der Startfolge getroffen, sondern auch den Rücksprung in der Schleife. Im Protokoll standen Dutzende Meldungen, die ich für Cursor-Blinken hielt | Rücksprung bereinigt, im Lauf bestätigt: genau ein Vorkommen |
+| 2 | `console_pending` fehlte nach der Wiederherstellung | Damit war die Interrupt-Sperre wieder über die **gesamte** Konsolenausgabe gezogen statt nur über die kurze Zustandsprüfung | Routine wieder eingesetzt |
+| 3 | `EDGE_MAX` war mit 512 zu klein | Der komplexeste Glyph dieser Schrift erzeugt **800 Kanten**, sechs von 244 Glyphen liegen über der Grenze. Überzählige Kanten verschwanden **still**, der Buchstabe wurde falsch gefüllt | Grenze auf 2048, zusätzlich Meldung |
+| 4 | Alle Grenzen im Renderer brachen **still** ab: Kanten, Schnittpunkte je Zeile, Breite des Deckungspuffers, Punkt- und Konturzahl, zusammengesetzte Glyphen | Gegen das Gesetz "keine stillen Fehlschläge". Ein unvollständig gezeichneter Buchstabe sah aus wie ein Schriftfehler | Gemeinsame Meldung `TTF GRENZE ERREICHT`, einmalig je Lauf. Gegenprobe mit absichtlich zu kleiner Grenze: Meldung erscheint, im Normalbetrieb schweigt sie |
+| 5 | Kurven wurden immer in **acht** Stücke zerlegt, unabhängig von der Größe | Bei kleiner Schrift verschwendet, bei großer zu grob | Zerlegung nach Länge des Kontrollpolygons, zwischen 2 und 16 Stücken. Im Lauf bestätigt: Titel mit 181 Helligkeitsstufen statt vorher weniger |
+
+### Grenzen, an der Schrift nachgerechnet
+
+| Grenze | Wert | Höchster Bedarf bei BabelSans |
+|---|---:|---|
+| Punkte je Glyph | 256 | 121 |
+| Konturen je Glyph | 16 | 7 |
+| Kanten je Glyph | 2048 | 800 |
+| Breite des Deckungspuffers | 512 | 400 bei 400 Punkt Schriftgröße |
+| Zusammengesetzte Glyphen | nicht unterstützt | kommen in dieser Schrift nicht vor |
+
+Zusammengesetzte Glyphen, also solche aus Bestandteilen anderer Glyphen, werden erkannt und gemeldet, aber nicht gezeichnet. Bei Schriften, die Umlaute so aufbauen, fehlen diese Zeichen. BabelSans tut das nicht, alle 244 Glyphen sind eigenständig.
+
+### Verhalten in Randfällen
+
+Ohne Bildschirm, Eingabegerät und Datenträger meldet der Kernel `FB UNAVAILABLE`, `INPUT UNAVAILABLE`, `BLK UNAVAILABLE`, `FAT INVALID`, `TTF UNAVAILABLE` und erreicht trotzdem `BOOT OK`. Fenstertitel bleiben dann leer, weil ohne geladene Schrift kein Maßstab existiert.
+
+---
+
 ## Raspberry Pi 5, belegte Werte für die spätere Portierung
 
 Stand der Vorarbeit. **Noch kein Code**, nur Belege. Quellen: Device Tree des Linux-Kernels für den BCM2712 und die Platine Pi 5 B, sowie die Raspberry-Pi-Dokumentation zu `config.txt`.

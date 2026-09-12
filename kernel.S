@@ -236,10 +236,12 @@
 .equ EDGE_YBOT,             12
 .equ EDGE_DIR,              16
 .equ EDGE_SIZE,             20
-.equ EDGE_MAX,              512
+.equ EDGE_MAX,              2048
 .equ FIX_SHIFT,             16
 .equ FIX_ONE,               0x10000
-.equ BEZIER_STEPS,          8
+.equ BEZIER_MIN,            2
+.equ BEZIER_MAX,            16
+.equ BEZIER_PX_PER_STEP,    3
 .equ XS_MAX,                64
 .equ XS_SIZE,               8
 .equ COV_MAX,               512
@@ -3412,11 +3414,11 @@ ttf_load_glyph:
     add     x22, x22, x20
     mov     x0, x22
     bl      ttf_be16s
-    tbnz    w0, #31, ttf_load_glyph_empty
+    tbnz    w0, #31, ttf_load_glyph_composite
     cbz     w0, ttf_load_glyph_empty
     mov     w23, w0
     cmp     w23, #GLYPH_MAX_CONTOURS
-    b.hi    ttf_load_glyph_empty
+    b.hi    ttf_load_glyph_composite
     ladr    x24, glyph_state
     str     w23, [x24, #GLYPH_NCONTOURS]
     add     x25, x22, #GLYF_ENDPTS
@@ -3438,7 +3440,7 @@ ttf_load_ends_done:
     ldrh    w27, [x1, w0, uxtw #1]
     add     w27, w27, #1
     cmp     w27, #GLYPH_MAX_POINTS
-    b.hi    ttf_load_glyph_empty
+    b.hi    ttf_load_glyph_composite
     str     w27, [x24, #GLYPH_NPOINTS]
     add     x25, x25, x23, lsl #1
     mov     x0, x25
@@ -3537,6 +3539,9 @@ ttf_load_y_done:
     mov     w0, #1
     b       ttf_load_glyph_end
 
+ttf_load_glyph_composite:
+    bl      ttf_limit_report
+
 ttf_load_glyph_empty:
     ladr    x0, glyph_state
     str     wzr, [x0, #GLYPH_NCONTOURS]
@@ -3561,7 +3566,7 @@ edge_add:
     ladr    x4, edge_count
     ldr     w5, [x4]
     cmp     w5, #EDGE_MAX
-    b.hs    edge_add_done
+    b.hs    edge_add_overflow
     cmp     w1, w3
     b.eq    edge_add_done
     ladr    x6, edge_list
@@ -3591,6 +3596,26 @@ edge_add_store:
 edge_add_done:
     ret
 
+edge_add_overflow:
+    stp     x29, x30, [sp, #-16]!
+    bl      ttf_limit_report
+    ldp     x29, x30, [sp], #16
+    ret
+
+ttf_limit_report:
+    ladr    x4, ttf_limit_flag
+    ldrb    w5, [x4]
+    cbnz    w5, ttf_limit_report_done
+    mov     w5, #1
+    strb    w5, [x4]
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, ttf_limit_msg
+    bl      uart_puts
+    ldp     x29, x30, [sp], #16
+
+ttf_limit_report_done:
+    ret
+
 ttf_point:
     ladr    x1, glyph_x
     ldrsh   w1, [x1, w0, uxtw #1]
@@ -3615,37 +3640,58 @@ ttf_point_flag:
     ret
 
 ttf_bezier:
-    stp     x29, x30, [sp, #-96]!
+    stp     x29, x30, [sp, #-112]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
     stp     x23, x24, [sp, #48]
     stp     x25, x26, [sp, #64]
-    str     x27, [sp, #80]
+    stp     x27, x28, [sp, #80]
     mov     w19, w0
     mov     w20, w1
     mov     w21, w2
     mov     w22, w3
     mov     w23, w4
     mov     w24, w5
+    subs    w0, w21, w19
+    cneg    w0, w0, mi
+    subs    w1, w22, w20
+    cneg    w1, w1, mi
+    add     w0, w0, w1
+    subs    w1, w23, w21
+    cneg    w1, w1, mi
+    add     w0, w0, w1
+    subs    w1, w24, w22
+    cneg    w1, w1, mi
+    add     w0, w0, w1
+    lsr     w0, w0, #FIX_SHIFT
+    mov     w1, #BEZIER_PX_PER_STEP
+    udiv    w28, w0, w1
+    cmp     w28, #BEZIER_MIN
+    mov     w1, #BEZIER_MIN
+    csel    w28, w1, w28, lo
+    cmp     w28, #BEZIER_MAX
+    mov     w1, #BEZIER_MAX
+    csel    w28, w1, w28, hi
     mov     w25, #1
     mov     w26, w19
     mov     w27, w20
 
 ttf_bezier_loop:
-    cmp     w25, #BEZIER_STEPS
+    cmp     w25, w28
     b.hi    ttf_bezier_done
-    mov     w0, #BEZIER_STEPS
+    mov     w0, w28
     sub     w1, w0, w25
     mul     w2, w1, w1
     mul     w3, w1, w25
     lsl     w3, w3, #1
     mul     w4, w25, w25
+    mul     w6, w28, w28
     smull   x5, w19, w2
     smull   x6, w21, w3
     add     x5, x5, x6
     smull   x6, w23, w4
     add     x5, x5, x6
-    mov     w6, #(BEZIER_STEPS * BEZIER_STEPS)
+    mul     w6, w28, w28
     sdiv    x5, x5, x6
     smull   x7, w20, w2
     smull   x8, w22, w3
@@ -3666,12 +3712,12 @@ ttf_bezier_loop:
     b       ttf_bezier_loop
 
 ttf_bezier_done:
-    ldr     x27, [sp, #80]
+    ldp     x27, x28, [sp, #80]
     ldp     x25, x26, [sp, #64]
     ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #96
+    ldp     x29, x30, [sp], #112
     ret
 
 ttf_build_edges:
@@ -3862,6 +3908,17 @@ cov_span:
     ret
 
 cov_span_multi:
+    sub     w6, w3, w10
+    cmp     w6, #COV_MAX
+    b.lo    cov_span_multi_ok
+    stp     x29, x30, [sp, #-16]!
+    bl      ttf_limit_report
+    ldp     x29, x30, [sp], #16
+    ladr    x9, cov_buffer
+    ladr    x10, cov_xmin
+    ldr     w10, [x10]
+
+cov_span_multi_ok:
     and     w5, w0, #0xffff
     mov     w6, #FIX_ONE
     sub     w5, w6, w5
@@ -3996,7 +4053,13 @@ ttf_fill_scan:
     add     w5, w3, w5
     ldr     w6, [x0, #EDGE_DIR]
     cmp     w28, #XS_MAX
-    b.hs    ttf_fill_scan_next
+    b.lo    ttf_fill_scan_store
+    stp     x0, x1, [sp, #128]
+    bl      ttf_limit_report
+    ldp     x0, x1, [sp, #128]
+    b       ttf_fill_scan_next
+
+ttf_fill_scan_store:
     ladr    x7, xs_list
     mov     x8, #XS_SIZE
     madd    x7, x28, x8, x7
@@ -4398,13 +4461,41 @@ console_run:
     bl      console_draw_cursor
 
 console_run_loop:
-    msr     daifset, #DAIF_I
     bl      console_drain
+    msr     daifset, #DAIF_I
+    bl      console_pending
+    cbnz    w0, console_run_awake
     wfi
+
+console_run_awake:
     msr     daifclr, #DAIF_I
-    ladr    x0, boot_ok_msg
-    bl      uart_puts
     b       console_run_loop
+
+console_pending:
+    ladr    x1, uart_rx_head
+    ldr     w2, [x1]
+    ladr    x1, uart_rx_tail
+    ldr     w3, [x1]
+    cmp     w2, w3
+    b.ne    console_pending_yes
+    ladr    x1, uart_rx_overflow
+    ldrb    w2, [x1]
+    cbnz    w2, console_pending_yes
+    ladr    x1, click_pending
+    ldrb    w2, [x1]
+    cbnz    w2, console_pending_yes
+    ladr    x1, mouse_dirty
+    ldrb    w2, [x1]
+    cbnz    w2, console_pending_yes
+    ladr    x1, console_blink_pending
+    ldrb    w2, [x1]
+    cbnz    w2, console_pending_yes
+    mov     w0, #0
+    ret
+
+console_pending_yes:
+    mov     w0, #1
+    ret
 
 console_drain:
     stp     x29, x30, [sp, #-16]!
@@ -4843,6 +4934,9 @@ ttf_glyphs_msg:
     .asciz  " glyphs="
 ttf_locfmt_msg:
     .asciz  " locfmt="
+ttf_limit_msg:
+    .asciz  "TTF GRENZE ERREICHT, Glyph unvollstaendig\r\n"
+
 ttf_fail_msg:
     .asciz  "TTF UNAVAILABLE\r\n"
 
@@ -5316,6 +5410,8 @@ ttf_origin_y:
 .balign 8
 edge_count:
     .space  4
+ttf_limit_flag:
+    .space  1
 
 .balign 8
 edge_list:
