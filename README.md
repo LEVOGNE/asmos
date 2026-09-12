@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-13.920%20Byte-brightgreen?style=flat-square" alt="13920 Byte">
+<img src="https://img.shields.io/badge/Kernel-24.304%20Byte-brightgreen?style=flat-square" alt="13920 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>13.920&nbsp;Byte</b> groß.<br>
+Das fertige System ist <b>24.304&nbsp;Byte</b> groß.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -36,8 +36,8 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Reden</b></td><td>Serielle Schnittstelle in beide Richtungen: Textausgabe und Tastatureingabe</td></tr>
 <tr><td><b>Sich melden</b></td><td>Bei einem Prozessorfehler keine stille Endlosschleife, sondern eine Diagnose mit Ursache, Adresse und Prozessorzustand</td></tr>
 <tr><td><b>Zeit messen</b></td><td>Hardware-Zeitgeber mit echten Unterbrechungen. Die Taktfrequenz wird ausgelesen, nicht angenommen</td></tr>
-<tr><td><b>Ein Bild malen</b></td><td>640 × 480 Bildpunkte, 16,7 Millionen Farben, Rechtecke und Text</td></tr>
-<tr><td><b>Schreiben</b></td><td>Eingebauter Zeichensatz mit 95 Zeichen</td></tr>
+<tr><td><b>Ein Bild malen</b></td><td><b>3840 × 1600</b> Bildpunkte, intern 64 Bit je Punkt mit Alphakanal, Rechtecke, Text und Transparenz</td></tr>
+<tr><td><b>Schreiben</b></td><td><b>Eigener TrueType-Renderer.</b> Der Kernel liest eine Schriftdatei vom Datenträger, wertet ihre Tabellen aus, zerlegt die Bézierkurven, füllt die Flächen nach der Umlaufregel und glättet die Kanten. Jede Größe scharf, keine eingebauten Glyphen</td></tr>
 <tr><td><b>Eine Maus führen</b></td><td>Zeiger bewegt sich, überdeckter Hintergrund wird gesichert und sauber wiederhergestellt. Einfach-, Doppel- und Dreifachklick werden unterschieden</td></tr>
 <tr><td><b>Speicher verwalten</b></td><td>Erkennt selbst, wie viel Arbeitsspeicher da ist, verwaltet ihn seitenweise und schaltet die Speicherverwaltungseinheit des Prozessors ein</td></tr>
 <tr><td><b>Dateien lesen</b></td><td>Spricht mit einem Datenträger und liest echte FAT32-Dateien, so wie ein USB-Stick sie enthält</td></tr>
@@ -95,7 +95,7 @@ Beenden mit <kbd>Strg</kbd>+<kbd>A</kbd>, loslassen, dann <kbd>X</kbd>.
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>72 KB · 3.012 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>138 KB · 5.388 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -116,11 +116,11 @@ Beenden mit <kbd>Strg</kbd>+<kbd>A</kbd>, loslassen, dann <kbd>X</kbd>.
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 3.012 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 5.388 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken 320 Sprungmarken. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang:
+In `kernel.S` stecken 552 Sprungmarken. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -132,6 +132,7 @@ In `kernel.S` stecken 320 Sprungmarken. Jede gehört zu einem Zuständigkeitsber
 | `fb_` `cursor_` | 45 | Bildschirm, Zeichnen, Schrift, Mauszeiger |
 | `virtio_` `mouse_` `click_` | 53 | Gerätetreiber, Maus, Klickerkennung |
 | `mem_` `pmm_` `mmu_` `fdt_` | 63 | Speicherverwaltung und Hardware-Erkennung |
+| `ttf_` `edge_` `cov_` | 130 | TrueType auswerten, Kurven zerlegen, Flächen füllen, Kanten glätten |
 | `blk_` `fat_` | 54 | Datenträger und Dateisystem |
 | `console_` `string_` | 22 | Konsole und Hilfsroutinen |
 
@@ -141,7 +142,7 @@ In `kernel.S` stecken 320 Sprungmarken. Jede gehört zu einem Zuständigkeitsber
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **13.920 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **24.304 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 106 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `disk.img` | 64 MB | Testdatenträger mit echtem FAT32 und drei Testdateien |
@@ -150,7 +151,7 @@ In `kernel.S` stecken 320 Sprungmarken. Jede gehört zu einem Zuständigkeitsber
 
 Keine dieser Dateien liegt in der Versionsverwaltung, sie entstehen alle neu aus dem Quelltext.
 
-Im Betrieb belegt der Kernel zusätzlich **3,3 MB** Arbeitsspeicher. Davon sind allein 1,2 MB der Bildspeicher, weil 640 × 480 Bildpunkte mit je 4 Byte Farbe genau so viel brauchen.
+Im Betrieb belegt der Kernel zusätzlich **71 MB** Arbeitsspeicher. Davon sind 46,9 MB der interne Bildpuffer mit 64 Bit je Punkt und 23,4 MB der Ausgabepuffer mit 32 Bit.
 
 ---
 
@@ -242,10 +243,10 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 9. Fenstersystem | offen |
 | 10. Netzwerk bis TCP | offen |
 | 11. Verschlüsselte Verbindungen | offen |
-| 12. Vektorgrafik | offen |
+| 12. Vektorgrafik | teilweise, Schriftrendering fertig |
 | 13. Portierung auf Raspberry Pi 5 | offen |
 
-Zusätzlich fertig: Bitmap-Zeichensatz mit 95 Zeichen.
+Zusätzlich fertig: TrueType-Renderer als Systemschrift, Zeiger mit Alphakanal aus einer SVG.
 
 ---
 
@@ -278,10 +279,10 @@ Zusätzlich fertig: Bitmap-Zeichensatz mit 95 Zeichen.
 
 | | |
 |---|---|
-| Eigener Quelltext | 76 KB in drei Dateien |
-| Zeilen Assembler | 3.012 |
-| **Fertiges Betriebssystem** | **13.920 Byte** |
-| Speicherbedarf im Betrieb | 3,3 MB, davon 1,2 MB Bildspeicher |
+| Eigener Quelltext | 141 KB in drei Dateien |
+| Zeilen Assembler | 5.388 |
+| **Fertiges Betriebssystem** | **24.304 Byte** |
+| Speicherbedarf im Betrieb | 71 MB, davon 70 MB Bildspeicher |
 | Dokumentation | 29 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
 | Entwicklungsziel | QEMU `virt` |

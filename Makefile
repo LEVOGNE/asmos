@@ -11,8 +11,9 @@ CPU     := cortex-a72
 DISK          := disk.img
 DISK_MB       := 64
 DISK_LABEL    := MONOLITH
+FONT_SRC      := /Users/l3v0/Downloads/babel_sans/BabelSans-Oblique.ttf
 
-DEVICES := -device ramfb -device virtio-mouse-device -global virtio-mmio.force-legacy=false -drive file=$(DISK),if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
+DEVICES := -m 256M -device ramfb -device virtio-tablet-device -global virtio-mmio.force-legacy=false -drive file=$(DISK),if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 
 CHECK_SECONDS := 3
 CHECK_EXPECT  := BOOT OK
@@ -82,6 +83,7 @@ disk:
 	  printf 'zweite datei\n' > "$$MP/DATA.BIN"; \
 	  : > "$$MP/EMPTY.TXT"; \
 	  python3 -c "print(''.join('Zeile %04d ABCDEFGHIJKLMNOPQRSTUVWXYZ\n' % i for i in range(60)), end='')" > "$$MP/BIG.TXT"; \
+	  if [ -f "$(FONT_SRC)" ]; then cp "$(FONT_SRC)" "$$MP/FONT.TTF"; fi; \
 	  hdiutil detach "$$MP" >/dev/null 2>&1; \
 	  echo "OK: $(DISK) erzeugt, war eingebunden unter $$MP"
 
