@@ -309,6 +309,12 @@
 .equ BOOT_SELFTEST,         0
 .equ PMM_SELFTEST,          0
 .equ FS_SELFTEST,           1
+.equ FS_SELFTEST_BIG,       0
+
+.macro ladr reg, sym
+    adrp    \reg, \sym
+    add     \reg, \reg, :lo12:\sym
+.endm
 
 .macro irq_save
     stp     x2, x3, [sp, #-IRQ_FRAME_SIZE]!
@@ -395,17 +401,14 @@ boot_from_el2:
     eret
 
 boot_el1_entry:
-    adrp    x0, __stack_top
-    add     x0, x0, :lo12:__stack_top
+    ladr    x0, __stack_top
     mov     sp, x0
     bl      boot_clear_bss
-    adrp    x0, fdt_base
-    add     x0, x0, :lo12:fdt_base
+    ladr    x0, fdt_base
     str     x21, [x0]
     bl      uart_init
     bl      vec_init
-    adrp    x0, boot_banner
-    add     x0, x0, :lo12:boot_banner
+    ladr    x0, boot_banner
     bl      uart_puts
     bl      mem_init
     bl      pmm_init
@@ -427,9 +430,18 @@ boot_el1_entry:
 .if FS_SELFTEST
     bl      blk_selftest
     bl      fat_list_root
-    adrp    x0, fat_hello_name
-    add     x0, x0, :lo12:fat_hello_name
+    ladr    x0, fat_cat_label
+    bl      uart_puts
+    ladr    x0, fat_hello_name
     bl      fat_cat
+.endif
+.if FS_SELFTEST_BIG
+    ladr    x0, fat_big_label
+    bl      uart_puts
+    ladr    x0, fat_big_name
+    bl      fat_cat
+    ladr    x0, fat_big_end
+    bl      uart_puts
 .endif
     bl      timer_init
     msr     daifclr, #DAIF_I
@@ -441,10 +453,8 @@ boot_el1_entry:
     b       console_run
 
 boot_clear_bss:
-    adrp    x0, __bss_start
-    add     x0, x0, :lo12:__bss_start
-    adrp    x1, __bss_end
-    add     x1, x1, :lo12:__bss_end
+    ladr    x0, __bss_start
+    ladr    x1, __bss_end
 
 boot_clear_bss_loop:
     cmp     x0, x1
@@ -458,15 +468,13 @@ boot_clear_bss_done:
 .section .text
 
 vec_init:
-    adrp    x0, vec_table
-    add     x0, x0, :lo12:vec_table
+    ladr    x0, vec_table
     msr     vbar_el1, x0
     isb
     ret
 
 fwcfg_dma:
-    adrp    x3, fwcfg_access
-    add     x3, x3, :lo12:fwcfg_access
+    ladr    x3, fwcfg_access
     rev     w0, w0
     str     w0, [x3]
     rev     w1, w1
@@ -506,53 +514,15 @@ fwcfg_read_next:
     mov     w0, #FWCFG_DMA_READ
     b       fwcfg_dma
 
-fwcfg_list:
-    stp     x29, x30, [sp, #-32]!
-    str     x19, [sp, #16]
-    mov     w0, #FWCFG_KEY_FILE_DIR
-    mov     w1, #4
-    adrp    x2, fwcfg_count
-    add     x2, x2, :lo12:fwcfg_count
-    bl      fwcfg_select_read
-    cbnz    w0, fwcfg_list_done
-    adrp    x0, fwcfg_count
-    add     x0, x0, :lo12:fwcfg_count
-    ldr     w19, [x0]
-    rev     w19, w19
-
-fwcfg_list_loop:
-    cbz     w19, fwcfg_list_done
-    sub     w19, w19, #1
-    mov     w1, #FWCFG_ENTRY_SIZE
-    adrp    x2, fwcfg_entry
-    add     x2, x2, :lo12:fwcfg_entry
-    bl      fwcfg_read_next
-    cbnz    w0, fwcfg_list_done
-    adrp    x0, uart_newline
-    add     x0, x0, :lo12:uart_newline
-    bl      uart_puts
-    adrp    x0, fwcfg_entry
-    add     x0, x0, :lo12:fwcfg_entry
-    add     x0, x0, #FWCFG_ENTRY_NAME
-    bl      uart_puts
-    b       fwcfg_list_loop
-
-fwcfg_list_done:
-    ldr     x19, [sp, #16]
-    ldp     x29, x30, [sp], #32
-    ret
-
 fwcfg_find_ramfb:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
     mov     w0, #FWCFG_KEY_FILE_DIR
     mov     w1, #4
-    adrp    x2, fwcfg_count
-    add     x2, x2, :lo12:fwcfg_count
+    ladr    x2, fwcfg_count
     bl      fwcfg_select_read
     cbnz    w0, fwcfg_find_fail
-    adrp    x0, fwcfg_count
-    add     x0, x0, :lo12:fwcfg_count
+    ladr    x0, fwcfg_count
     ldr     w19, [x0]
     rev     w19, w19
 
@@ -560,19 +530,15 @@ fwcfg_find_loop:
     cbz     w19, fwcfg_find_fail
     sub     w19, w19, #1
     mov     w1, #FWCFG_ENTRY_SIZE
-    adrp    x2, fwcfg_entry
-    add     x2, x2, :lo12:fwcfg_entry
+    ladr    x2, fwcfg_entry
     bl      fwcfg_read_next
     cbnz    w0, fwcfg_find_fail
-    adrp    x0, fwcfg_entry
-    add     x0, x0, :lo12:fwcfg_entry
+    ladr    x0, fwcfg_entry
     add     x0, x0, #FWCFG_ENTRY_NAME
-    adrp    x1, fwcfg_ramfb_name
-    add     x1, x1, :lo12:fwcfg_ramfb_name
+    ladr    x1, fwcfg_ramfb_name
     bl      string_equal
     cbz     w0, fwcfg_find_loop
-    adrp    x0, fwcfg_entry
-    add     x0, x0, :lo12:fwcfg_entry
+    ladr    x0, fwcfg_entry
     ldrh    w0, [x0, #FWCFG_ENTRY_SELECT]
     rev16   w0, w0
     ldr     x19, [sp, #16]
@@ -605,10 +571,8 @@ fb_init:
     cmn     w0, #1
     b.eq    fb_init_missing
     mov     w19, w0
-    adrp    x0, fb_config
-    add     x0, x0, :lo12:fb_config
-    adrp    x1, fb_memory
-    add     x1, x1, :lo12:fb_memory
+    ladr    x0, fb_config
+    ladr    x1, fb_memory
     rev     x1, x1
     str     x1, [x0, #FB_CFG_ADDR]
     ldr     w1, =FB_FOURCC_XR24
@@ -627,28 +591,24 @@ fb_init:
     lsl     w0, w19, #16
     orr     w0, w0, #(FWCFG_DMA_SELECT | FWCFG_DMA_WRITE)
     mov     w1, #FB_CFG_SIZE
-    adrp    x2, fb_config
-    add     x2, x2, :lo12:fb_config
+    ladr    x2, fb_config
     bl      fwcfg_dma
     cbnz    w0, fb_init_missing
-    adrp    x0, fb_ready_msg
-    add     x0, x0, :lo12:fb_ready_msg
+    ladr    x0, fb_ready_msg
     bl      uart_puts
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
 
 fb_init_missing:
-    adrp    x0, fb_missing_msg
-    add     x0, x0, :lo12:fb_missing_msg
+    ladr    x0, fb_missing_msg
     bl      uart_puts
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
 
 fb_clear:
-    adrp    x1, fb_memory
-    add     x1, x1, :lo12:fb_memory
+    ladr    x1, fb_memory
     mov     x2, #FB_HEIGHT
     mov     x3, #FB_STRIDE
     mul     x2, x2, x3
@@ -662,8 +622,7 @@ fb_clear_loop:
 fb_pixel_addr:
     mov     x9, #FB_STRIDE
     madd    x9, x1, x9, xzr
-    adrp    x10, fb_memory
-    add     x10, x10, :lo12:fb_memory
+    ladr    x10, fb_memory
     add     x9, x10, x9
     add     x0, x9, x0, lsl #2
     ret
@@ -708,8 +667,7 @@ fb_glyph:
     cmp     w1, w4
     b.hi    fb_glyph_done
     mov     w20, w3
-    adrp    x21, font_data
-    add     x21, x21, :lo12:font_data
+    ladr    x21, font_data
     add     x21, x21, x19, lsl #3
     bl      fb_pixel_addr
     mov     x22, x0
@@ -774,48 +732,49 @@ fb_text_done:
     ldp     x29, x30, [sp], #48
     ret
 
+cursor_copy:
+cursor_copy_row:
+    cbz     w3, cursor_copy_done
+    mov     w6, w2
+    mov     x7, x0
+    mov     x8, x1
+
+cursor_copy_col:
+    cbz     w6, cursor_copy_next
+    ldr     w9, [x8], #4
+    str     w9, [x7], #4
+    sub     w6, w6, #1
+    b       cursor_copy_col
+
+cursor_copy_next:
+    add     x0, x0, x4
+    add     x1, x1, x5
+    sub     w3, w3, #1
+    b       cursor_copy_row
+
+cursor_copy_done:
+    ret
+
 cursor_hide:
-    stp     x29, x30, [sp, #-48]!
-    stp     x19, x20, [sp, #16]
-    str     x21, [sp, #32]
-    adrp    x19, cursor_state
-    add     x19, x19, :lo12:cursor_state
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x19, cursor_state
     ldrb    w0, [x19, #CURSOR_STATE_VISIBLE]
     cbz     w0, cursor_hide_done
     strb    wzr, [x19, #CURSOR_STATE_VISIBLE]
     ldr     w0, [x19, #CURSOR_STATE_X]
     ldr     w1, [x19, #CURSOR_STATE_Y]
     bl      fb_pixel_addr
-    mov     x20, x0
-    adrp    x21, cursor_backing
-    add     x21, x21, :lo12:cursor_backing
+    ladr    x1, cursor_backing
     ldr     w2, [x19, #CURSOR_STATE_W]
     ldr     w3, [x19, #CURSOR_STATE_H]
-
-cursor_hide_row:
-    cbz     w3, cursor_hide_done
-    mov     w4, w2
-    mov     x5, x20
-    mov     x6, x21
-
-cursor_hide_col:
-    cbz     w4, cursor_hide_next
-    ldr     w7, [x6], #4
-    str     w7, [x5], #4
-    sub     w4, w4, #1
-    b       cursor_hide_col
-
-cursor_hide_next:
-    mov     x7, #FB_STRIDE
-    add     x20, x20, x7
-    add     x21, x21, #(CURSOR_W * FB_BPP)
-    sub     w3, w3, #1
-    b       cursor_hide_row
+    mov     x4, #FB_STRIDE
+    mov     x5, #(CURSOR_W * FB_BPP)
+    bl      cursor_copy
 
 cursor_hide_done:
-    ldr     x21, [sp, #32]
-    ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #48
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
     ret
 
 cursor_show:
@@ -823,10 +782,8 @@ cursor_show:
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
     str     x23, [sp, #48]
-    adrp    x19, cursor_state
-    add     x19, x19, :lo12:cursor_state
-    adrp    x0, mouse_x
-    add     x0, x0, :lo12:mouse_x
+    ladr    x19, cursor_state
+    ladr    x0, mouse_x
     ldr     w20, [x0]
     ldr     w21, [x0, #4]
     mov     w0, #FB_WIDTH
@@ -846,39 +803,20 @@ cursor_show:
     mov     w0, w20
     mov     w1, w21
     bl      fb_pixel_addr
-    mov     x20, x0
-    adrp    x21, cursor_backing
-    add     x21, x21, :lo12:cursor_backing
+    mov     x1, x0
+    ladr    x0, cursor_backing
     mov     w2, w22
     mov     w3, w23
-
-cursor_show_save_row:
-    cbz     w3, cursor_show_draw
-    mov     w4, w2
-    mov     x5, x20
-    mov     x6, x21
-
-cursor_show_save_col:
-    cbz     w4, cursor_show_save_next
-    ldr     w7, [x5], #4
-    str     w7, [x6], #4
-    sub     w4, w4, #1
-    b       cursor_show_save_col
-
-cursor_show_save_next:
-    mov     x7, #FB_STRIDE
-    add     x20, x20, x7
-    add     x21, x21, #(CURSOR_W * FB_BPP)
-    sub     w3, w3, #1
-    b       cursor_show_save_row
+    mov     x4, #(CURSOR_W * FB_BPP)
+    mov     x5, #FB_STRIDE
+    bl      cursor_copy
 
 cursor_show_draw:
     ldr     w0, [x19, #CURSOR_STATE_X]
     ldr     w1, [x19, #CURSOR_STATE_Y]
     bl      fb_pixel_addr
     mov     x20, x0
-    adrp    x21, cursor_bitmap
-    add     x21, x21, :lo12:cursor_bitmap
+    ladr    x21, cursor_bitmap
     mov     w3, w23
     mov     w6, #0
 
@@ -951,20 +889,17 @@ fb_testcard:
     bl      fb_fill_rect
     mov     w0, #16
     mov     w1, #16
-    adrp    x2, fb_title
-    add     x2, x2, :lo12:fb_title
+    ladr    x2, fb_title
     ldr     w3, =COLOR_CURSOR
     bl      fb_text
     mov     w0, #16
     mov     w1, #440
-    adrp    x2, fb_charset
-    add     x2, x2, :lo12:fb_charset
+    ladr    x2, fb_charset
     ldr     w3, =COLOR_CURSOR
     bl      fb_text
     mov     w0, #16
     mov     w1, #456
-    adrp    x2, fb_charset2
-    add     x2, x2, :lo12:fb_charset2
+    ladr    x2, fb_charset2
     ldr     w3, =COLOR_CURSOR
     bl      fb_text
     ldp     x29, x30, [sp], #16
@@ -984,20 +919,16 @@ virtio_scan_loop:
     b.ne    virtio_scan_next
     ldr     w0, [x19, #VIRTIO_REG_DEVICE_ID]
     cbz     w0, virtio_scan_next
-    adrp    x0, virtio_slot_label
-    add     x0, x0, :lo12:virtio_slot_label
+    ladr    x0, virtio_slot_label
     mov     x1, x19
     bl      uart_field
-    adrp    x0, virtio_id_label
-    add     x0, x0, :lo12:virtio_id_label
+    ladr    x0, virtio_id_label
     ldr     w1, [x19, #VIRTIO_REG_DEVICE_ID]
     bl      uart_field
-    adrp    x0, virtio_ver_label
-    add     x0, x0, :lo12:virtio_ver_label
+    ladr    x0, virtio_ver_label
     ldr     w1, [x19, #VIRTIO_REG_VERSION]
     bl      uart_field
-    adrp    x0, uart_newline
-    add     x0, x0, :lo12:uart_newline
+    ladr    x0, uart_newline
     bl      uart_puts
 
 virtio_scan_next:
@@ -1014,28 +945,23 @@ mem_init:
     str     x19, [sp, #16]
     bl      fdt_find_memory
     cbz     x1, mem_init_fail
-    adrp    x19, ram_base
-    add     x19, x19, :lo12:ram_base
+    ladr    x19, ram_base
     str     x0, [x19]
     str     x1, [x19, #8]
-    adrp    x0, mem_base_label
-    add     x0, x0, :lo12:mem_base_label
+    ladr    x0, mem_base_label
     ldr     x1, [x19]
     bl      uart_field
-    adrp    x0, mem_size_label
-    add     x0, x0, :lo12:mem_size_label
+    ladr    x0, mem_size_label
     ldr     x1, [x19, #8]
     bl      uart_field
-    adrp    x0, uart_newline
-    add     x0, x0, :lo12:uart_newline
+    ladr    x0, uart_newline
     bl      uart_puts
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
 
 mem_init_fail:
-    adrp    x0, mem_fail_msg
-    add     x0, x0, :lo12:mem_fail_msg
+    ladr    x0, mem_fail_msg
     bl      uart_puts
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
@@ -1045,15 +971,12 @@ pmm_init:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
-    adrp    x0, __image_end
-    add     x0, x0, :lo12:__image_end
+    ladr    x0, __image_end
     add     x0, x0, #(PAGE_SIZE - 1)
     bic     x0, x0, #(PAGE_SIZE - 1)
-    adrp    x19, pmm_base
-    add     x19, x19, :lo12:pmm_base
+    ladr    x19, pmm_base
     str     x0, [x19]
-    adrp    x1, ram_base
-    add     x1, x1, :lo12:ram_base
+    ladr    x1, ram_base
     ldr     x2, [x1]
     ldr     x3, [x1, #8]
     add     x2, x2, x3
@@ -1064,8 +987,7 @@ pmm_init:
     cmp     x2, x3
     csel    x2, x2, x3, lo
     str     x2, [x19, #8]
-    adrp    x0, fdt_base
-    add     x0, x0, :lo12:fdt_base
+    ladr    x0, fdt_base
     ldr     x0, [x0]
     cbz     x0, pmm_init_report
     ldr     w1, [x0, #4]
@@ -1073,29 +995,23 @@ pmm_init:
     mov     x20, x0
     mov     x21, x1
     bl      pmm_reserve
-    adrp    x0, pmm_fdt_label
-    add     x0, x0, :lo12:pmm_fdt_label
+    ladr    x0, pmm_fdt_label
     mov     x1, x20
     bl      uart_field
-    adrp    x0, pmm_fdtlen_label
-    add     x0, x0, :lo12:pmm_fdtlen_label
+    ladr    x0, pmm_fdtlen_label
     mov     x1, x21
     bl      uart_field
-    adrp    x0, pmm_fdt_suffix
-    add     x0, x0, :lo12:pmm_fdt_suffix
+    ladr    x0, pmm_fdt_suffix
     bl      uart_puts
 
 pmm_init_report:
-    adrp    x0, pmm_base_label
-    add     x0, x0, :lo12:pmm_base_label
+    ladr    x0, pmm_base_label
     ldr     x1, [x19]
     bl      uart_field
-    adrp    x0, pmm_pages_label
-    add     x0, x0, :lo12:pmm_pages_label
+    ladr    x0, pmm_pages_label
     ldr     x1, [x19, #8]
     bl      uart_field
-    adrp    x0, uart_newline
-    add     x0, x0, :lo12:uart_newline
+    ladr    x0, uart_newline
     bl      uart_puts
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
@@ -1104,8 +1020,7 @@ pmm_init_report:
 
 pmm_init_none:
     str     xzr, [x19, #8]
-    adrp    x0, pmm_fail_msg
-    add     x0, x0, :lo12:pmm_fail_msg
+    ladr    x0, pmm_fail_msg
     bl      uart_puts
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
@@ -1113,10 +1028,8 @@ pmm_init_none:
     ret
 
 pmm_count_used:
-    adrp    x1, pmm_bitmap
-    add     x1, x1, :lo12:pmm_bitmap
-    adrp    x2, pmm_base
-    add     x2, x2, :lo12:pmm_base
+    ladr    x1, pmm_bitmap
+    ladr    x2, pmm_base
     ldr     x2, [x2, #8]
     mov     x0, #0
     mov     x3, #0
@@ -1142,8 +1055,7 @@ pmm_selftest:
     str     x21, [sp, #32]
     bl      pmm_count_used
     mov     x1, x0
-    adrp    x0, pmm_used_label
-    add     x0, x0, :lo12:pmm_used_label
+    ladr    x0, pmm_used_label
     bl      uart_field
     bl      pmm_alloc
     mov     x19, x0
@@ -1152,26 +1064,21 @@ pmm_selftest:
     bl      pmm_alloc
     mov     x21, x0
     mov     x1, x19
-    adrp    x0, pmm_test_label
-    add     x0, x0, :lo12:pmm_test_label
+    ladr    x0, pmm_test_label
     bl      uart_field
     mov     x1, x20
-    adrp    x0, pmm_test_label
-    add     x0, x0, :lo12:pmm_test_label
+    ladr    x0, pmm_test_label
     bl      uart_field
     mov     x1, x21
-    adrp    x0, pmm_test_label
-    add     x0, x0, :lo12:pmm_test_label
+    ladr    x0, pmm_test_label
     bl      uart_field
     mov     x0, x20
     bl      pmm_free
     bl      pmm_alloc
     mov     x1, x0
-    adrp    x0, pmm_reuse_label
-    add     x0, x0, :lo12:pmm_reuse_label
+    ladr    x0, pmm_reuse_label
     bl      uart_field
-    adrp    x0, uart_newline
-    add     x0, x0, :lo12:uart_newline
+    ladr    x0, uart_newline
     bl      uart_puts
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
@@ -1179,8 +1086,7 @@ pmm_selftest:
     ret
 
 pmm_reserve:
-    adrp    x2, pmm_base
-    add     x2, x2, :lo12:pmm_base
+    ladr    x2, pmm_base
     ldr     x3, [x2]
     ldr     x4, [x2, #8]
     add     x1, x0, x1
@@ -1193,8 +1099,7 @@ pmm_reserve:
     b.lo    pmm_reserve_done
     lsr     x0, x0, #PAGE_SHIFT
     lsr     x1, x1, #PAGE_SHIFT
-    adrp    x5, pmm_bitmap
-    add     x5, x5, :lo12:pmm_bitmap
+    ladr    x5, pmm_bitmap
 
 pmm_reserve_loop:
     cmp     x0, x1
@@ -1215,10 +1120,8 @@ pmm_reserve_done:
     ret
 
 pmm_alloc:
-    adrp    x1, pmm_bitmap
-    add     x1, x1, :lo12:pmm_bitmap
-    adrp    x2, pmm_base
-    add     x2, x2, :lo12:pmm_base
+    ladr    x1, pmm_bitmap
+    ladr    x2, pmm_base
     ldr     x3, [x2, #8]
     mov     x4, #0
 
@@ -1248,8 +1151,7 @@ pmm_alloc_none:
     ret
 
 pmm_free:
-    adrp    x1, pmm_base
-    add     x1, x1, :lo12:pmm_base
+    ladr    x1, pmm_base
     ldr     x2, [x1]
     subs    x0, x0, x2
     b.lo    pmm_free_done
@@ -1257,8 +1159,7 @@ pmm_free:
     ldr     x3, [x1, #8]
     cmp     x0, x3
     b.hs    pmm_free_done
-    adrp    x1, pmm_bitmap
-    add     x1, x1, :lo12:pmm_bitmap
+    ladr    x1, pmm_bitmap
     lsr     x5, x0, #3
     ldrb    w6, [x1, x5]
     and     w7, w0, #7
@@ -1274,24 +1175,20 @@ mmu_init:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
-    adrp    x19, mmu_l1_table
-    add     x19, x19, :lo12:mmu_l1_table
-    adrp    x20, mmu_l2_table
-    add     x20, x20, :lo12:mmu_l2_table
+    ladr    x19, mmu_l1_table
+    ladr    x20, mmu_l2_table
 
     ldr     x0, =DESC_DEVICE
     str     x0, [x19]
     orr     x0, x20, #DESC_TABLE
     str     x0, [x19, #8]
 
-    adrp    x21, fb_memory
-    add     x21, x21, :lo12:fb_memory
+    ladr    x21, fb_memory
     mov     x0, #RAM_BASE_FIXED
     sub     x21, x21, x0
     lsr     x21, x21, #BLOCK_SHIFT
 
-    adrp    x0, ram_base
-    add     x0, x0, :lo12:ram_base
+    ladr    x0, ram_base
     ldr     x1, [x0, #8]
     lsr     x1, x1, #BLOCK_SHIFT
     mov     x2, #TABLE_ENTRIES
@@ -1337,8 +1234,7 @@ mmu_init_tables_done:
     orr     x0, x0, x1
     msr     sctlr_el1, x0
     isb
-    adrp    x0, mmu_ready_msg
-    add     x0, x0, :lo12:mmu_ready_msg
+    ladr    x0, mmu_ready_msg
     bl      uart_puts
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
@@ -1367,8 +1263,7 @@ fdt_find_memory:
     stp     x29, x30, [sp, #-64]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
-    adrp    x0, fdt_base
-    add     x0, x0, :lo12:fdt_base
+    ladr    x0, fdt_base
     ldr     x22, [x0]
     cbz     x22, fdt_find_memory_fail
     ldr     w0, [x22]
@@ -1408,8 +1303,7 @@ fdt_find_memory_endnode:
 
 fdt_find_memory_node:
     add     x0, x19, #4
-    adrp    x1, fdt_memory_name
-    add     x1, x1, :lo12:fdt_memory_name
+    ladr    x1, fdt_memory_name
     bl      string_starts_with
     mov     w21, w0
     add     x0, x19, #4
@@ -1428,8 +1322,7 @@ fdt_find_memory_prop:
     ldr     w0, [x19, #8]
     rev     w0, w0
     add     x0, x20, x0
-    adrp    x1, fdt_reg_name
-    add     x1, x1, :lo12:fdt_reg_name
+    ladr    x1, fdt_reg_name
     bl      string_equal
     cbz     w0, fdt_find_memory_prop_skip
     ldr     w0, [x19, #FDT_PROP_HEADER_SIZE]
@@ -1545,6 +1438,9 @@ virtio_setup:
     ret
 
 virtio_setup_fail:
+    mov     w0, #VIRTIO_STATUS_FAILED
+    str     w0, [x19, #VIRTIO_REG_STATUS]
+    dsb     sy
     mov     w0, #1
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
@@ -1565,16 +1461,12 @@ virtio_input_init:
     bl      virtio_find
     cbz     x0, virtio_input_fail
     mov     x19, x0
-    adrp    x1, virtio_input_base
-    add     x1, x1, :lo12:virtio_input_base
+    ladr    x1, virtio_input_base
     str     x19, [x1]
     mov     x0, x19
-    adrp    x1, virtio_desc
-    add     x1, x1, :lo12:virtio_desc
-    adrp    x2, virtio_avail
-    add     x2, x2, :lo12:virtio_avail
-    adrp    x3, virtio_used
-    add     x3, x3, :lo12:virtio_used
+    ladr    x1, virtio_desc
+    ladr    x2, virtio_avail
+    ladr    x3, virtio_used
     mov     x4, #VIRTIO_QUEUE_SIZE
     bl      virtio_setup
     cbnz    w0, virtio_input_fail
@@ -1587,20 +1479,21 @@ virtio_input_init:
     sub     x0, x0, x1
     lsr     x0, x0, #9
     add     w0, w0, #VIRTIO_MMIO_IRQ_BASE
-    adrp    x1, virtio_input_intid
-    add     x1, x1, :lo12:virtio_input_intid
+    ladr    x1, virtio_input_intid
     str     w0, [x1]
     bl      gic_enable_irq
-    adrp    x0, virtio_ready_msg
-    add     x0, x0, :lo12:virtio_ready_msg
+    ladr    x0, virtio_ready_msg
     bl      uart_puts
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
 
 virtio_input_fail:
-    adrp    x0, virtio_fail_msg
-    add     x0, x0, :lo12:virtio_fail_msg
+    ladr    x0, virtio_input_base
+    str     xzr, [x0]
+    ladr    x0, virtio_input_intid
+    str     wzr, [x0]
+    ladr    x0, virtio_fail_msg
     bl      uart_puts
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
@@ -1613,23 +1506,18 @@ blk_init:
     bl      virtio_find
     cbz     x0, blk_init_fail
     mov     x19, x0
-    adrp    x1, blk_base
-    add     x1, x1, :lo12:blk_base
+    ladr    x1, blk_base
     str     x19, [x1]
     mov     x0, x19
-    adrp    x1, blk_desc
-    add     x1, x1, :lo12:blk_desc
-    adrp    x2, blk_avail
-    add     x2, x2, :lo12:blk_avail
-    adrp    x3, blk_used
-    add     x3, x3, :lo12:blk_used
+    ladr    x1, blk_desc
+    ladr    x2, blk_avail
+    ladr    x3, blk_used
     mov     x4, #BLK_QUEUE_SIZE
     bl      virtio_setup
     cbnz    w0, blk_init_fail
     mov     x0, x19
     bl      virtio_driver_ok
-    adrp    x0, blk_ready_msg
-    add     x0, x0, :lo12:blk_ready_msg
+    ladr    x0, blk_ready_msg
     bl      uart_puts
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
@@ -1659,20 +1547,17 @@ fat_init:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     mov     x0, #0
-    adrp    x1, blk_buffer
-    add     x1, x1, :lo12:blk_buffer
+    ladr    x1, blk_buffer
     bl      blk_read
     cbnz    w0, fat_init_fail
-    adrp    x19, blk_buffer
-    add     x19, x19, :lo12:blk_buffer
+    ladr    x19, blk_buffer
     mov     x0, x19
     mov     x1, #BPB_SIGNATURE
     bl      mem_read16
     ldr     w1, =BPB_SIG_VALUE
     cmp     w0, w1
     b.ne    fat_init_fail
-    adrp    x20, fat_state
-    add     x20, x20, :lo12:fat_state
+    ladr    x20, fat_state
     mov     x0, x19
     mov     x1, #BPB_BYTES_PER_SEC
     bl      mem_read16
@@ -1700,24 +1585,19 @@ fat_init:
     mov     x1, #BPB_ROOT_CLUSTER
     bl      mem_read32
     str     w0, [x20, #FAT_ROOT_CLUSTER]
-    adrp    x0, fat_label_res
-    add     x0, x0, :lo12:fat_label_res
+    ladr    x0, fat_label_res
     ldr     w1, [x20, #FAT_START]
     bl      uart_field
-    adrp    x0, fat_label_spf
-    add     x0, x0, :lo12:fat_label_spf
+    ladr    x0, fat_label_spf
     ldr     w1, [x20, #FAT_SECTORS]
     bl      uart_field
-    adrp    x0, fat_label_data
-    add     x0, x0, :lo12:fat_label_data
+    ladr    x0, fat_label_data
     ldr     w1, [x20, #FAT_DATA_START]
     bl      uart_field
-    adrp    x0, fat_label_root
-    add     x0, x0, :lo12:fat_label_root
+    ladr    x0, fat_label_root
     ldr     w1, [x20, #FAT_ROOT_CLUSTER]
     bl      uart_field
-    adrp    x0, uart_newline
-    add     x0, x0, :lo12:uart_newline
+    ladr    x0, uart_newline
     bl      uart_puts
     mov     w0, #0
     ldp     x19, x20, [sp, #16]
@@ -1725,8 +1605,7 @@ fat_init:
     ret
 
 fat_init_fail:
-    adrp    x0, fat_fail_msg
-    add     x0, x0, :lo12:fat_fail_msg
+    ladr    x0, fat_fail_msg
     bl      uart_puts
     mov     w0, #1
     ldp     x19, x20, [sp, #16]
@@ -1734,8 +1613,7 @@ fat_init_fail:
     ret
 
 fat_cluster_to_sector:
-    adrp    x1, fat_state
-    add     x1, x1, :lo12:fat_state
+    ladr    x1, fat_state
     ldr     w2, [x1, #FAT_SEC_PER_CLUS]
     sub     w0, w0, #2
     mul     w0, w0, w2
@@ -1747,16 +1625,13 @@ fat_list_root:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
-    adrp    x0, fat_state
-    add     x0, x0, :lo12:fat_state
+    ladr    x0, fat_state
     ldr     w0, [x0, #FAT_ROOT_CLUSTER]
     bl      fat_cluster_to_sector
-    adrp    x1, blk_buffer
-    add     x1, x1, :lo12:blk_buffer
+    ladr    x1, blk_buffer
     bl      blk_read
     cbnz    w0, fat_list_done
-    adrp    x19, blk_buffer
-    add     x19, x19, :lo12:blk_buffer
+    ladr    x19, blk_buffer
     mov     w20, #(BLK_SECTOR_SIZE / DIR_ENTRY_SIZE)
 
 fat_list_loop:
@@ -1770,20 +1645,17 @@ fat_list_loop:
     b.eq    fat_list_next
     tst     w0, #DIR_ATTR_VOLUME
     b.ne    fat_list_next
-    adrp    x0, fat_entry_prefix
-    add     x0, x0, :lo12:fat_entry_prefix
+    ladr    x0, fat_entry_prefix
     bl      uart_puts
     mov     x0, x19
     mov     w1, #DIR_NAME_LEN
     bl      uart_putn
-    adrp    x0, fat_size_label
-    add     x0, x0, :lo12:fat_size_label
+    ladr    x0, fat_size_label
     mov     x0, x19
     mov     x1, #DIR_SIZE
     bl      mem_read32
     mov     x1, x0
-    adrp    x0, fat_size_label
-    add     x0, x0, :lo12:fat_size_label
+    ladr    x0, fat_size_label
     bl      uart_field
 
 fat_list_next:
@@ -1792,8 +1664,7 @@ fat_list_next:
     b       fat_list_loop
 
 fat_list_done:
-    adrp    x0, uart_newline
-    add     x0, x0, :lo12:uart_newline
+    ladr    x0, uart_newline
     bl      uart_puts
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
@@ -1805,19 +1676,16 @@ fat_next_cluster:
     str     x19, [sp, #16]
     mov     w19, w0
     lsl     w0, w0, #2
-    adrp    x1, fat_state
-    add     x1, x1, :lo12:fat_state
+    ladr    x1, fat_state
     ldr     w2, [x1, #FAT_START]
     lsr     w3, w0, #9
     add     w3, w3, w2
     and     w19, w0, #(BLK_SECTOR_SIZE - 1)
     mov     w0, w3
-    adrp    x1, fat_buffer
-    add     x1, x1, :lo12:fat_buffer
+    ladr    x1, fat_buffer
     bl      blk_read
     cbnz    w0, fat_next_cluster_end
-    adrp    x0, fat_buffer
-    add     x0, x0, :lo12:fat_buffer
+    ladr    x0, fat_buffer
     mov     x1, x19
     bl      mem_read32
     ldr     w1, =FAT_ENTRY_MASK
@@ -1837,16 +1705,13 @@ fat_find:
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
     mov     x21, x0
-    adrp    x0, fat_state
-    add     x0, x0, :lo12:fat_state
+    ladr    x0, fat_state
     ldr     w0, [x0, #FAT_ROOT_CLUSTER]
     bl      fat_cluster_to_sector
-    adrp    x1, blk_buffer
-    add     x1, x1, :lo12:blk_buffer
+    ladr    x1, blk_buffer
     bl      blk_read
     cbnz    w0, fat_find_none
-    adrp    x19, blk_buffer
-    add     x19, x19, :lo12:blk_buffer
+    ladr    x19, blk_buffer
     mov     w20, #(BLK_SECTOR_SIZE / DIR_ENTRY_SIZE)
 
 fat_find_loop:
@@ -1923,9 +1788,6 @@ fat_cat:
     cbz     w0, fat_cat_missing
     mov     w19, w0
     mov     w20, w1
-    adrp    x0, fat_cat_label
-    add     x0, x0, :lo12:fat_cat_label
-    bl      uart_puts
 
 fat_cat_cluster:
     ldr     w0, =FAT_EOC
@@ -1935,23 +1797,20 @@ fat_cat_cluster:
     mov     w0, w19
     bl      fat_cluster_to_sector
     mov     w21, w0
-    adrp    x0, fat_state
-    add     x0, x0, :lo12:fat_state
+    ladr    x0, fat_state
     ldr     w22, [x0, #FAT_SEC_PER_CLUS]
 
 fat_cat_sector:
     cbz     w22, fat_cat_advance
     cbz     w20, fat_cat_done
     mov     w0, w21
-    adrp    x1, blk_buffer
-    add     x1, x1, :lo12:blk_buffer
+    ladr    x1, blk_buffer
     bl      blk_read
     cbnz    w0, fat_cat_done
     mov     w1, #BLK_SECTOR_SIZE
     cmp     w20, w1
     csel    w1, w20, w1, lo
-    adrp    x0, blk_buffer
-    add     x0, x0, :lo12:blk_buffer
+    ladr    x0, blk_buffer
     sub     w20, w20, w1
     bl      uart_putn
     add     w21, w21, #1
@@ -1965,8 +1824,7 @@ fat_cat_advance:
     b       fat_cat_cluster
 
 fat_cat_done:
-    adrp    x0, uart_newline
-    add     x0, x0, :lo12:uart_newline
+    ladr    x0, uart_newline
     bl      uart_puts
     ldr     x23, [sp, #48]
     ldp     x21, x22, [sp, #32]
@@ -1975,8 +1833,7 @@ fat_cat_done:
     ret
 
 fat_cat_missing:
-    adrp    x0, fat_missing_msg
-    add     x0, x0, :lo12:fat_missing_msg
+    ladr    x0, fat_missing_msg
     bl      uart_puts
     ldr     x23, [sp, #48]
     ldp     x21, x22, [sp, #32]
@@ -1988,44 +1845,37 @@ blk_selftest:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
     mov     x0, #0
-    adrp    x1, blk_buffer
-    add     x1, x1, :lo12:blk_buffer
+    ladr    x1, blk_buffer
     mov     x19, x1
     bl      blk_read
     cbnz    w0, blk_selftest_fail
-    adrp    x0, blk_sig_label
-    add     x0, x0, :lo12:blk_sig_label
+    ladr    x0, blk_sig_label
     ldrb    w1, [x19, #510]
     ldrb    w2, [x19, #511]
     orr     w1, w1, w2, lsl #8
     bl      uart_field
-    adrp    x0, blk_oem_label
-    add     x0, x0, :lo12:blk_oem_label
+    ladr    x0, blk_oem_label
     bl      uart_puts
     add     x0, x19, #3
     mov     w1, #8
     bl      uart_putn
-    adrp    x0, uart_newline
-    add     x0, x0, :lo12:uart_newline
+    ladr    x0, uart_newline
     bl      uart_puts
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
 
 blk_selftest_fail:
-    adrp    x0, blk_read_fail_msg
-    add     x0, x0, :lo12:blk_read_fail_msg
+    ladr    x0, blk_read_fail_msg
     bl      uart_puts
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
 
 blk_init_fail:
-    adrp    x1, blk_base
-    add     x1, x1, :lo12:blk_base
+    ladr    x1, blk_base
     str     xzr, [x1]
-    adrp    x0, blk_fail_msg
-    add     x0, x0, :lo12:blk_fail_msg
+    ladr    x0, blk_fail_msg
     bl      uart_puts
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
@@ -2035,19 +1885,16 @@ blk_read:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
-    adrp    x19, blk_base
-    add     x19, x19, :lo12:blk_base
+    ladr    x19, blk_base
     ldr     x19, [x19]
     cbz     x19, blk_read_fail
     mov     x20, x1
-    adrp    x1, blk_hdr
-    add     x1, x1, :lo12:blk_hdr
+    ladr    x1, blk_hdr
     mov     w2, #BLK_T_IN
     str     w2, [x1, #BLK_HDR_TYPE]
     str     wzr, [x1, #BLK_HDR_IOPRIO]
     str     x0, [x1, #BLK_HDR_SECTOR]
-    adrp    x2, blk_desc
-    add     x2, x2, :lo12:blk_desc
+    ladr    x2, blk_desc
     str     x1, [x2, #VRING_DESC_ADDR]
     mov     w3, #BLK_HDR_SIZE
     str     w3, [x2, #VRING_DESC_LEN]
@@ -2064,8 +1911,7 @@ blk_read:
     mov     w4, #2
     strh    w4, [x3, #VRING_DESC_NEXT]
     add     x3, x2, #(VRING_DESC_SIZE * 2)
-    adrp    x4, blk_status
-    add     x4, x4, :lo12:blk_status
+    ladr    x4, blk_status
     mov     w5, #0xff
     strb    w5, [x4]
     str     x4, [x3, #VRING_DESC_ADDR]
@@ -2074,11 +1920,9 @@ blk_read:
     mov     w5, #VRING_DESC_F_WRITE
     strh    w5, [x3, #VRING_DESC_FLAGS]
     strh    wzr, [x3, #VRING_DESC_NEXT]
-    adrp    x4, blk_used
-    add     x4, x4, :lo12:blk_used
+    ladr    x4, blk_used
     ldrh    w21, [x4, #VRING_USED_IDX]
-    adrp    x4, blk_avail
-    add     x4, x4, :lo12:blk_avail
+    ladr    x4, blk_avail
     ldrh    w5, [x4, #VRING_AVAIL_IDX]
     and     w6, w5, #(BLK_QUEUE_SIZE - 1)
     add     x7, x4, x6, lsl #1
@@ -2090,8 +1934,7 @@ blk_read:
     ldr     x20, =BLK_TIMEOUT
 
 blk_read_wait:
-    adrp    x4, blk_used
-    add     x4, x4, :lo12:blk_used
+    ladr    x4, blk_used
     ldrh    w5, [x4, #VRING_USED_IDX]
     cmp     w5, w21
     b.ne    blk_read_check
@@ -2102,8 +1945,7 @@ blk_read_wait:
 blk_read_check:
     ldr     w0, [x19, #VIRTIO_REG_INT_STATUS]
     str     w0, [x19, #VIRTIO_REG_INT_ACK]
-    adrp    x4, blk_status
-    add     x4, x4, :lo12:blk_status
+    ladr    x4, blk_status
     ldrb    w0, [x4]
     cmp     w0, #BLK_S_OK
     b.ne    blk_read_fail
@@ -2124,36 +1966,30 @@ virtio_input_poll:
     stp     x29, x30, [sp, #-64]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
-    adrp    x0, virtio_input_base
-    add     x0, x0, :lo12:virtio_input_base
+    ladr    x0, virtio_input_base
     ldr     x19, [x0]
     cbz     x19, virtio_input_poll_end
     ldr     w0, [x19, #VIRTIO_REG_INT_STATUS]
     str     w0, [x19, #VIRTIO_REG_INT_ACK]
-    adrp    x0, virtio_used
-    add     x0, x0, :lo12:virtio_used
+    ladr    x0, virtio_used
     ldrh    w20, [x0, #VRING_USED_IDX]
-    adrp    x0, virtio_last_used
-    add     x0, x0, :lo12:virtio_last_used
+    ladr    x0, virtio_last_used
     ldrh    w21, [x0]
 
 virtio_input_poll_loop:
     cmp     w21, w20
     b.eq    virtio_input_poll_kick
     and     w0, w21, #VIRTIO_QUEUE_MASK
-    adrp    x1, virtio_used
-    add     x1, x1, :lo12:virtio_used
+    ladr    x1, virtio_used
     add     x1, x1, #VRING_USED_RING
     add     x1, x1, x0, lsl #3
     ldr     w0, [x1]
-    adrp    x1, virtio_events
-    add     x1, x1, :lo12:virtio_events
+    ladr    x1, virtio_events
     add     x1, x1, x0, lsl #3
     ldrh    w6, [x1]
     ldrh    w7, [x1, #2]
     ldr     w8, [x1, #4]
-    adrp    x1, virtio_avail
-    add     x1, x1, :lo12:virtio_avail
+    ladr    x1, virtio_avail
     ldrh    w2, [x1, #VRING_AVAIL_IDX]
     and     w3, w2, #VIRTIO_QUEUE_MASK
     add     x4, x1, x3, lsl #1
@@ -2169,8 +2005,7 @@ virtio_input_poll_loop:
     b       virtio_input_poll_loop
 
 virtio_input_poll_kick:
-    adrp    x0, virtio_last_used
-    add     x0, x0, :lo12:virtio_last_used
+    ladr    x0, virtio_last_used
     strh    w21, [x0]
     dsb     sy
     str     wzr, [x19, #VIRTIO_REG_QUEUE_NOTIFY]
@@ -2182,8 +2017,7 @@ virtio_input_poll_end:
     ret
 
 mouse_init:
-    adrp    x0, mouse_x
-    add     x0, x0, :lo12:mouse_x
+    ladr    x0, mouse_x
     mov     w1, #(FB_WIDTH / 2)
     str     w1, [x0]
     mov     w1, #(FB_HEIGHT / 2)
@@ -2209,8 +2043,7 @@ mouse_apply:
     ret
 
 mouse_apply_rel:
-    adrp    x3, mouse_x
-    add     x3, x3, :lo12:mouse_x
+    ladr    x3, mouse_x
     cmp     w1, #REL_X
     b.eq    mouse_apply_rel_x
     cmp     w1, #REL_Y
@@ -2219,8 +2052,7 @@ mouse_apply_rel:
     add     w0, w0, w2
     mov     w1, #(FB_HEIGHT - 1)
     bl      mouse_clamp
-    adrp    x3, mouse_x
-    add     x3, x3, :lo12:mouse_x
+    ladr    x3, mouse_x
     str     w0, [x3, #4]
     b       mouse_apply_done
 
@@ -2229,8 +2061,7 @@ mouse_apply_rel_x:
     add     w0, w0, w2
     mov     w1, #(FB_WIDTH - 1)
     bl      mouse_clamp
-    adrp    x3, mouse_x
-    add     x3, x3, :lo12:mouse_x
+    ladr    x3, mouse_x
     str     w0, [x3]
     b       mouse_apply_done
 
@@ -2238,11 +2069,9 @@ mouse_apply_key:
     ldr     w3, =BTN_LEFT
     cmp     w1, w3
     b.ne    mouse_apply_done
-    adrp    x3, mouse_buttons
-    add     x3, x3, :lo12:mouse_buttons
+    ladr    x3, mouse_buttons
     strb    w2, [x3]
-    adrp    x3, mouse_dirty
-    add     x3, x3, :lo12:mouse_dirty
+    ladr    x3, mouse_dirty
     mov     w0, #1
     strb    w0, [x3]
     cbz     w2, mouse_apply_done
@@ -2250,16 +2079,13 @@ mouse_apply_key:
 
 mouse_click:
     mrs     x0, cntpct_el0
-    adrp    x3, click_last
-    add     x3, x3, :lo12:click_last
+    ladr    x3, click_last
     ldr     x1, [x3]
     sub     x2, x0, x1
     str     x0, [x3]
-    adrp    x3, click_window
-    add     x3, x3, :lo12:click_window
+    ladr    x3, click_window
     ldr     x4, [x3]
-    adrp    x3, click_count
-    add     x3, x3, :lo12:click_count
+    ladr    x3, click_count
     ldr     w5, [x3]
     cmp     x2, x4
     b.hs    mouse_click_first
@@ -2274,15 +2100,13 @@ mouse_click_first:
 
 mouse_click_store:
     str     w5, [x3]
-    adrp    x3, click_pending
-    add     x3, x3, :lo12:click_pending
+    ladr    x3, click_pending
     mov     w0, #1
     strb    w0, [x3]
     b       mouse_apply_done
 
 mouse_apply_syn:
-    adrp    x3, mouse_dirty
-    add     x3, x3, :lo12:mouse_dirty
+    ladr    x3, mouse_dirty
     mov     w0, #1
     strb    w0, [x3]
 
@@ -2291,12 +2115,9 @@ mouse_apply_done:
     ret
 
 virtio_input_fill:
-    adrp    x0, virtio_desc
-    add     x0, x0, :lo12:virtio_desc
-    adrp    x1, virtio_events
-    add     x1, x1, :lo12:virtio_events
-    adrp    x2, virtio_avail
-    add     x2, x2, :lo12:virtio_avail
+    ladr    x0, virtio_desc
+    ladr    x1, virtio_events
+    ladr    x2, virtio_avail
     mov     w3, #0
 
 virtio_input_fill_loop:
@@ -2347,20 +2168,17 @@ gic_enable_irq:
 timer_init:
     mrs     x0, cntfrq_el0
     cbz     x0, timer_unavailable
-    adrp    x1, timer_freq
-    add     x1, x1, :lo12:timer_freq
+    ladr    x1, timer_freq
     str     x0, [x1]
     mov     x2, #CLICK_WINDOW_MS
     mul     x2, x0, x2
     mov     x3, #MS_PER_SECOND
     udiv    x2, x2, x3
-    adrp    x1, click_window
-    add     x1, x1, :lo12:click_window
+    ladr    x1, click_window
     str     x2, [x1]
     mov     x2, #TIMER_HZ
     udiv    x0, x0, x2
-    adrp    x1, timer_interval
-    add     x1, x1, :lo12:timer_interval
+    ladr    x1, timer_interval
     str     x0, [x1]
     msr     cntp_tval_el0, x0
     mov     x0, #TIMER_CTL_ENABLE
@@ -2370,22 +2188,18 @@ timer_init:
     b       gic_enable_irq
 
 timer_unavailable:
-    adrp    x0, timer_error
-    add     x0, x0, :lo12:timer_error
+    ladr    x0, timer_error
     b       uart_puts
 
 timer_tick:
-    adrp    x0, timer_interval
-    add     x0, x0, :lo12:timer_interval
+    ladr    x0, timer_interval
     ldr     x1, [x0]
     msr     cntp_tval_el0, x1
-    adrp    x0, console_cursor_phase
-    add     x0, x0, :lo12:console_cursor_phase
+    ladr    x0, console_cursor_phase
     ldrb    w1, [x0]
     eor     w1, w1, #1
     strb    w1, [x0]
-    adrp    x0, console_blink_pending
-    add     x0, x0, :lo12:console_blink_pending
+    ladr    x0, console_blink_pending
     mov     w1, #1
     strb    w1, [x0]
     ret
@@ -2394,12 +2208,9 @@ uart_rx_isr:
     mov     x1, #UART_BASE
     ldr     w2, [x1, #UART_MIS]
     str     w2, [x1, #UART_ICR]
-    adrp    x8, uart_rx_ring
-    add     x8, x8, :lo12:uart_rx_ring
-    adrp    x9, uart_rx_head
-    add     x9, x9, :lo12:uart_rx_head
-    adrp    x10, uart_rx_tail
-    add     x10, x10, :lo12:uart_rx_tail
+    ladr    x8, uart_rx_ring
+    ladr    x9, uart_rx_head
+    ladr    x10, uart_rx_tail
 
 uart_rx_isr_loop:
     ldr     w2, [x1, #UART_FR]
@@ -2417,8 +2228,7 @@ uart_rx_isr_loop:
     b       uart_rx_isr_loop
 
 uart_rx_isr_overflow:
-    adrp    x3, uart_rx_overflow
-    add     x3, x3, :lo12:uart_rx_overflow
+    ladr    x3, uart_rx_overflow
     mov     w4, #1
     strb    w4, [x3]
     b       uart_rx_isr_loop
@@ -2427,16 +2237,13 @@ uart_rx_isr_done:
     ret
 
 uart_rx_get:
-    adrp    x1, uart_rx_tail
-    add     x1, x1, :lo12:uart_rx_tail
+    ladr    x1, uart_rx_tail
     ldr     w2, [x1]
-    adrp    x3, uart_rx_head
-    add     x3, x3, :lo12:uart_rx_head
+    ladr    x3, uart_rx_head
     ldr     w3, [x3]
     cmp     w2, w3
     b.eq    uart_rx_get_empty
-    adrp    x4, uart_rx_ring
-    add     x4, x4, :lo12:uart_rx_ring
+    ladr    x4, uart_rx_ring
     ldrb    w0, [x4, w2, uxtw]
     add     w2, w2, #1
     and     w2, w2, #UART_RX_RING_MASK
@@ -2468,39 +2275,32 @@ console_drain_rx:
     b       console_drain_rx
 
 console_drain_overflow:
-    adrp    x0, uart_rx_overflow
-    add     x0, x0, :lo12:uart_rx_overflow
+    ladr    x0, uart_rx_overflow
     ldrb    w1, [x0]
     cbz     w1, console_drain_click
     strb    wzr, [x0]
-    adrp    x0, console_overflow_msg
-    add     x0, x0, :lo12:console_overflow_msg
+    ladr    x0, console_overflow_msg
     bl      uart_puts
 
 console_drain_click:
-    adrp    x0, click_pending
-    add     x0, x0, :lo12:click_pending
+    ladr    x0, click_pending
     ldrb    w1, [x0]
     cbz     w1, console_drain_mouse
     strb    wzr, [x0]
-    adrp    x0, click_label
-    add     x0, x0, :lo12:click_label
-    adrp    x1, click_count
-    add     x1, x1, :lo12:click_count
+    ladr    x0, click_label
+    ladr    x1, click_count
     ldr     w1, [x1]
     bl      uart_field
 
 console_drain_mouse:
-    adrp    x0, mouse_dirty
-    add     x0, x0, :lo12:mouse_dirty
+    ladr    x0, mouse_dirty
     ldrb    w1, [x0]
     cbz     w1, console_drain_blink
     strb    wzr, [x0]
     bl      cursor_update
 
 console_drain_blink:
-    adrp    x0, console_blink_pending
-    add     x0, x0, :lo12:console_blink_pending
+    ladr    x0, console_blink_pending
     ldrb    w1, [x0]
     cbz     w1, console_drain_done
     strb    wzr, [x0]
@@ -2523,8 +2323,7 @@ console_echo:
 
 console_draw_cursor:
     stp     x29, x30, [sp, #-16]!
-    adrp    x0, console_cursor_phase
-    add     x0, x0, :lo12:console_cursor_phase
+    ladr    x0, console_cursor_phase
     ldrb    w0, [x0]
     cbz     w0, console_draw_cursor_off
     mov     w0, #ASCII_UNDERSCORE
@@ -2551,13 +2350,11 @@ irq_entry:
     b.eq    irq_timer
     cmp     w0, #UART_INTID
     b.eq    irq_uart
-    adrp    x1, virtio_input_intid
-    add     x1, x1, :lo12:virtio_input_intid
+    ladr    x1, virtio_input_intid
     ldr     w1, [x1]
     cmp     w0, w1
     b.eq    irq_virtio
-    adrp    x0, irq_label
-    add     x0, x0, :lo12:irq_label
+    ladr    x0, irq_label
     mov     x1, x19
     bl      uart_field
     b       irq_eoi
@@ -2584,36 +2381,29 @@ irq_return:
 
 panic_entry:
     mov     x19, x0
-    adrp    x0, panic_banner
-    add     x0, x0, :lo12:panic_banner
+    ladr    x0, panic_banner
     bl      uart_puts
-    adrp    x0, panic_names
-    add     x0, x0, :lo12:panic_names
+    ladr    x0, panic_names
     ldr     x0, [x0, x19, lsl #3]
     bl      uart_puts
 
-    adrp    x0, panic_label_esr
-    add     x0, x0, :lo12:panic_label_esr
+    ladr    x0, panic_label_esr
     mrs     x1, esr_el1
     bl      uart_field
 
-    adrp    x0, panic_label_elr
-    add     x0, x0, :lo12:panic_label_elr
+    ladr    x0, panic_label_elr
     mrs     x1, elr_el1
     bl      uart_field
 
-    adrp    x0, panic_label_far
-    add     x0, x0, :lo12:panic_label_far
+    ladr    x0, panic_label_far
     mrs     x1, far_el1
     bl      uart_field
 
-    adrp    x0, panic_label_spsr
-    add     x0, x0, :lo12:panic_label_spsr
+    ladr    x0, panic_label_spsr
     mrs     x1, spsr_el1
     bl      uart_field
 
-    adrp    x0, uart_newline
-    add     x0, x0, :lo12:uart_newline
+    ladr    x0, uart_newline
     bl      uart_puts
 
 panic_halt:
@@ -2738,7 +2528,7 @@ vec_table:
 .section .rodata
 
 boot_banner:
-    .asciz  "MONOLITH\r\n"
+    .asciz  "asmos\r\n"
 
 panic_banner:
     .asciz  "\r\nPANIC "
@@ -2801,6 +2591,16 @@ fat_hello_name:
     .ascii  "HELLO   TXT"
     .byte   0
 
+fat_big_name:
+    .ascii  "BIG     TXT"
+    .byte   0
+
+fat_big_label:
+    .asciz  "\r\n--- BIG.TXT ---\r\n"
+
+fat_big_end:
+    .asciz  "--- ENDE ---\r\n"
+
 fat_cat_label:
     .asciz  "\r\n--- HELLO.TXT ---\r\n"
 
@@ -2838,7 +2638,7 @@ virtio_fail_msg:
     .asciz  "INPUT UNAVAILABLE\r\n"
 
 fb_title:
-    .asciz  "MONOLITH 0.1 - AArch64 Assembler"
+    .asciz  "asmos 0.1 - Assembler Operating System"
 
 fb_charset:
     .asciz  "ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789"
@@ -2963,12 +2763,6 @@ fdt_memory_name:
 fdt_reg_name:
     .asciz  "reg"
 
-mem_fdt_label:
-    .asciz  "\r\nFDT at="
-
-mem_fdt_label2:
-    .asciz  " magic="
-
 mmu_ready_msg:
     .asciz  "MMU ON\r\n"
 
@@ -3008,20 +2802,8 @@ mem_size_label:
 mem_fail_msg:
     .asciz  "RAM UNKNOWN\r\n"
 
-virtio_irq_label:
-    .asciz  "INPUT irq="
-
 click_label:
     .asciz  "\r\nCLICK n="
-
-mouse_label_x:
-    .asciz  "\r\nM x="
-
-mouse_label_y:
-    .asciz  " y="
-
-mouse_label_b:
-    .asciz  " b="
 
 panic_name_00:
     .asciz  "EL1t_SYNC"

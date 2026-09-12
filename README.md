@@ -1,26 +1,28 @@
 <div align="center">
 
-# MONOLITH
+# asmos
 
-**Ein Betriebssystem, von Hand in Assembler geschrieben.**
+**As**sembler **O**perating **S**ystem
+
+**Ein Betriebssystem, von Hand in Assembler geschrieben, gebaut als Monolith.**
 
 Kein Linux darunter. Keine Bibliotheken. Kein C.<br>
 Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-13.912%20Byte-brightgreen?style=flat-square" alt="13912 Byte">
+<img src="https://img.shields.io/badge/Kernel-13.920%20Byte-brightgreen?style=flat-square" alt="13920 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
 
-<img src="docs/screenshot.png" width="640" alt="MONOLITH im Betrieb: Testbild mit Rechtecken, Mauszeiger und Zeichensatz">
+<img src="docs/screenshot.png" width="640" alt="asmos im Betrieb: Testbild mit Rechtecken, Mauszeiger und Zeichensatz">
 
 <sub><i>Das laufende System: eigener Framebuffer, eigener Zeichensatz, eigener Mauszeiger.</i></sub>
 
 <br><br>
 
-Das fertige System ist <b>13.912&nbsp;Byte</b> groß.<br>
+Das fertige System ist <b>13.920&nbsp;Byte</b> groß.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -76,8 +78,10 @@ Beenden mit <kbd>Strg</kbd>+<kbd>A</kbd>, loslassen, dann <kbd>X</kbd>.
 | `make check` | Startet drei Sekunden, schreibt alles mit, prüft und meldet OK oder FEHLER |
 | `make shot` | Macht ein Bildschirmfoto nach `screen.png` und beendet sich selbst |
 | `make debug` | Startet angehalten mit Debugger-Anschluss auf Port 1234 |
+| `make disk` | Erzeugt den FAT32-Testdatenträger neu |
 | `make dtb` | Liest die Hardwarebeschreibung der Maschine aus |
-| `make clean` | Räumt auf |
+| `make clean` | Räumt Bauartefakte auf |
+| `make distclean` | Räumt zusätzlich den Testdatenträger weg |
 
 `make check` und `make shot` laufen ohne Zutun und beenden sich selbst. Sie sind dafür gedacht, dass später ein Programm das System prüfen kann, ohne dass ein Mensch danebensitzt.
 
@@ -91,7 +95,7 @@ Beenden mit <kbd>Strg</kbd>+<kbd>A</kbd>, loslassen, dann <kbd>X</kbd>.
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>80 KB · 3.230 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>72 KB · 3.012 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -112,11 +116,11 @@ Beenden mit <kbd>Strg</kbd>+<kbd>A</kbd>, loslassen, dann <kbd>X</kbd>.
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 3.230 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 3.012 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken 321 Sprungmarken. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang:
+In `kernel.S` stecken 320 Sprungmarken. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -125,10 +129,10 @@ In `kernel.S` stecken 321 Sprungmarken. Jede gehört zu einem Zuständigkeitsber
 | `vec_` `panic_` `irq_` | 33 | Fehlerbehandlung und Unterbrechungen |
 | `timer_` | 6 | Zeitgeber |
 | `fwcfg_` | 16 | Konfigurationsschnittstelle des Emulators |
-| `fb_` `cursor_` | 46 | Bildschirm, Zeichnen, Schrift, Mauszeiger |
+| `fb_` `cursor_` | 45 | Bildschirm, Zeichnen, Schrift, Mauszeiger |
 | `virtio_` `mouse_` `click_` | 53 | Gerätetreiber, Maus, Klickerkennung |
-| `mem_` `pmm_` `mmu_` `fdt_` | 61 | Speicherverwaltung und Hardware-Erkennung |
-| `blk_` `fat_` | 51 | Datenträger und Dateisystem |
+| `mem_` `pmm_` `mmu_` `fdt_` | 63 | Speicherverwaltung und Hardware-Erkennung |
+| `blk_` `fat_` | 54 | Datenträger und Dateisystem |
 | `console_` `string_` | 22 | Konsole und Hilfsroutinen |
 
 </details>
@@ -137,10 +141,10 @@ In `kernel.S` stecken 321 Sprungmarken. Jede gehört zu einem Zuständigkeitsber
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **13.912 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **13.920 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 106 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
-| `disk.img` | 64 MB | Testdatenträger mit echtem FAT32 und zwei Dateien darauf |
+| `disk.img` | 64 MB | Testdatenträger mit echtem FAT32 und drei Testdateien |
 | `virt.dtb` | | Hardwarebeschreibung, die der Emulator liefert |
 | `screen.png` | | Bildschirmfoto aus `make shot` |
 
@@ -189,7 +193,7 @@ In QEMU lässt sich jeder Fehler in Sekunden einkreisen: Debugger anhängen, Ein
 
 ### Zwei Grundregeln prägen jede Zeile
 
-**Alles in einer Datei.** Ein Betriebssystem ist ein Monolith. Struktur entsteht durch klare Namensbereiche und getrennte Verantwortung im Code, nicht durch viele kleine Dateien.
+**Alles in einer Datei.** Daher der Zusatz im Namen: asmos ist als Monolith gebaut. Struktur entsteht durch klare Namensbereiche und getrennte Verantwortung im Code, nicht durch viele kleine Dateien.
 
 **Jede Logik existiert genau einmal.** Als der Treiber für den Datenträger dazukam, wurde das virtio-Protokoll nicht kopiert, sondern die gemeinsame Einrichtung herausgezogen. Eingabegerät und Datenträger benutzen dieselbe Routine, nur mit anderem Gerätetyp.
 
@@ -269,9 +273,9 @@ Zusätzlich fertig: Bitmap-Zeichensatz mit 95 Zeichen.
 
 | | |
 |---|---|
-| Eigener Quelltext | 83 KB in drei Dateien |
-| Zeilen Assembler | 3.230 |
-| **Fertiges Betriebssystem** | **13.912 Byte** |
+| Eigener Quelltext | 76 KB in drei Dateien |
+| Zeilen Assembler | 3.012 |
+| **Fertiges Betriebssystem** | **13.920 Byte** |
 | Speicherbedarf im Betrieb | 3,3 MB, davon 1,2 MB Bildspeicher |
 | Dokumentation | 29 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |

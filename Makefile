@@ -15,7 +15,7 @@ DISK_LABEL    := MONOLITH
 DEVICES := -device ramfb -device virtio-mouse-device -global virtio-mmio.force-legacy=false -drive file=$(DISK),if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 
 CHECK_SECONDS := 3
-CHECK_EXPECT  := MONOLITH
+CHECK_EXPECT  := asmos
 CHECK_LOG     := serial.log
 SHOT          := screen.png
 
@@ -75,6 +75,7 @@ disk:
 	@hdiutil attach ./$(DISK) >/dev/null 2>&1
 	@printf 'MONOLITH FAT32 TEST\nZeile zwei\n' > /Volumes/$(DISK_LABEL)/HELLO.TXT
 	@printf 'zweite datei\n' > /Volumes/$(DISK_LABEL)/DATA.BIN
+	@python3 -c "print(''.join('Zeile %04d ABCDEFGHIJKLMNOPQRSTUVWXYZ\n' % i for i in range(60)), end='')" > /Volumes/$(DISK_LABEL)/BIG.TXT
 	@hdiutil detach /Volumes/$(DISK_LABEL) >/dev/null 2>&1
 	@echo "OK: $(DISK) mit FAT32 und Testdateien erzeugt"
 
