@@ -11,18 +11,18 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-24.304%20Byte-brightgreen?style=flat-square" alt="13920 Byte">
+<img src="https://img.shields.io/badge/Kernel-17.904%20Byte-brightgreen?style=flat-square" alt="17904 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
 
-<img src="docs/screenshot.png" width="640" alt="asmos im Betrieb: Testbild mit Rechtecken, Mauszeiger und Zeichensatz">
+<img src="docs/screenshot.png" width="640" alt="asmos im Betrieb: asmos im Betrieb: Fenster mit TrueType-Titeln und Mauszeiger">
 
-<sub><i>Das laufende System: eigener Framebuffer, eigener Zeichensatz, eigener Mauszeiger.</i></sub>
+<sub><i>Das laufende System: eigener Framebuffer, eigene TrueType-Schrift, eigener Mauszeiger.</i></sub>
 
 <br><br>
 
-Das fertige System ist <b>24.304&nbsp;Byte</b> groß.<br>
+Das fertige System ist <b>17.904&nbsp;Byte</b> groß.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -116,25 +116,26 @@ Beenden mit <kbd>Strg</kbd>+<kbd>A</kbd>, loslassen, dann <kbd>X</kbd>.
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 5.388 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 5.260 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken 552 Sprungmarken. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang:
+In `kernel.S` stecken 534 Sprungmarken. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
-| `boot_` | 9 | Hochfahren, Privilegstufe, Speicher vorbereiten |
-| `uart_` | 24 | Serielle Schnittstelle, Textausgabe, Tastatureingabe |
+| `boot_` | 10 | Hochfahren, Privilegstufe, Speicher vorbereiten |
+| `uart_` | 27 | Serielle Schnittstelle, Textausgabe, Tastatureingabe |
 | `vec_` `panic_` `irq_` | 33 | Fehlerbehandlung und Unterbrechungen |
 | `timer_` | 6 | Zeitgeber |
-| `fwcfg_` | 16 | Konfigurationsschnittstelle des Emulators |
-| `fb_` `cursor_` | 45 | Bildschirm, Zeichnen, Schrift, Mauszeiger |
-| `virtio_` `mouse_` `click_` | 53 | Gerätetreiber, Maus, Klickerkennung |
-| `mem_` `pmm_` `mmu_` `fdt_` | 63 | Speicherverwaltung und Hardware-Erkennung |
-| `ttf_` `edge_` `cov_` | 130 | TrueType auswerten, Kurven zerlegen, Flächen füllen, Kanten glätten |
-| `blk_` `fat_` | 54 | Datenträger und Dateisystem |
-| `console_` `string_` | 22 | Konsole und Hilfsroutinen |
+| `fwcfg_` | 13 | Konfigurationsschnittstelle des Emulators |
+| `fb_` `cursor_` | 51 | Bildschirm, Zeichnen, Mauszeiger |
+| `virtio_` `mouse_` `click_` | 56 | Gerätetreiber, Maus, Klickerkennung |
+| `mem_` `pmm_` `mmu_` `fdt_` | 66 | Speicherverwaltung und Hardware-Erkennung |
+| `ttf_` `edge_` `cov_` | 126 | TrueType auswerten, Kurven zerlegen, Flächen füllen, Kanten glätten |
+| `blk_` `fat_` | 72 | Datenträger und Dateisystem |
+| `console_` `string_` `win_` `dirty_` `out_` | 61 | Konsole, Fenster, Teilaktualisierung, Hilfsroutinen |
+| `gic_` und Datenbereiche | 13 | Unterbrechungssteuerung, Zustandsspeicher der Schrift und Glyphen |
 
 </details>
 
@@ -142,7 +143,7 @@ In `kernel.S` stecken 552 Sprungmarken. Jede gehört zu einem Zuständigkeitsber
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **24.304 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **17.904 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 106 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `disk.img` | 64 MB | Testdatenträger mit echtem FAT32 und drei Testdateien |
@@ -253,7 +254,7 @@ Zusätzlich fertig: TrueType-Renderer als Systemschrift, Zeiger mit Alphakanal a
 ## Fehler, aus denen das Projekt gelernt hat
 
 <details>
-<summary><b>Fünf echte Fälle, alle mit Ursache dokumentiert</b></summary>
+<summary><b>Sieben echte Fälle, alle mit Ursache dokumentiert</b></summary>
 
 <br>
 
@@ -267,6 +268,10 @@ Zusätzlich fertig: TrueType-Renderer als Systemschrift, Zeiger mit Alphakanal a
 
 **Ein Hänger, der erst nach 65.536 Mausbewegungen aufgetreten wäre.** Ein Zähler lief als 32-Bit-Wert weiter, verglichen wurde er mit einem 16-Bit-Wert, der überläuft. Gefunden bei einer systematischen Durchsicht, nicht im Betrieb.
 
+**Eine beschädigte Schriftdatei wurde klaglos verarbeitet.** Die Schrift liegt auf dem Datenträger, ist also austauschbar, wurde aber nach dem Laden nirgends geprüft. Mit einem absichtlich verbogenen Tabellenzeiger las der Kernel 16 MB hinter seinen Puffer und verarbeitete Zufallsdaten als Buchstaben, ohne eine einzige Meldung. Gefunden, indem gezielt kaputte Schriften gebaut und untergeschoben wurden.
+
+**Ein neues Feld wurde in einen bestehenden Zeiger hinein gelegt.** Bei der Behebung des vorigen Fehlers sollte die Dateigröße auf einen scheinbar freien Platz in einer Struktur. Dort lag die obere Hälfte eines 8-Byte-Zeigers. Aufgefallen ist es nur, weil ein Bildschirmabzug mit dem Sollbild verglichen wurde.
+
 </details>
 
 **Zwei dieser fünf Fehler gehören zur selben Familie:** Register, die ein Unterprogramm zerstören darf, wurden über den Aufruf hinweg benutzt. Beide kosteten je eine Fehlersuche, obwohl die Ursache identisch war. Das ist in Assembler die häufigste Fehlerursache überhaupt. Deshalb gilt im Projekt: Register-Eigentum ist Teil der Schnittstelle, und Werte, die einen Aufruf überleben müssen, gehören in `x19` bis `x28`.
@@ -279,11 +284,11 @@ Zusätzlich fertig: TrueType-Renderer als Systemschrift, Zeiger mit Alphakanal a
 
 | | |
 |---|---|
-| Eigener Quelltext | 141 KB in drei Dateien |
-| Zeilen Assembler | 5.388 |
-| **Fertiges Betriebssystem** | **24.304 Byte** |
+| Eigener Quelltext | 132 KB in drei Dateien |
+| Zeilen Assembler | 5.260 |
+| **Fertiges Betriebssystem** | **17.904 Byte** |
 | Speicherbedarf im Betrieb | 71 MB, davon 70 MB Bildspeicher |
-| Dokumentation | 29 KB Quellenbelege |
+| Dokumentation | 48 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
 | Entwicklungsziel | QEMU `virt` |
 | Späteres Hardwareziel | Raspberry Pi 5 |

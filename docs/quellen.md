@@ -614,3 +614,130 @@ Ohne `-device ramfb`, ohne Eingabegerät und ohne Datenträger gestartet, meldet
 | Einstiegs-Exception-Level bei QEMU 11 | Bewusst nicht als Annahme im Code. `_start` liest `CurrentEL` und behandelt EL3, EL2 und EL1 getrennt. |
 | DTB-Platzierung durch QEMU | siehe oben, noch nicht belegt |
 | Stackgröße 16 KB | Willkürlich gewählter Startwert, kein belegter Bedarf. Zu prüfen, sobald Aufrufketten tiefer werden. |
+
+---
+
+## Handoptimierung des Kernelabbilds
+
+Ausgangslage 24.304 Byte, danach 17.864 Byte. Gemessen mit `stat -f%z kernel.bin`, nicht geschätzt. Bei jedem Schritt wurde gegengeprüft, dass Bild und serielle Ausgabe byteweise unverändert bleiben.
+
+| Schritt | Ersparnis | Beleg |
+|---|---:|---|
+| Alte Bitmap-Schrift entfernt (`font_data`, `fb_glyph`, `fb_text`, `fb_testcard`, Zeichensatz-Texte) | 2.000 Byte | Seit der Umstellung auf die TrueType-Schrift rief `fb_testcard` niemand mehr auf. Gegenprobe: kein Vorkommen der Namen mehr in der Quelle |
+| Mauszeiger-Deckmaske lauflängenkodiert | 1.216 Byte | 2.304 Byte roh zu 1.002 Byte Paare plus 96 Byte Zeilentabelle. Verlustfrei, in Python gegen die Rohdaten rückgerechnet. Der Zeilenzugriff bleibt direkt, weil die Tabelle je Zeile einen Anfangsversatz führt |
+| Vektortabelle in eigenen Abschnitt `.text.vectors` | 2.032 Byte | Die `.balign 0x800` der Tabelle zwang den gesamten Hauptcode auf 2048 Byte Ausrichtung und riss hinter dem Startcode eine Lücke von 1.648 Byte auf. Sichtbar in `kernel.map` als `*fill*` |
+| Fünf Routinen in die Vektorlücken gelegt | (im Wert oben enthalten) | Jeder Eintrag nutzt 16 von 128 Byte. Der Code fiel dadurch unter eine 2048-Grenze, die Tabelle rückte von `0x40084000` auf `0x40083800` |
+| 91 Meldungstexte in die restlichen Vektorlücken | 1.024 Byte | `.rodata` von 2.600 auf 1.576 Byte |
+| Unerreichbarer Code und tote Texte entfernt | 168 Byte | `fb_clear`, `cursor_bitmap` (Rest des alten 12x12-Zeigers), Texte der TTF-Selbsttests |
+
+### Warum die Lücke vor der Vektortabelle nicht durch Umsortieren verschwindet
+
+Die Tabelle muss auf 2048 Byte ausgerichtet liegen, weil `VBAR_EL1` die unteren elf Bit nicht speichert. Die Lücke davor hängt allein davon ab, wie weit der Code über die letzte 2048-Grenze hinausragt, nicht von der Reihenfolge. Sie verschwindet erst, wenn der Code unter die nächste Grenze fällt. Genau das wurde durch das Füllen der Tabelleneinträge erreicht.
+
+Dasselbe gilt für den Arbeitsspeicher: `fb_output` braucht 2 MB Ausrichtung für die Blockabbildung der MMU, davor bleiben 1.015.680 Byte ungenutzt. Ein Umsortieren der Puffer ändert daran nichts, weil die Summe vor `fb_output` gleich bleibt. Der Bereich ist benannt, aber nicht angetastet.
+
+### Absicherung gegen Verrutschen
+
+Code in den Vektorlücken ist nur tragfähig, wenn kein Eintrag verschoben wird. Das Linkerskript prüft alle sechzehn Einträge und die Ausrichtung der Tabelle:
+
+    ASSERT(vec_at_5 - vec_table == 640, "Vektoreintrag 5 verschoben")
+
+Gegenprobe mit einem absichtlich zu großen Füllblock: der Linker bricht mit `Vektoreintrag 3 verschoben` ab. Zu große Füllung ist damit ein Baufehler, kein Laufzeitfehler.
+
+### Gegenproben
+
+| Prüfung | Ergebnis |
+|---|---|
+| Bildschirmabzug gegen den Stand vor der Optimierung | byteweise identisch |
+| Serielle Ausgabe gegen den Stand vor der Optimierung | byteweise identisch, 1.052 Byte |
+| Zeigertabelle `panic_names` im Binärabbild aufgelöst | alle 16 Zeiger treffen ihren Text |
+| Echte Ausnahme ausgelöst (Lesen von `0xffff000000000000`) | `PANIC EL1h_SYNC esr=...96000004`, Eintrag 4 korrekt getroffen |
+| Start ohne Geräte und ohne Datenträger | alle Meldungen wie zuvor, `BOOT OK` |
+| Start mit 1 GB Arbeitsspeicher | `RAM size=0000000040000000`, `BOOT OK` |
+
+### Was bewusst nicht gemacht wurde
+
+Die Mischformel für Rot, Grün und Blau steht neunmal ausgeschrieben da, sechsmal in `fb_blend_pixel` und dreimal in der Zeichenschleife des Mauszeigers. Als Schleife über drei Kanäle ließen sich rund 270 Byte sparen. Das Zusammenfassen kostet aber Laufzeit in genau dem Pfad, der bei 3840 mal 1600 Bildpunkten am heißesten läuft. Bei einem Abbild von 17 KB steht das in keinem Verhältnis.
+
+Die nächste 2048er-Stufe ist nicht erreichbar: Der Code müsste um weitere 1.480 Byte fallen, die Vektorlücken fassen nur noch 98 Byte.
+
+`TTF_SELFTEST` ist ein toter Schalter, er wird nirgends ausgewertet. Die übrigen Schalter umschließen nur die Aufrufe, nicht die Testroutinen selbst, deshalb ändert ihr Abschalten die Abbildgröße kaum. Beides steht hier als Befund, geändert wurde es nicht.
+
+---
+
+## Fehlersuche nach der Handoptimierung
+
+Zuerst als Rückversicherung gegen die Umbauten: Der Maschinencode jeder Routine wurde mit dem Stand davor verglichen. Bis auf die beabsichtigten Stellen (Mauszeiger-Schleife, entfernte Bitmap-Schrift) sind alle Routinen instruktionsgleich. Datenflussanalyse über alle 460 Marken: kein Wert überlebt einen `bl` in einem Register zwischen `x2` und `x18`. Stackbilanz bei jedem `ret` ausgeglichen.
+
+### Befund 1: Die Schriftdatei wurde nach dem Laden nirgends geprüft
+
+Die Schrift liegt auf dem Datenträger und ist damit austauschbar. Der Kernel übernahm aus ihr Tabellenzahl, Tabellen-Offsets und Glyph-Index ungeprüft.
+
+| Stelle | Was fehlte | Gemessene Wirkung ohne Prüfung |
+|---|---|---|
+| `ttf_find_table` | Tabellenzahl aus dem Kopf ohne Obergrenze | Bei `numTables=0xFFFF` durchsucht die Schleife 65535 Einträge, also 1 MB hinter dem 64-KB-Puffer, sobald eine Tabelle fehlt |
+| `ttf_find_table` | Tabellen-Offset nicht gegen die Dateigröße geprüft | Mit einem `glyf`-Offset von `0x00ffff00` meldete der Kernel unverändert `TTF units=1000 glyphs=244` und las 16 MB hinter dem Puffer. Zufallsdaten wurden als Glyphen verarbeitet |
+| `ttf_glyph_offset` | Glyph-Index nicht gegen `numGlyphs` geprüft | Zugriff hinter die `loca`-Tabelle |
+| `ttf_load_glyph` | Glyph-Ende nicht gegen die Dateigröße geprüft | Ein verbogener `loca`-Eintrag für den Buchstaben `a` ließ den Kernel 131 KB hinter den Puffer lesen, **ohne jede Meldung** |
+
+Behoben: `fat_load` liefert die Dateigröße bereits zurück, sie wurde nur verworfen. Sie wird jetzt in `font_state` gehalten und gegen alle vier Stellen geprüft. Ungültige Tabellen führen zu `TTF UNAVAILABLE`, ein Glyph außerhalb der Datei meldet einmalig über `ttf_limit_report` und wird übersprungen.
+
+Gegenprobe mit drei absichtlich beschädigten Schriften:
+
+| Beschädigung | vorher | nachher |
+|---|---|---|
+| `numTables` auf 0xFFFF | lud scheinbar normal | `TTF UNAVAILABLE`, `BOOT OK` |
+| `glyf`-Offset hinter das Dateiende | lud scheinbar normal, rechnete mit Müll | `TTF UNAVAILABLE`, `BOOT OK` |
+| `loca`-Ende von `a` hinter das Dateiende | keine Meldung, las 131 KB darüber hinaus | `TTF GRENZE ERREICHT`, Zeichen übersprungen |
+
+Die intakte Schrift wird unverändert dargestellt, Bildschirmabzug byteweise gleich.
+
+### Befund 2: `win_add` verwarf Fenster ohne Meldung
+
+Bei erreichtem `WIN_MAX` sprang die Routine still zum Rücksprung. Ein Fenster verschwand spurlos. Jetzt meldet sie `WIN LISTE VOLL, Fenster verworfen`. Weil `win_add` keinen Stackrahmen hat, bekam nur der Fehlerzweig einen eigenen, sonst hätte der Aufruf `x30` zerstört. Gegenprobe mit zwölf Fenstern: genau vier Meldungen bei `WIN_MAX` gleich acht.
+
+### Eigener Fehler bei der Behebung, festgehalten als Regel
+
+Die Dateigröße sollte zunächst auf Offset 76 in `font_state`. Dort liegt aber die obere Hälfte des 8-Byte-Zeigers `FONT_CMAP4` (Offset 72). Der Schreibzugriff zerstörte den Zeiger, die Schrift wurde nicht mehr gefunden. Aufgefallen ist es, weil der Bildschirmabzug vom Sollbild abwich und die Grenzmeldung bei einer intakten Schrift erschien.
+
+**Regel: Vor dem Einfügen eines neuen Feldes in eine Struktur die Breite aller Nachbarfelder prüfen, nicht nur deren Offsets.** Ein Offset allein sagt nichts darüber, wie weit das Feld reicht. Hier war die Strukturgröße 80 korrekt belegt, die scheinbare Lücke bei 76 war die zweite Hälfte eines Zeigers. Das Feld liegt jetzt auf 80, die Struktur ist 88 Byte groß.
+
+### Geprüft und in Ordnung
+
+| Prüfung | Ergebnis |
+|---|---|
+| `fb_fill_rect` und `fb_clip_set` | Clipping begrenzt sauber auf den Bildschirm, leere Flächen brechen ab. Ein Fenster über dem Bildrand kann nicht über den Puffer hinaus schreiben |
+| Überlauf der Liste veränderter Bereiche | Fällt auf Vollbild zurück statt Bereiche zu verlieren |
+| `blk_read_check` | Sieht wie toter Code aus, die Marke ist nirgends referenziert. Der Code wird aber per Durchfall aus `blk_read` erreicht. **Nicht entfernen** |
+| Ausnahmebehandlung nach dem Umbau der Vektortabelle | Echte Ausnahme ausgelöst, `PANIC EL1h_SYNC` aus Eintrag 4, alle 16 Namenszeiger korrekt |
+
+### Offene Befunde, bewusst nicht behoben
+
+**Der Textpfad kennt kein UTF-8.** `ttf_text` liest mit `ldrb` einzelne Bytes und reicht jedes direkt als Zeichenpunkt weiter. Ein deutscher Umlaut steht in UTF-8 als zwei Bytes und erschiene als zwei fremde Zeichen. Bisher fällt das nicht auf, weil alle Texte im Kernel Umlaute umschreiben, etwa `unvollstaendig`. Für ein deutschsprachiges System ist das eine fehlende Funktion, keine Regression, und sie zu ergänzen ist eine eigene Aufgabe.
+
+**Zusammengesetzte Glyphen** werden erkannt und gemeldet, aber nicht gezeichnet. BabelSans hat keine, viele andere Schriften bauen Umlaute so auf.
+
+**`tasks/todo.md` und `tasks/lessons.md` existieren nicht.** Teil H von `CLAUDE.md` sieht beide vor. Bisher wurde stattdessen diese Belegdatei geführt. Ob die Dateien angelegt werden sollen, ist eine Entscheidung des Projektinhabers.
+
+---
+
+## Zweite Durchsicht, Grenzwerte und Randfälle
+
+Diese Runde suchte gezielt nach Überläufen, ungeschützten Divisionen und Wettläufen. **Keine akuten Fehler gefunden.** Die Prüfungen und ihre Zahlen:
+
+| Geprüft | Ergebnis |
+|---|---|
+| Alle Grenzen des Schriftrenderers gegen die echte Schrift nachgerechnet | Punkte 121 von 256, Konturen 7 von 16, Schnittpunkte je Bildzeile 12 von 64. Reichlich Luft |
+| Puffer für Dezimalausgabe | 24 Byte, eine 64-Bit-Zahl braucht höchstens 20 Stellen |
+| Alle sieben Divisionen auf Division durch Null | Fünf haben konstante Divisoren. Die Bézier-Schrittzahl ist auf mindestens 2 geklemmt. Waagerechte Kanten werden in `edge_add` verworfen, deshalb ist die Höhendifferenz dort nie null. Auf AArch64 wirft eine Division durch Null keine Ausnahme, sie liefert stillschweigend 0, ein ungeschützter Fall wäre also besonders tückisch |
+| Ringpuffer der Tastatureingabe | Sauber getrennt: die Unterbrechungsroutine verändert nur `head`, die Hauptschleife nur `tail`. Auf einem Kern ohne Barriere korrekt |
+| Mauszeiger in den Bildschirmecken | Startposition testweise auf `(0,0)`, `(FB_WIDTH-1, FB_HEIGHT-1)` und 20 Punkte vor der Ecke gesetzt. Alle drei Läufe erreichen `BOOT OK` ohne Panik |
+| Speicherallokator bei Erschöpfung | Gibt sauber null zurück |
+
+### Latente Befunde, heute ohne Wirkung
+
+**`cursor_show` prüft nicht, ob der Zeiger bereits sichtbar ist.** Zweimaliges Anzeigen ohne dazwischenliegendes Verstecken würde den Zeiger in den gesicherten Hintergrund einbrennen und eine Spur hinterlassen. Heute unmöglich, weil der einzige Aufrufer `cursor_update` immer zuerst versteckt und der Start ihn genau einmal anzeigt. Bei Schritt 9d, dem Ziehen von Fenstern, wird das relevant.
+
+**`win_repaint` beachtet den Zeiger nicht.** Wird ein Bereich neu gezeichnet, während der Zeiger sichtbar ist, veraltet der gesicherte Hintergrund, und das nächste Verstecken schreibt alten Inhalt zurück. Heute ohne Wirkung, weil `win_repaint` nur aus dem abgeschalteten Selbsttest aufgerufen wird und dort vor dem ersten Anzeigen läuft.
+
+**In `edge_add` liegen drei Instruktionen zwischen `cmp` und dem zugehörigen `b.lo`.** `ladr`, `mov` und `madd` verändern keine Bedingungsbits, der Code ist korrekt. Er ist aber fragil: eine dort eingefügte flagsetzende Instruktion würde die Richtungsentscheidung der Kante still verdrehen.
