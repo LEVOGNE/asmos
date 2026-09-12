@@ -741,3 +741,47 @@ Diese Runde suchte gezielt nach Überläufen, ungeschützten Divisionen und Wett
 **`win_repaint` beachtet den Zeiger nicht.** Wird ein Bereich neu gezeichnet, während der Zeiger sichtbar ist, veraltet der gesicherte Hintergrund, und das nächste Verstecken schreibt alten Inhalt zurück. Heute ohne Wirkung, weil `win_repaint` nur aus dem abgeschalteten Selbsttest aufgerufen wird und dort vor dem ersten Anzeigen läuft.
 
 **In `edge_add` liegen drei Instruktionen zwischen `cmp` und dem zugehörigen `b.lo`.** `ladr`, `mov` und `madd` verändern keine Bedingungsbits, der Code ist korrekt. Er ist aber fragil: eine dort eingefügte flagsetzende Instruktion würde die Richtungsentscheidung der Kante still verdrehen.
+
+---
+
+## Ausschaltknopf und geordnetes Herunterfahren
+
+### Beleg für den Abschaltbefehl
+
+Der Abschaltbefehl wurde nicht geraten, sondern aus dem Device Tree der laufenden Maschine gelesen (`make dtb`, dann `virt.dts`):
+
+    psci {
+        migrate = <0xc4000005>;
+        cpu_on = <0xc4000003>;
+        cpu_off = <0x84000002>;
+        cpu_suspend = <0xc4000001>;
+        method = "hvc";
+        compatible = "arm,psci-1.0", "arm,psci-0.2", "arm,psci";
+    };
+
+| Wert | Bedeutung | Quelle |
+|---|---|---|
+| `hvc #0` | Aufrufweg für PSCI | `method = "hvc"` im Device Tree der `virt`-Maschine |
+| `0x84000008` | Funktionsnummer `SYSTEM_OFF` | PSCI-Spezifikation ab 0.2. Der Device Tree meldet `arm,psci-1.0`, ab 0.2 sind die Nummern festgelegt und stehen deshalb nicht mehr einzeln im Knoten. Das Nummernschema ist durch die dort aufgeführten Werte bestätigt: `cpu_off` ist 0x84000002, also Funktion 2 im selben Block |
+
+Empirisch bestätigt: QEMU beendet sich nach dem Aufruf mit Rückgabewert 0 in unter einer Sekunde, und die Meldung `SHUTDOWN FEHLGESCHLAGEN` bleibt aus. Kehrt der Aufruf wider Erwarten zurück, meldet der Kernel das und geht in eine `wfi`-Schleife, statt stillschweigend weiterzulaufen.
+
+**Für den Raspberry Pi 5 ist dieser Wert neu zu prüfen.** Dort gibt es keinen QEMU-Device-Tree, und ob die Firmware PSCI in dieser Form bereitstellt, ist offen.
+
+### Was beim Herunterfahren geschieht
+
+In dieser Reihenfolge: Interrupts sperren, Zeitgeber abschalten (`cntp_ctl_el0` auf null), virtio-Geräte über ihr Statusregister zurücksetzen, dann die Puffer überschreiben, `dsb sy` als Barriere, zuletzt `SYSTEM_OFF`.
+
+Überschrieben werden `fb_render` (46,9 MB), `fb_output` (23,4 MB), der Schriftpuffer, die beiden Sektorpuffer, der Tastaturringpuffer und der gesicherte Hintergrund unter dem Mauszeiger. Zusammen rund 70 MB, in QEMU nicht messbar verzögernd.
+
+### Darstellung des Knopfes
+
+Der Knopf ist ein Kreis mit weicher Kante, gezeichnet über den Abstandstest `dx² + dy²` je Bildpunkt. Zwischen `(r-1)²` und `(r+1)²` wird die Deckung linear aus der Quadratdifferenz abgeleitet, der Nenner ist `4r`. Das kommt ohne Wurzel und ohne Winkelfunktionen aus. Das Standby-Symbol entsteht aus drei Kreisen und zwei Rechtecken: weisser Kreis, kleinerer Kreis in Knopffarbe ergibt den Ring, ein Balken in Knopffarbe öffnet ihn oben, ein schmales Rechteck in Weiss bildet den Strich.
+
+Die Trefferfläche ist derselbe Kreis. Geprüft mit vier Punkten: Mittelpunkt und zwei Bildpunkte innerhalb des Randes treffen, vier Bildpunkte ausserhalb und ein entfernter Punkt treffen nicht.
+
+### Ein Fehler beim Bauen, dieselbe Familie wie immer
+
+Die erste Fassung zeichnete statt eines gefüllten Kreises nur einen dünnen Bogen, und der Ring erschien als Rechteck. Ursache: Das Quadrat des senkrechten Abstands lag in `w2` und sollte die ganze Zeile überleben. `fb_pixel_addr` und `fb_blend_pixel` dürfen dieses Register aber zerstören. Nach dem ersten Bildpunkt jeder Zeile rechnete die Routine mit Müll, deshalb blieb genau der erste Punkt jeder Zeile stehen, also ein Bogen.
+
+**Das ist bereits die dritte Wiederholung derselben Fehlerklasse in diesem Projekt.** Behoben, indem der Abstand je Bildpunkt neu berechnet wird und die Schleifengrenzen einmalig in `x19` bis `x28` geklemmt werden. Die Bildpunktkoordinaten liegen über den Aufruf hinweg auf dem Stack, nicht in flüchtigen Registern.

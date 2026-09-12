@@ -436,6 +436,22 @@
 .equ COLOR_GREEN,           0xffff0000ffff0000
 .equ COLOR_BLUE,            0xffffffff00000000
 
+.equ POWER_R,               32
+.equ POWER_MARGIN,          28
+.equ POWER_CX,              (FB_WIDTH - POWER_MARGIN - POWER_R)
+.equ POWER_CY,              (POWER_MARGIN + POWER_R)
+.equ POWER_RING_OUT,        17
+.equ POWER_RING_IN,         12
+.equ POWER_BAR_HALF,        5
+.equ POWER_BAR_TOP,         23
+.equ POWER_BAR_BOT,         8
+.equ POWER_STEM_HALF,       3
+.equ POWER_STEM_TOP,        21
+.equ POWER_STEM_BOT,        3
+.equ COLOR_POWER,           0xffff20202020d8d8
+.equ COLOR_POWER_SYMBOL,    0xffffffffffffffff
+.equ PSCI_SYSTEM_OFF,       0x84000008
+
 .equ DAIF_I,                2
 
 .equ IRQ_FRAME_SIZE,        160
@@ -1309,6 +1325,217 @@ win_move:
     ldp     x29, x30, [sp], #48
     ret
 
+power_wipe:
+    cbz     x1, power_wipe_done
+    add     x1, x0, x1
+
+power_wipe_loop:
+    cmp     x0, x1
+    b.hs    power_wipe_done
+    stp     xzr, xzr, [x0], #16
+    b       power_wipe_loop
+
+power_wipe_done:
+    ret
+
+power_device_off:
+    ladr    x0, virtio_input_base
+    ldr     x1, [x0]
+    cbz     x1, power_device_blk
+    str     wzr, [x1, #VIRTIO_REG_STATUS]
+    dsb     sy
+
+power_device_blk:
+    ladr    x0, blk_base
+    ldr     x1, [x0]
+    cbz     x1, power_device_done
+    str     wzr, [x1, #VIRTIO_REG_STATUS]
+    dsb     sy
+
+power_device_done:
+    ret
+
+power_off:
+    msr     daifset, #DAIF_I
+    msr     cntp_ctl_el0, xzr
+    isb
+    ladr    x0, power_msg
+    bl      uart_puts
+    bl      power_device_off
+    ladr    x0, power_wipe_msg
+    bl      uart_puts
+    ladr    x0, fb_render
+    ldr     x1, =FB_SIZE
+    bl      power_wipe
+    ladr    x0, fb_output
+    ldr     x1, =OUT_SIZE
+    bl      power_wipe
+    ladr    x0, ttf_buffer
+    mov     x1, #TTF_MAX_SIZE
+    bl      power_wipe
+    ladr    x0, blk_buffer
+    mov     x1, #BLK_SECTOR_SIZE
+    bl      power_wipe
+    ladr    x0, fat_buffer
+    mov     x1, #BLK_SECTOR_SIZE
+    bl      power_wipe
+    ladr    x0, uart_rx_ring
+    mov     x1, #UART_RX_RING_SIZE
+    bl      power_wipe
+    ladr    x0, cursor_backing
+    mov     x1, #CURSOR_BACKING_SIZE
+    bl      power_wipe
+    dsb     sy
+    ladr    x0, power_bye_msg
+    bl      uart_puts
+    ldr     x0, =PSCI_SYSTEM_OFF
+    mov     x1, #0
+    mov     x2, #0
+    mov     x3, #0
+    hvc     #0
+    ladr    x0, power_fail_msg
+    bl      uart_puts
+
+power_off_halt:
+    wfi
+    b       power_off_halt
+
+
+power_disc:
+    stp     x29, x30, [sp, #-96]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    stp     x27, x28, [sp, #80]
+    mov     w19, w0
+    mov     w20, w1
+    mov     w21, w2
+    mov     x22, x3
+    add     w23, w21, #1
+    mul     w23, w23, w23
+    sub     w24, w21, #1
+    mul     w24, w24, w24
+    lsl     w25, w21, #2
+    ladr    x4, fb_clip
+    sub     w26, w19, w21
+    sub     w26, w26, #1
+    ldr     w5, [x4, #CLIP_X]
+    cmp     w26, w5
+    csel    w26, w5, w26, lt
+    add     w27, w19, w21
+    add     w27, w27, #2
+    ldr     w5, [x4, #CLIP_X2]
+    cmp     w27, w5
+    csel    w27, w5, w27, gt
+    add     w28, w20, w21
+    add     w28, w28, #2
+    ldr     w5, [x4, #CLIP_Y2]
+    cmp     w28, w5
+    csel    w28, w5, w28, gt
+    sub     w1, w20, w21
+    sub     w1, w1, #1
+    ldr     w5, [x4, #CLIP_Y]
+    cmp     w1, w5
+    csel    w1, w5, w1, lt
+
+power_disc_row:
+    cmp     w1, w28
+    b.ge    power_disc_done
+    mov     w0, w26
+
+power_disc_col:
+    cmp     w0, w27
+    b.ge    power_disc_next
+    sub     w2, w0, w19
+    mul     w2, w2, w2
+    sub     w3, w1, w20
+    mul     w3, w3, w3
+    add     w3, w3, w2
+    cmp     w3, w24
+    b.ls    power_disc_solid
+    cmp     w3, w23
+    b.hs    power_disc_skip
+    sub     w4, w23, w3
+    mov     w5, #ALPHA_MAX
+    mul     w4, w4, w5
+    udiv    w4, w4, w25
+    b       power_disc_put
+
+power_disc_solid:
+    mov     w4, #ALPHA_MAX
+
+power_disc_put:
+    stp     x0, x1, [sp, #-32]!
+    str     x4, [sp, #16]
+    bl      fb_pixel_addr
+    ldr     x1, [sp, #16]
+    mov     x2, x22
+    bl      fb_blend_pixel
+    ldp     x0, x1, [sp], #32
+
+power_disc_skip:
+    add     w0, w0, #1
+    b       power_disc_col
+
+power_disc_next:
+    add     w1, w1, #1
+    b       power_disc_row
+
+power_disc_done:
+    ldp     x27, x28, [sp, #80]
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #96
+    ret
+
+power_draw:
+    stp     x29, x30, [sp, #-16]!
+    mov     w0, #POWER_CX
+    mov     w1, #POWER_CY
+    mov     w2, #POWER_R
+    ldr     x3, =COLOR_POWER
+    bl      power_disc
+    mov     w0, #POWER_CX
+    mov     w1, #POWER_CY
+    mov     w2, #POWER_RING_OUT
+    ldr     x3, =COLOR_POWER_SYMBOL
+    bl      power_disc
+    mov     w0, #POWER_CX
+    mov     w1, #POWER_CY
+    mov     w2, #POWER_RING_IN
+    ldr     x3, =COLOR_POWER
+    bl      power_disc
+    mov     w0, #(POWER_CX - POWER_BAR_HALF)
+    mov     w1, #(POWER_CY - POWER_BAR_TOP)
+    mov     w2, #(POWER_BAR_HALF * 2)
+    mov     w3, #(POWER_BAR_TOP - POWER_BAR_BOT)
+    ldr     x4, =COLOR_POWER
+    bl      fb_fill_rect
+    mov     w0, #(POWER_CX - POWER_STEM_HALF)
+    mov     w1, #(POWER_CY - POWER_STEM_TOP)
+    mov     w2, #(POWER_STEM_HALF * 2)
+    mov     w3, #(POWER_STEM_TOP - POWER_STEM_BOT)
+    ldr     x4, =COLOR_POWER_SYMBOL
+    bl      fb_fill_rect
+    ldp     x29, x30, [sp], #16
+    ret
+
+power_hit:
+    sub     w0, w0, #POWER_CX
+    mul     w0, w0, w0
+    sub     w1, w1, #POWER_CY
+    mul     w1, w1, w1
+    add     w0, w0, w1
+    mov     w1, #POWER_R
+    mul     w1, w1, w1
+    cmp     w0, w1
+    cset    w0, ls
+    ret
+
+
 win_add:
     ladr    x9, win_count
     ldr     w10, [x9]
@@ -1413,6 +1640,7 @@ win_draw_all_loop:
     b       win_draw_all_loop
 
 win_draw_all_done:
+    bl      power_draw
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
     ret
@@ -2786,6 +3014,12 @@ mouse_click_first:
 
 mouse_click_store:
     str     w5, [x3]
+    ladr    x3, mouse_x
+    ldr     w0, [x3]
+    ldr     w1, [x3, #4]
+    ladr    x3, click_x
+    str     w0, [x3]
+    str     w1, [x3, #4]
     ladr    x3, click_pending
     mov     w0, #1
     strb    w0, [x3]
@@ -4148,6 +4382,12 @@ console_drain_click:
     ladr    x1, click_count
     ldr     w1, [x1]
     bl      uart_field
+    ladr    x0, click_x
+    ldr     w1, [x0, #4]
+    ldr     w0, [x0]
+    bl      power_hit
+    cbz     w0, console_drain_mouse
+    bl      power_off
 
 console_drain_mouse:
     ladr    x0, mouse_dirty
@@ -4560,7 +4800,7 @@ blk_sig_label:
 blk_timeout_msg:
     .asciz  "BLK TIMEOUT, GERAET GESPERRT\r\n"
 boot_banner:
-    .asciz  "asmos\r\n"
+    .asciz  "asmOS\r\n"
 boot_ok_msg:
     .asciz  "BOOT OK\r\n"
 
@@ -4746,11 +4986,23 @@ win_title_1:
 win_title_2:
     .asciz  "Fenster B"
 win_title_3:
-    .asciz  "asmos"
+    .asciz  "asmOS"
 
     vec_entry 15, panic_entry
 
 .section .rodata
+
+power_msg:
+    .asciz  "\r\nSHUTDOWN angefordert\r\n"
+
+power_wipe_msg:
+    .asciz  "SHUTDOWN Speicher wird geleert\r\n"
+
+power_bye_msg:
+    .asciz  "SHUTDOWN PSCI SYSTEM_OFF\r\n"
+
+power_fail_msg:
+    .asciz  "SHUTDOWN FEHLGESCHLAGEN, System angehalten\r\n"
 
 win_full_msg:
     .asciz  "WIN LISTE VOLL, Fenster verworfen\r\n"
@@ -5227,6 +5479,12 @@ mouse_buttons:
     .space  1
 mouse_dirty:
     .space  1
+click_x:
+    .space  4
+
+click_y:
+    .space  4
+
 click_pending:
     .space  1
 

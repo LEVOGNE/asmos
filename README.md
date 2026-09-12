@@ -1,6 +1,6 @@
 <div align="center">
 
-# asmos
+# asmOS
 
 **As**sembler **O**perating **S**ystem
 
@@ -11,18 +11,18 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-17.904%20Byte-brightgreen?style=flat-square" alt="17904 Byte">
+<img src="https://img.shields.io/badge/Kernel-20.080%20Byte-brightgreen?style=flat-square" alt="20080 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
 
-<img src="docs/screenshot.png" width="640" alt="asmos im Betrieb: asmos im Betrieb: Fenster mit TrueType-Titeln und Mauszeiger">
+<img src="docs/screenshot.png" width="640" alt="asmOS im Betrieb: Fenster mit TrueType-Titeln und Mauszeiger">
 
 <sub><i>Das laufende System: eigener Framebuffer, eigene TrueType-Schrift, eigener Mauszeiger.</i></sub>
 
 <br><br>
 
-Das fertige System ist <b>17.904&nbsp;Byte</b> groß.<br>
+Das fertige System ist <b>20.080&nbsp;Byte</b> groß.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -61,9 +61,20 @@ Das sind die Programme, die aus Assembler-Text Maschinencode für ARM machen, pl
 make run
 ```
 
-Es öffnet sich ein Fenster mit dem Testbild und dem Mauszeiger. Im Terminal läuft die Konsole mit blinkendem Cursor, dort kannst du tippen.
+Es öffnet sich ein Fenster mit den Fenstern und dem Mauszeiger. Im Terminal läuft die Konsole mit blinkendem Cursor, dort kannst du tippen.
 
-Beenden mit <kbd>Strg</kbd>+<kbd>A</kbd>, loslassen, dann <kbd>X</kbd>.
+### Beenden
+
+**Der saubere Weg: auf den roten Knopf oben rechts klicken.** asmOS fährt dann geordnet herunter, sperrt die Unterbrechungen, hält den Zeitgeber an, setzt die Geräte zurück, überschreibt seine Puffer und schaltet die Maschine über PSCI ab. QEMU beendet sich dabei von selbst.
+
+Falls das nicht möglich ist:
+
+| Gestartet mit | Beenden |
+|---|---|
+| `make run` | Fenster schliessen, oder <kbd>Strg</kbd>+<kbd>C</kbd> im Terminal |
+| `make serial` | <kbd>Strg</kbd>+<kbd>A</kbd>, loslassen, dann <kbd>X</kbd> |
+
+Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf dieselbe Leitung, deshalb gibt es dort das Fluchtzeichen <kbd>Strg</kbd>+<kbd>A</kbd>. Bei `make run` gibt es das nicht, die serielle Leitung geht dort unverändert ins Terminal.
 
 <details>
 <summary><b>Alle Befehle im Überblick</b></summary>
@@ -143,7 +154,7 @@ In `kernel.S` stecken 534 Sprungmarken. Jede gehört zu einem Zuständigkeitsber
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **17.904 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **20.080 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 106 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `disk.img` | 64 MB | Testdatenträger mit echtem FAT32 und drei Testdateien |
@@ -200,7 +211,7 @@ In QEMU lässt sich jeder Fehler in Sekunden einkreisen: Debugger anhängen, Ein
 
 ### Zwei Grundregeln prägen jede Zeile
 
-**Alles in einer Datei.** Daher der Zusatz im Namen: asmos ist als Monolith gebaut. Struktur entsteht durch klare Namensbereiche und getrennte Verantwortung im Code, nicht durch viele kleine Dateien.
+**Alles in einer Datei.** Daher der Zusatz im Namen: asmOS ist als Monolith gebaut. Struktur entsteht durch klare Namensbereiche und getrennte Verantwortung im Code, nicht durch viele kleine Dateien.
 
 **Jede Logik existiert genau einmal.** Als der Treiber für den Datenträger dazukam, wurde das virtio-Protokoll nicht kopiert, sondern die gemeinsame Einrichtung herausgezogen. Eingabegerät und Datenträger benutzen dieselbe Routine, nur mit anderem Gerätetyp.
 
@@ -286,7 +297,7 @@ Zusätzlich fertig: TrueType-Renderer als Systemschrift, Zeiger mit Alphakanal a
 |---|---|
 | Eigener Quelltext | 132 KB in drei Dateien |
 | Zeilen Assembler | 5.260 |
-| **Fertiges Betriebssystem** | **17.904 Byte** |
+| **Fertiges Betriebssystem** | **20.080 Byte** |
 | Speicherbedarf im Betrieb | 71 MB, davon 70 MB Bildspeicher |
 | Dokumentation | 48 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
