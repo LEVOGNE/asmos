@@ -1185,3 +1185,31 @@ Daraus folgt: **Der Engpass ist nicht die Speicherbandbreite, sondern die skalar
 Der Pi 5 hat vier Cortex-A76 bei 2,4 GHz und LPDDR4X mit theoretisch etwa 17 GB/s. Seine Kerne sind langsamer als die von Apple Silicon. Zu erwarten ist deshalb eher der Bereich zwischen den gemessenen Werten, also spürbar besser als die Emulation, aber nicht automatisch flüssig.
 
 Der wirksame Hebel ist damit benannt und liegt nicht bei der Hardware: die Umwandlungsschleife auf NEON umstellen und weniger Fläche neu zeichnen. Beides steht bereits im Zusatzplan.
+
+---
+
+## Durchsicht nach Animation und Fenstersystem
+
+Diese Runde galt dem neuen Code: Animationsengine, Fensterinteraktion, Übergänge. **Ein Befund, drei widerlegte Verdachtsmomente.**
+
+### Behoben: Ziehen war unbegrenzt
+
+Ein Fenster liess sich vollständig aus dem Bild ziehen und war danach nicht mehr erreichbar, weil kein Teil der Titelleiste mehr angeklickt werden konnte. Kein Absturz, aber ein Zustand ohne Ausweg. Die Zielposition wird jetzt so begrenzt, dass immer mindestens 120 Bildpunkte des Fensters sichtbar bleiben, an allen vier Rändern. Damit erfüllt das Verhalten die Vorgabe aus dem Zusatzplan: teilweise ausserhalb liegen dürfen, aber wieder hineingeschoben werden können.
+
+### Widerlegt: die Liste veränderter Bereiche läuft nicht über
+
+Vermutung war, dass laufende Animationen die Liste sprengen: Jede Wertänderung markiert zwei Bereiche, bei mehreren gleichzeitigen Animationen und 60 Bildern je Sekunde wären das hunderte Markierungen je Sekunde bei nur 16 Plätzen. Ein Überlauf würde auf Vollbild zurückfallen und die Teilaktualisierung entwerten.
+
+Gemessen mit einem Zähler im Überlaufpfad, über Start, zwei Fokuswechsel und alle Übergänge hinweg: **null Überläufe**. Grund ist die vorhandene Zusammenfassung überlappender Bereiche. Alte und neue Position eines bewegten Fensters überlappen fast immer und werden zu einem Bereich verschmolzen.
+
+### Widerlegt: die Animationsliste läuft beim Ziehen nicht voll
+
+Beim Ziehen werden je Mausbewegung zwei Animationen gestartet. Da `anim_start` eine laufende Animation derselben Eigenschaft am selben Ziel findet und fortsetzt, bleibt es bei zwei Einträgen. Abgelaufene Plätze werden seit der letzten Durchsicht wiederverwendet.
+
+### Geprüft: Fenster über den Bildrändern
+
+Fenster testweise auf `x = -400, y = -200` gesetzt, also über den linken und oberen Rand hinaus. Beide Betriebsarten erreichen `BOOT OK`, keine Panik, keine Grenzmeldung, im Bild sauber abgeschnitten ohne Artefakte. Das ist das Abnahmekriterium aus Schritt 0 des Zusatzplans.
+
+### Maschinelle Nachprüfung
+
+Über alle 606 Marken: kein Wert überlebt einen Aufruf in einem flüchtigen Register, keine Routine mit unausgeglichenem Stack. Geprüft wird jetzt in **beiden** Betriebsarten, emuliert und beschleunigt.

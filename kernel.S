@@ -414,6 +414,7 @@
 .equ WIN_SIZE,              56
 .equ WIN_FADE_MS,           260
 .equ WIN_DRAG_MS,           90
+.equ WIN_KEEP_VISIBLE,      120
 .equ WIN_FOCUS_MS,          180
 .equ ANIM_PROP_TX,          0
 .equ ANIM_PROP_TY,          1
@@ -2780,6 +2781,22 @@ win_drag_move:
     ladr    x9, win_drag_dy
     ldr     w0, [x9]
     sub     w21, w21, w0
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x19, x10, x9
+    ldr     w0, [x9, #WIN_W]
+    sub     w0, w0, #WIN_KEEP_VISIBLE
+    neg     w0, w0
+    cmp     w20, w0
+    csel    w20, w0, w20, lt
+    mov     w0, #(FB_WIDTH - WIN_KEEP_VISIBLE)
+    cmp     w20, w0
+    csel    w20, w0, w20, gt
+    cmp     w21, wzr
+    csel    w21, wzr, w21, lt
+    mov     w0, #(FB_HEIGHT - WIN_KEEP_VISIBLE)
+    cmp     w21, w0
+    csel    w21, w0, w21, gt
     ladr    x9, win_list
     mov     x10, #WIN_SIZE
     madd    x9, x19, x10, x9
