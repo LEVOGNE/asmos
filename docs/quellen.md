@@ -1137,3 +1137,51 @@ Nicht maschinell nachweisbar, weil der QEMU-Monitor bei absoluten Geräten keine
 `win_fade_all` landete in `win_repaint_full` statt in `win_demo`. Damit startete das Aufblenden bei **jedem** Vollbild neu und blieb dauerhaft bei null, die Fenster waren unsichtbar. Sichtbar wurde es erst durch die Farbmessung: Die Fensterfläche zeigte exakt die Hintergrundfarbe R=16 G=32 B=48.
 
 Dazu ein Reihenfolgefehler: Während des Bildschirm-Fades sprang die Hauptschleife am Neuzeichnen vorbei und gab nur neu aus. Der Fenster-Fade lief in dieser Zeit ab, ohne je gezeichnet zu werden. Jetzt wird erst gezeichnet, dann bei Bedarf zusätzlich vollständig ausgegeben.
+
+---
+
+## Warum es in QEMU zäh läuft, und was auf echter Hardware zu erwarten ist
+
+### Gemessen, nicht geschätzt
+
+Zeit für ein Vollbild, im laufenden Kernel über den Zeitgeber gemessen:
+
+| Schritt | Software-Emulation | mit Hardware-Beschleunigung | Faktor |
+|---|---:|---:|---:|
+| Vollbild zeichnen | 64,9 ms | 11,65 ms | 5,6 |
+| Ausgabe umwandeln | 41,1 ms | 12,54 ms | 3,3 |
+| **zusammen** | **106,0 ms** | **24,19 ms** | **4,4** |
+| Bilder je Sekunde | 9,4 | 41,3 | |
+
+Der Grund ist die Betriebsart. `make run` startet mit `-cpu cortex-a72`, und damit übersetzt QEMU jede Instruktion in Software. Mit `-machine virt,accel=hvf -cpu host` führt der Prozessor den Gastcode direkt aus. Dafür gibt es jetzt `make fast`.
+
+Der Unterschied ist also **kein Fehler im Kernel**, sondern der Preis der Emulation.
+
+### Dabei ein echter Fehler gefunden
+
+Mit Hardware-Beschleunigung stürzte der Kernel ab: `PANIC EL1h_SYNC esr=0x02000000` bei `msr cntv_tval_el0`, damals noch `cntp_tval_el0`. Ursache: Der Kernel benutzte den **physischen** Zeitgeber. Unter Virtualisierung gehört der dem Hypervisor und wird abgefangen.
+
+Umgestellt auf den **virtuellen** Zeitgeber, der in beiden Fällen funktioniert. Die Interruptnummer ändert sich dabei mit und ist aus dem Device Tree belegt:
+
+    timer {
+        interrupts = <0x01 0x0d 0x104   0x01 0x0e 0x104
+                      0x01 0x0b 0x104   0x01 0x0a 0x104>;
+    };
+
+Die vier Einträge sind nach der ARM-Bindung sicherer, nicht-sicherer, virtueller und Hypervisor-Zeitgeber. Der virtuelle ist PPI 11, also Interrupt **27** statt bisher 30.
+
+Der Startcode setzte `cntvoff_el2` bereits auf null und gab die Zeitgeber für EL1 frei. Die virtuelle Zeit läuft damit auch ohne Hypervisor synchron zur physischen.
+
+**Das war ein latenter Fehler auch für den Raspberry Pi**, je nachdem, in welchem Zustand die Firmware EL2 verlässt.
+
+Gegenprobe: Die Blinkrate bleibt bei beiden Betriebsarten 2 Hz, obwohl der Zeitgeber unterschiedlich schnell läuft, 62,5 MHz emuliert gegenüber 24 MHz beschleunigt. Der Kernel liest die Frequenz zur Laufzeit, deshalb stimmt die Zeit in beiden Fällen.
+
+### Was auf dem Raspberry Pi 5 zu erwarten ist
+
+Die Messung erlaubt eine belastbarere Aussage als eine reine Bandbreitenrechnung. Ein Vollbild bewegt 70,3 MiB. Mit Hardware-Beschleunigung auf Apple Silicon, das über hundert GB/s Speicherbandbreite hat, erreicht die Umwandlung trotzdem nur **5,88 GB/s**.
+
+Daraus folgt: **Der Engpass ist nicht die Speicherbandbreite, sondern die skalare Schleife**, die jeden Bildpunkt einzeln zerlegt und wieder zusammensetzt.
+
+Der Pi 5 hat vier Cortex-A76 bei 2,4 GHz und LPDDR4X mit theoretisch etwa 17 GB/s. Seine Kerne sind langsamer als die von Apple Silicon. Zu erwarten ist deshalb eher der Bereich zwischen den gemessenen Werten, also spürbar besser als die Emulation, aber nicht automatisch flüssig.
+
+Der wirksame Hebel ist damit benannt und liegt nicht bei der Hardware: die Umwandlungsschleife auf NEON umstellen und weniger Fläche neu zeichnen. Beides steht bereits im Zusatzplan.

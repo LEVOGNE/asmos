@@ -74,7 +74,7 @@
 .equ GIC_INTID_MASK,        0x3ff
 .equ GIC_INTID_SPURIOUS,    0x3ff
 
-.equ TIMER_INTID,           30
+.equ TIMER_INTID,           27
 .equ TIMER_CTL_ENABLE,      1
 .equ TIMER_HZ,              60
 .equ BLINK_HZ,              2
@@ -1730,7 +1730,7 @@ anim_init_state:
     ret
 
 anim_now:
-    mrs     x0, cntpct_el0
+    mrs     x0, cntvct_el0
     ret
 
 anim_ms_to_ticks:
@@ -2302,7 +2302,7 @@ power_device_done:
 
 power_off:
     msr     daifset, #DAIF_I
-    msr     cntp_ctl_el0, xzr
+    msr     cntv_ctl_el0, xzr
     isb
     ladr    x0, power_msg
     bl      uart_puts
@@ -4432,7 +4432,7 @@ mouse_apply_key:
     b       mouse_click
 
 mouse_click:
-    mrs     x0, cntpct_el0
+    mrs     x0, cntvct_el0
     ladr    x3, click_last
     ldr     x1, [x3]
     sub     x2, x0, x1
@@ -5748,9 +5748,9 @@ timer_init:
     udiv    x0, x0, x2
     ladr    x1, timer_interval
     str     x0, [x1]
-    msr     cntp_tval_el0, x0
+    msr     cntv_tval_el0, x0
     mov     x0, #TIMER_CTL_ENABLE
-    msr     cntp_ctl_el0, x0
+    msr     cntv_ctl_el0, x0
     isb
     mov     w0, #TIMER_INTID
     ldp     x29, x30, [sp], #16
@@ -5764,7 +5764,7 @@ timer_unavailable:
 timer_tick:
     ladr    x0, timer_interval
     ldr     x1, [x0]
-    msr     cntp_tval_el0, x1
+    msr     cntv_tval_el0, x1
     ladr    x0, anim_active
     ldr     w1, [x0]
     cbz     w1, timer_tick_blink

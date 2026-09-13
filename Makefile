@@ -39,6 +39,9 @@ kernel.bin: kernel.elf
 run: kernel.bin
 	$(QEMU) -machine $(MACHINE) -cpu $(CPU) $(DEVICES) -serial stdio -kernel kernel.bin
 
+fast: kernel.bin
+	$(QEMU) -machine $(MACHINE),accel=hvf -cpu host $(DEVICES) -serial stdio -kernel kernel.bin
+
 serial: kernel.bin
 	$(QEMU) -machine $(MACHINE) -cpu $(CPU) $(DEVICES) -nographic -kernel kernel.bin
 
@@ -98,4 +101,4 @@ clean:
 distclean: clean
 	rm -f $(DISK)
 
-.PHONY: all run serial debug check shot disk dtb clean distclean
+.PHONY: all run fast serial debug check shot disk dtb clean distclean

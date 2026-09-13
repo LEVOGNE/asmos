@@ -84,7 +84,8 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 | Befehl | Was passiert |
 |---|---|
 | `make` | Baut den Kernel |
-| `make run` | Startet mit Fenster, Konsole im Terminal |
+| `make run` | Startet mit Fenster, Konsole im Terminal. Emuliert einen Cortex-A72 in Software |
+| `make fast` | Wie `make run`, aber mit Hardware-Beschleunigung. Rund 4,4-mal schneller, dafür läuft der Code auf dem Prozessor des Rechners statt auf einem emulierten Cortex-A72 |
 | `make serial` | Startet nur mit Textkonsole, ohne Fenster |
 | `make check` | Startet drei Sekunden, schreibt alles mit, prüft und meldet OK oder FEHLER |
 | `make shot` | Macht ein Bildschirmfoto nach `screen.png` und beendet sich selbst |
