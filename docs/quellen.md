@@ -1356,3 +1356,128 @@ Der Ausgabepuffer muss genullt werden, denn `ramfb` liest ihn, bevor der Kernel 
 Im emulierten Betrieb ist der Gewinn deutlich grösser, weil dort jeder Speicherzugriff durch die Übersetzungsschicht läuft und die reine Datenmenge stärker durchschlägt.
 
 **Gegenprobe.** `make shot` liefert ein Bild, das byteweise identisch mit dem vorherigen Stand ist, obwohl der interne Puffer beim Start jetzt uninitialisiert bleibt. Das belegt, dass er tatsächlich vollständig überschrieben wird. `make check` erreicht `BOOT OK` ohne `PANIC`. Das Abbild bleibt unverändert 24.576 Byte gross, die Messinstrumentierung wurde nach der Messung wieder entfernt.
+
+---
+
+## Fensterinhalt: Beschneidung und Dateiliste (13.09.2026)
+
+### Die Beschneidung war schon da, sie war nur nicht verschachtelbar
+
+`fb_clip` mit `CLIP_X`/`CLIP_Y`/`CLIP_X2`/`CLIP_Y2` existiert seit der Teilaktualisierung, und **alle** Zeichenwege werten es aus: `fb_fill_rect` lädt es und gibt es an `fb_rect_clip`, `vg_fill` klemmt seine Zeilen- und Spaltengrenzen dagegen, womit auch Schrift und Icons erfasst sind. Gesetzt wurde es bisher nur von `win_repaint` auf das jeweilige Aktualisierungsrechteck und von `fb_clip_full` auf den ganzen Bildschirm.
+
+Was fehlte, war der Schnitt zweier Bereiche: Beim Zeichnen von Fensterinhalt muss gleichzeitig das Aktualisierungsrechteck **und** der Fensterkörper gelten. Dafür `fb_clip_intersect` (schneidet das übergebene Rechteck in das bestehende und liefert das alte als zwei 64-Bit-Werte zurück) und `fb_clip_restore`. Beide ohne Stackrahmen, weil sie keine Aufrufe enthalten.
+
+Ein leeres Ergebnis ist sicher: `fb_rect_clip` bricht bei `w2 <= 0` ab, `vg_fill` bei `b.le` nach `subs`. Deshalb klemmt `fb_clip_intersect` X2 auf mindestens X statt negative Breiten entstehen zu lassen.
+
+### Nachweis der Beschneidung
+
+Ein Datenträger mit 35 Einträgen, davon 24 erfasst, in ein Fenster von 800 Punkten Höhe, in das 19 Zeilen passen.
+
+| Aufbau | Ergebnis |
+|---|---|
+| mit Zeilenprüfung in `files_draw` | 19 Zeilen, endet an der Fensterkante |
+| **ohne Zeilenprüfung**, nur Beschneidung | **19 Zeilen, identisches Bild** |
+
+Der zweite Lauf ist der eigentliche Beleg: Alle 24 Zeilen werden gezeichnet, fünf davon liegen unterhalb des Fensters, und kein Bildpunkt davon erreicht den Bildschirm. Die Zeilenprüfung bleibt trotzdem im Code, weil sie die Arbeit spart statt sie nur zu verwerfen.
+
+### Die Dateiliste
+
+`fat_root_walk` nimmt einen Callback und reicht ihm einen Zeiger auf den 32 Byte grossen Verzeichniseintrag **im Sektorpuffer**, der beim nächsten Sektor überschrieben wird. `files_collect` kopiert deshalb sofort heraus: Name in 8.3 zu `NAME.EXT` umgeschrieben, Grösse über `mem_read32`, Attribut. Einträge mit `(attr & 0x0f) == 0x0f` sind Langnamen-Fragmente und werden übersprungen, `fat_root_walk` filtert nur Datenträgerbezeichnungen.
+
+`win_draw_one` berechnet die Farbe über `win_fade_color` und übergibt sie an `files_draw`. Das ist nötig, weil `win_fade_color` den Fensterzeiger in `x19` erwartet, also nur innerhalb des `win_`-Blocks gültig ist. Ohne diesen Weg bliebe der Listentext beim Einblenden sofort voll sichtbar, während das Fenster noch aufblendet.
+
+### Zwei Fehler in dieser Runde, beide vom Werkzeug gefangen
+
+**Die Texte lagen in der Vektortabelle.** `win_title_1` bis `win_title_3` stehen nicht in `.rodata`, sondern in den ungenutzten 112 Byte von Vektoreintrag 14. Meine zwei neuen Meldungstexte mit zusammen 27 Byte sprengten das, der Linker meldete `Vektoreintrag 15 verschoben`. Genau dafür sind die Zusicherungen im Linkerskript da. Die Texte liegen jetzt in `.rodata`.
+
+**Der Testaufbau war falsch, nicht der Kernel.** `printf 'x' > "$MP/UEBER%03d.DAT" $i` ersetzt das Format im Dateinamen nicht, alle dreissig Schreibvorgänge gingen in dieselbe Datei. Das Ergebnis sah nach einem Fehler in der Liste aus. Zum dritten Mal in diesem Projekt lag es am Testaufbau.
+
+### Stille Grenze beseitigt
+
+`FILES_MAX` ist 24. Wurde das überschritten, brach `files_collect` den Lauf ab und liess den Rest kommentarlos weg. Jetzt erscheint `FILES LIST FULL`, bevor abgebrochen wird.
+
+### Der Testdatenträger enthielt Geisterdateien
+
+Die erste Liste zeigte jede Datei doppelt, als `HELLO.TXT` und `_HELL~2.TXT`. Das war kein Fehler der Liste: macOS legt beim Schreiben über `hdiutil` zu jeder Datei eine AppleDouble-Nebendatei `._NAME` an, dazu `.fseventsd`. Die Liste zeigte also korrekt an, was wirklich auf dem Datenträger stand. Behoben an der Ursache, `make disk` räumt diese Einträge jetzt vor dem Aushängen weg.
+
+### Beinahe-Verlust der Systemschrift, zum zweiten Mal
+
+`make disk` meldete `FONT_SRC fehlt`. Das Verzeichnis `~/Desktop/asmos-assets/` war verschwunden, und der Befehl hatte zuvor bereits `disk.img` überschrieben, also die letzte verbliebene Kopie.
+
+Gerettet aus einem Datenträgerabbild im Arbeitsverzeichnis dieser Sitzung: 50.516 Byte, SHA-256 beginnt `1009de51b079e174`, Dateikopf `00010000`. Beides stimmt mit der früheren Dokumentation überein, es ist nachweislich dieselbe Datei.
+
+**Ursache war ein stiller Fehlschlag im Makefile.** Bei fehlender Schrift gab `make disk` nur einen Hinweis aus und baute den Datenträger trotzdem, also ein unbrauchbares Abbild ohne sichtbaren Fehler. `make disk` bricht jetzt ab, bevor irgendetwas überschrieben wird.
+
+### Fehlersuche nach der Dateiliste (13.09.2026)
+
+Geprüft wurden die drei Fehlerklassen des Projekts, die Ausfallpfade und die neuen Grenzfälle.
+
+| Prüfung | Ergebnis |
+|---|---|
+| Registerverträge der neuen Routinen | `files_draw` sichert x19 bis x25 und benutzt genau diese, `font_text` ebenso, `win_mix_color` fasst keine callee-saved Register an. Ohne Befund |
+| Rahmenaufbau gegen Rahmenabbau, alle 230 Routinen | alle gleich gross, ohne Befund |
+| Sicherung ausserhalb des eigenen Rahmens | ohne Befund |
+| `bl` vor gesichertem `x30` | drei Treffer, alle in Routinen, die nie zurückkehren (`b boot_park`, Abschaltung, Hauptschleife). Ohne Befund |
+| Strukturvergrösserung auf 64 Byte | `win_swap` und `win_raise` rechnen mit `WIN_SIZE`, `anim_apply` adressiert nur bis Offset 48. Ohne Befund |
+| Start ohne Datenträger | `FILES SCAN FAIL`, `FILES n=0`, `BOOT OK`, kein `PANIC` |
+| Start mit beschädigter FAT | dito |
+| Fenster bei x=-400 und y=-30 | keine Reste, kein Absturz, Liste korrekt ausserhalb |
+| Fenster bei y=-200 | obere Zeilen sauber weggeschnitten, nichts auf dem Hintergrund |
+| Fenster mit Inhalt animiert bewegen | Liste wandert mit, während der Bewegung keine Fragmente, am Ende keine Reste |
+| `make disk` ohne Schrift | bricht ab, `disk.img` byteweise unverändert, keine Zwischendateien, nichts gemountet |
+
+### Leerer Schnitt wird jetzt erkannt
+
+Bei einem Fokuswechsel markiert `win_dirty_title` nur die Titelleiste, `win_draw_all` zeichnet aber alle Fenster. Für das Dateifenster ist der Schnitt aus Aktualisierungsbereich und Fensterkörper dann leer, die Textrasterung lief trotzdem und wurde vollständig verworfen. `fb_clip_intersect` liefert nun in `w2`, ob etwas übrig bleibt.
+
+**Der Gewinn ist kleiner als vermutet:** gemessen über hundert Fokuswechsel 2,901 statt 2,947 ms, also 1,6 Prozent. `vg_fill` klemmt früh genug, dass wenig Arbeit anfällt. Die Prüfung bleibt trotzdem, sie kostet fünf Befehle und wächst mit mehr Fensterinhalt. Das Bild ist byteweise identisch.
+
+### Offener Befund: Textinhalt verteuert das Ziehen deutlich
+
+Gemessen über fünfzig vollständige Neuzeichnungen des Dateifensters mit 24 Einträgen:
+
+| Betriebsart | ohne Liste | mit Liste | Aufschlag |
+|---|---:|---:|---:|
+| emuliert (`cortex-a72`) | 26,50 ms | **40,47 ms** | +53 Prozent |
+| beschleunigt (`accel=hvf`) | | **8,20 ms** | |
+
+Das sind **0,582 ms je Textzeile**. Emuliert fällt die Bildrate damit von 37,7 auf 24,7 Hz, also unter die angestrebten 30 Hz, beschleunigt bleiben 122 Hz.
+
+Mit dem heutigen Testdatenträger und seinen fünf Einträgen kostet es rund 2,9 ms und fällt nicht auf. Der Fall wird erst bei gut gefüllten Verzeichnissen spürbar, und zwar nur im emulierten Betrieb. Die saubere Lösung ist der Fensterpuffer aus Schritt 5 des Animationsplans: Der Text würde einmal gerastert und beim Ziehen nur noch kopiert. Bis dahin bleibt es als bekannte Grenze stehen.
+
+### Zweite Runde Fehlersuche, breit über den Bestand (13.09.2026)
+
+Diesmal nicht nach Routinen, sondern nach Fehlermustern gesucht. **Kein Fehler gefunden.**
+
+| Muster | Ergebnis |
+|---|---|
+| Pufferindizes gegen ihre Grenzen | `VG_XS_MAX`, `VG_EDGE_MAX` und `FILES_MAX` prüfen und melden über `font_limit_report` beziehungsweise `FILES LIST FULL` |
+| `DIRTY_MAX` überschritten | `dirty_add_overflow` fällt geordnet auf Vollbild zurück, kein Überlauf |
+| **Alle 18 Divisionen** | jeder Teiler abgesichert, siehe unten |
+| Endlosschleifen ohne Abbruch | drei Treffer, alle gewollt (`boot_park`, `power_off_halt`, `panic_halt`) |
+| Vorzeichenlose Vergleiche auf Koordinaten | `win_hit` nutzt durchweg `b.lt`/`b.ge`, also signed. Korrekt für Fenster jenseits des Randes |
+| Fremde Schriftdatei | siehe unten |
+
+**Zu den Divisionen.** Auf AArch64 gibt es keinen Trap, `x/0` liefert stillschweigend 0, ein Fehler bliebe also unsichtbar. Drei Teiler stammen aus Fremddaten und sind alle geprüft: `font_set_size` prüft `cbz w1` auf `units_per_em` aus der Schriftdatei, `fat_init_total` fängt es über `cbz w0` nach der Division ab, `mouse_apply_abs` prüft beide Achsenmaxima vor Gebrauch. Bei den geometrischen Divisionen ist der Teiler logisch ausgeschlossen: `vg_seg` bricht bei Länge null über `cbz x0` ab, und in `font_fill_scan` kann `YBOT == YTOP` nicht eintreten, weil die beiden vorangehenden Vergleiche `w27 >= YTOP` und `w27 < YBOT` sich dann widersprächen.
+
+**Fremde Schriften.** Der Kernel bekam nacheinander drei Schriften untergeschoben, die er nie gesehen hat:
+
+| Datei | Grösse | Ergebnis |
+|---|---:|---|
+| SFCompact.ttf | 1.890.660 | `TTF UNAVAILABLE`, kein `PANIC` |
+| NISC18030.ttf | 7.110.352 | `TTF UNAVAILABLE`, kein `PANIC` |
+| Arial Rounded Bold.ttf | 49.296 | **angenommen und korrekt dargestellt** |
+
+Die dritte ist der interessante Fall: Sie arbeitet intern mit `units=2048` statt der 1000 der Systemschrift, hat 243 statt 244 Glyphen und ist aufrecht statt kursiv. Fenstertitel und Dateiliste erscheinen damit sauber, also stimmen Skalierung, Kantenglättung und Vorschubbreiten auch für eine völlig andere Schrift. Der Test lief nur lokal, die Datei liegt weder im Repository noch auf dem Testdatenträger.
+
+### Drei als offen geführte Mängel sind in Wahrheit behoben
+
+Beim Nachprüfen der intern geführten offenen Punkte zeigte sich, dass der Code weiter ist als seine Beschreibung:
+
+| Bisher als offen geführt | Tatsächlich im Code |
+|---|---|
+| „Eine Zeitüberschreitung beim Blockgerät beendet keinen laufenden Auftrag, sie setzt nur den Basiszeiger auf null" | `blk_read_stop` ruft **`virtio_reset`**, setzt das Gerät also zurück und verwirft den Auftrag, **bevor** `blk_base` genullt wird |
+| „`fat_find` filtert Verzeichniseinträge nicht" | `fat_find_entry` prüft `tst w1, #DIR_ATTR_DIR` und überspringt Verzeichnisse |
+| „`fat_find` unterscheidet Lesefehler nicht von nicht gefunden" | Der Rückgabewert unterscheidet 1, 0 und -1. Beide Aufrufer werten das aus: `fat_load` mit `cmp w0, #1`, `fat_cat` mit `tbnz w0, #31` und anschliessendem `cbz` |
+
+Ein einziger Punkt bleibt offen und ist hier festgehalten: `virtio_reset` springt bei Misserfolg nach `boot_park`, hält also das System an. Das trifft im laufenden Betrieb auch den Fall, dass nur eine einzelne Datei nicht gelesen werden konnte. Es ist keine stille Fehlfunktion, die Meldung erscheint vorher, aber die Reaktion ist hart.

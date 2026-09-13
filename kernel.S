@@ -419,7 +419,21 @@
 .equ WIN_TY,                32
 .equ WIN_FOCUS,             40
 .equ WIN_ALPHA,             48
-.equ WIN_SIZE,              56
+.equ WIN_KIND,              56
+.equ WIN_SIZE,              64
+
+.equ WIN_KIND_NONE,         0
+.equ WIN_KIND_FILES,        1
+
+.equ FILES_MAX,             24
+.equ FILES_NAME,            0
+.equ FILES_SIZE,            16
+.equ FILES_ATTR,            20
+.equ FILES_ENTRY,           24
+.equ FILES_PAD_X,           20
+.equ FILES_PAD_Y,           42
+.equ FILES_LINE_H,          38
+.equ FILES_TEXT_SIZE,       26
 .equ WIN_FADE_MS,           260
 .equ WIN_DRAG_MS,           90
 .equ WIN_KEEP_VISIBLE,      120
@@ -455,6 +469,7 @@
 .equ COLOR_WIN_TITLE_ACT,   0xffff909060602020
 .equ COLOR_WIN_BODY,        0xffffd0d0ccccc8c8
 .equ COLOR_WIN_TEXT,        0xffffffffffffffff
+.equ COLOR_FILES_TEXT,      0xffff282824241c1c
 
 .equ COLOR_CURSOR,          0xffffffffffffffff
 .equ COLOR_CURSOR_DARK,     0xffff000000000000
@@ -696,6 +711,7 @@ boot_memory_ready:
     bl      blk_init
     bl      fat_init
     bl      font_init
+    bl      files_scan
     ladr    x0, fb_fade
     str     wzr, [x0]
     bl      win_demo
@@ -1019,6 +1035,44 @@ fb_clip_set:
     stp     w0, w1, [x4]
     stp     w2, w3, [x4, #8]
     ldp     x29, x30, [sp], #16
+    ret
+
+fb_clip_intersect:
+    ladr    x4, fb_clip
+    ldr     x9, [x4]
+    ldr     x10, [x4, #8]
+    add     w2, w0, w2
+    add     w3, w1, w3
+    ldp     w5, w6, [x4]
+    cmp     w0, w5
+    csel    w0, w5, w0, lt
+    cmp     w1, w6
+    csel    w1, w6, w1, lt
+    ldp     w5, w6, [x4, #8]
+    cmp     w2, w5
+    csel    w2, w5, w2, gt
+    cmp     w3, w6
+    csel    w3, w6, w3, gt
+    cmp     w2, w0
+    csel    w2, w0, w2, lt
+    cmp     w3, w1
+    csel    w3, w1, w3, lt
+    stp     w0, w1, [x4]
+    stp     w2, w3, [x4, #8]
+    cmp     w2, w0
+    cset    w5, gt
+    cmp     w3, w1
+    cset    w6, gt
+    and     w5, w5, w6
+    mov     x0, x9
+    mov     x1, x10
+    mov     w2, w5
+    ret
+
+fb_clip_restore:
+    ladr    x4, fb_clip
+    str     x0, [x4]
+    str     x1, [x4, #8]
     ret
 
 fb_rect_screen:
@@ -2626,6 +2680,7 @@ win_add:
     lsl     x12, x12, #ANIM_SHIFT
     str     x12, [x11, #WIN_FOCUS]
     str     xzr, [x11, #WIN_ALPHA]
+    str     w5, [x11, #WIN_KIND]
     ladr    x12, win_list
     mov     x13, #WIN_SIZE
     mov     w14, #0
@@ -3100,10 +3155,11 @@ win_click_done:
 
 
 win_draw_one:
-    stp     x29, x30, [sp, #-64]!
+    stp     x29, x30, [sp, #-80]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
-    str     x23, [sp, #48]
+    stp     x23, x24, [sp, #48]
+    str     x25, [sp, #64]
     ladr    x19, win_list
     mov     x9, #WIN_SIZE
     madd    x19, x0, x9, x19
@@ -3161,6 +3217,36 @@ win_draw_one:
     ldp     x2, x3, [sp, #16]
     ldp     x0, x1, [sp], #32
     bl      fb_fill_rect
+    ldr     w9, [x19, #WIN_KIND]
+    cmp     w9, #WIN_KIND_FILES
+    b.ne    win_draw_one_title
+    add     w0, w21, #WIN_BORDER
+    add     w1, w22, #(WIN_BORDER + WIN_TITLEBAR_H)
+    ldr     w2, [x19, #WIN_W]
+    sub     w2, w2, #(WIN_BORDER * 2)
+    ldr     w3, [x19, #WIN_H]
+    sub     w3, w3, #(WIN_BORDER * 2 + WIN_TITLEBAR_H)
+    stp     x0, x1, [sp, #-32]!
+    stp     x2, x3, [sp, #16]
+    bl      fb_clip_intersect
+    mov     x24, x0
+    mov     x25, x1
+    cbz     w2, win_draw_one_content_skip
+    ldr     x0, =COLOR_FILES_TEXT
+    bl      win_fade_color
+    mov     x3, x0
+    ldr     x0, [sp]
+    ldr     x1, [sp, #8]
+    ldr     x2, [sp, #24]
+    bl      files_draw
+
+win_draw_one_content_skip:
+    add     sp, sp, #32
+    mov     x0, x24
+    mov     x1, x25
+    bl      fb_clip_restore
+
+win_draw_one_title:
     add     w0, w21, #(WIN_BORDER + WIN_TEXT_PAD)
     add     w1, w22, #(WIN_BORDER + WIN_TITLEBAR_H - WIN_TEXT_PAD)
     ldr     x2, [x19, #WIN_TITLE]
@@ -3173,10 +3259,11 @@ win_draw_one:
     ldp     x2, x3, [sp, #16]
     ldp     x0, x1, [sp], #32
     bl      font_text
-    ldr     x23, [sp, #48]
+    ldr     x25, [sp, #64]
+    ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #64
+    ldp     x29, x30, [sp], #80
     ret
 
 win_draw_all:
@@ -3236,18 +3323,21 @@ win_demo:
     mov     w2, #1240
     mov     w3, #840
     ladr    x4, win_title_1
+    mov     w5, #WIN_KIND_NONE
     bl      win_add
     mov     w0, #960
     mov     w1, #640
     mov     w2, #1400
     mov     w3, #800
     ladr    x4, win_title_2
+    mov     w5, #WIN_KIND_FILES
     bl      win_add
     mov     w0, #2040
     mov     w1, #240
     mov     w2, #1600
     mov     w3, #1040
     ladr    x4, win_title_3
+    mov     w5, #WIN_KIND_NONE
     bl      win_add
     bl      win_fade_all
     bl      win_draw_all
@@ -4172,6 +4262,144 @@ fat_root_error:
     mov     w0, #-1
 fat_root_done:
     ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #80
+    ret
+
+files_scan:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, files_count
+    str     wzr, [x0]
+    ladr    x0, files_collect
+    mov     x1, #0
+    bl      fat_root_walk
+    tbz     w0, #31, files_scan_done
+    ladr    x0, files_error_msg
+    bl      uart_puts
+files_scan_done:
+    ladr    x0, files_count_label
+    ladr    x1, files_count
+    ldr     w1, [x1]
+    bl      uart_field
+    ladr    x0, uart_newline
+    bl      uart_puts
+    ldp     x29, x30, [sp], #16
+    ret
+
+files_collect:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    ladr    x9, files_count
+    ldr     w10, [x9]
+    cmp     w10, #FILES_MAX
+    b.hs    files_collect_full
+    ldrb    w11, [x19, #DIR_ATTR]
+    and     w12, w11, #DIR_ATTR_LFN
+    cmp     w12, #DIR_ATTR_LFN
+    b.eq    files_collect_skip
+    ladr    x20, files_table
+    mov     x12, #FILES_ENTRY
+    madd    x20, x10, x12, x20
+    mov     w13, #0
+    mov     w14, #0
+
+files_collect_base:
+    cmp     w13, #8
+    b.hs    files_collect_dot
+    ldrb    w15, [x19, w13, uxtw]
+    cmp     w15, #0x20
+    b.eq    files_collect_dot
+    strb    w15, [x20, w14, uxtw]
+    add     w14, w14, #1
+    add     w13, w13, #1
+    b       files_collect_base
+
+files_collect_dot:
+    ldrb    w15, [x19, #8]
+    cmp     w15, #0x20
+    b.eq    files_collect_name_end
+    mov     w15, #'.'
+    strb    w15, [x20, w14, uxtw]
+    add     w14, w14, #1
+    mov     w13, #8
+
+files_collect_ext:
+    cmp     w13, #DIR_NAME_LEN
+    b.hs    files_collect_name_end
+    ldrb    w15, [x19, w13, uxtw]
+    cmp     w15, #0x20
+    b.eq    files_collect_name_end
+    strb    w15, [x20, w14, uxtw]
+    add     w14, w14, #1
+    add     w13, w13, #1
+    b       files_collect_ext
+
+files_collect_name_end:
+    strb    wzr, [x20, w14, uxtw]
+    ldrb    w9, [x19, #DIR_ATTR]
+    strb    w9, [x20, #FILES_ATTR]
+    mov     x0, x19
+    mov     x1, #DIR_SIZE
+    bl      mem_read32
+    str     w0, [x20, #FILES_SIZE]
+    ladr    x9, files_count
+    ldr     w10, [x9]
+    add     w10, w10, #1
+    str     w10, [x9]
+
+files_collect_skip:
+    mov     w0, #0
+    b       files_collect_done
+
+files_collect_full:
+    ladr    x0, files_full_msg
+    bl      uart_puts
+    mov     w0, #1
+
+files_collect_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+files_draw:
+    stp     x29, x30, [sp, #-80]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    str     x25, [sp, #64]
+    mov     w19, w0
+    mov     w20, w1
+    mov     w21, w2
+    mov     x22, x3
+    ladr    x0, files_count
+    ldr     w23, [x0]
+    mov     w24, #0
+
+files_draw_loop:
+    cmp     w24, w23
+    b.hs    files_draw_done
+    mov     w9, #FILES_LINE_H
+    madd    w25, w24, w9, w20
+    add     w25, w25, #FILES_PAD_Y
+    add     w9, w20, w21
+    cmp     w25, w9
+    b.gt    files_draw_done
+    add     w0, w19, #FILES_PAD_X
+    mov     w1, w25
+    ladr    x2, files_table
+    mov     x9, #FILES_ENTRY
+    madd    x2, x24, x9, x2
+    mov     w3, #FILES_TEXT_SIZE
+    mov     x4, x22
+    bl      font_text
+    add     w24, w24, #1
+    b       files_draw_loop
+
+files_draw_done:
+    ldr     x25, [sp, #64]
     ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
@@ -7012,13 +7240,20 @@ win_pixels_label:
 win_title_1:
     .asciz  "Fenster A"
 win_title_2:
-    .asciz  "Fenster B"
+    .asciz  "Dateien"
 win_title_3:
     .asciz  "asmOS"
 
     vec_entry 15, panic_entry
 
 .section .rodata
+
+files_error_msg:
+    .asciz  "FILES SCAN FAIL\r\n"
+files_full_msg:
+    .asciz  "FILES LIST FULL, weitere Eintraege nicht erfasst\r\n"
+files_count_label:
+    .asciz  "FILES n="
 
 virtio_baddesc_msg:
     .asciz  "VIRTIO UNGUELTIGE DESKRIPTOR-ID\r\n"
@@ -7353,6 +7588,14 @@ win_count:
 .balign 8
 win_list:
     .space  (WIN_SIZE * WIN_MAX)
+
+.balign 8
+files_count:
+    .space  4
+
+.balign 8
+files_table:
+    .space  (FILES_ENTRY * FILES_MAX)
 
 .balign 8
 dirty_count:

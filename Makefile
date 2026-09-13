@@ -15,6 +15,8 @@ FONT_SRC      := /Users/l3v0/Desktop/asmos-assets/BabelSans-Oblique.ttf
 
 DEVICES := -m 256M -device ramfb -device virtio-tablet-device -global virtio-mmio.force-legacy=false -drive file=$(DISK),if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 
+DISPLAY_OPT :=
+
 CHECK_SECONDS := 3
 CHECK_EXPECT  := BOOT OK
 CHECK_FORBID  := PANIC
@@ -38,10 +40,10 @@ kernel.bin: kernel.elf
 	$(OBJCOPY) -O binary $< $@
 
 run: kernel.bin disk-required
-	$(QEMU) -machine $(MACHINE) -cpu $(CPU) $(DEVICES) -serial stdio -kernel kernel.bin
+	$(QEMU) -machine $(MACHINE) -cpu $(CPU) $(DEVICES) $(DISPLAY_OPT) -serial stdio -kernel kernel.bin
 
 fast: kernel.bin disk-required
-	$(QEMU) -machine $(MACHINE),accel=hvf -cpu host $(DEVICES) -serial stdio -kernel kernel.bin
+	$(QEMU) -machine $(MACHINE),accel=hvf -cpu host $(DEVICES) $(DISPLAY_OPT) -serial stdio -kernel kernel.bin
 
 serial: kernel.bin disk-required
 	$(QEMU) -machine $(MACHINE) -cpu $(CPU) $(DEVICES) -nographic -kernel kernel.bin
@@ -78,6 +80,11 @@ disk-required:
 	@test -f "$(DISK)" || { echo "FEHLER: $(DISK) fehlt. Zuerst make disk ausfuehren."; exit 1; }
 
 disk:
+	@test -f "$(FONT_SRC)" || { \
+	  echo "FEHLER: Systemschrift fehlt: $(FONT_SRC)"; \
+	  echo "Sie liegt aus Lizenzgruenden nicht im Repository."; \
+	  echo "Ohne sie waere der Datentraeger ohne Schrift, deshalb Abbruch."; \
+	  exit 1; }
 	@set -eu; \
 	  TMP=$$(mktemp "$(DISK).XXXXXX"); DEV=; MP=; \
 	  trap 'if [ -n "$$MP" ]; then hdiutil detach "$$MP" >/dev/null 2>&1 || true; fi; if [ -n "$$DEV" ]; then hdiutil detach "$$DEV" >/dev/null 2>&1 || true; fi; rm -f "$$TMP"' EXIT HUP INT TERM; \
@@ -92,7 +99,9 @@ disk:
 	  printf 'zweite datei\n' > "$$MP/DATA.BIN"; \
 	  : > "$$MP/EMPTY.TXT"; \
 	  python3 -c "print(''.join('Zeile %04d ABCDEFGHIJKLMNOPQRSTUVWXYZ\n' % i for i in range(60)), end='')" > "$$MP/BIG.TXT"; \
-	  if [ -f "$(FONT_SRC)" ]; then cp "$(FONT_SRC)" "$$MP/FONT.TTF"; else echo "HINWEIS: FONT_SRC fehlt, Datentraeger ohne Systemschrift"; fi; \
+	  cp "$(FONT_SRC)" "$$MP/FONT.TTF"; \
+	  dot_clean -m "$$MP" 2>/dev/null || true; \
+	  rm -rf "$$MP"/._* "$$MP"/.DS_Store "$$MP"/.fseventsd "$$MP"/.Spotlight-V100 "$$MP"/.Trashes; \
 	  hdiutil detach "$$MP" >/dev/null; MP=; \
 	  mv -f "$$TMP" "$(DISK)"; \
 	  echo "OK: $(DISK) erzeugt"

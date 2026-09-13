@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-24.576%20Byte-brightgreen?style=flat-square" alt="24576 Byte">
+<img src="https://img.shields.io/badge/Kernel-26.704%20Byte-brightgreen?style=flat-square" alt="26704 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>24.576&nbsp;Byte</b> groß, also <b>24&nbsp;KB</b>.<br>
+Das fertige System ist <b>26.704&nbsp;Byte</b> groß, also <b>26&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -43,6 +43,7 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Sich bewegen</b></td><td><b>Eigene Animationsschicht.</b> Fenster blenden ein, Fokuswechsel und Ziehen laufen weich statt sprunghaft. Zeitgesteuert, nicht bildzahlgesteuert, dadurch gleich schnell auf schneller und langsamer Maschine</td></tr>
 <tr><td><b>Speicher verwalten</b></td><td>Erkennt selbst, wie viel Arbeitsspeicher da ist, verwaltet ihn seitenweise und schaltet die Speicherverwaltungseinheit des Prozessors ein</td></tr>
 <tr><td><b>Dateien lesen</b></td><td>Spricht mit einem Datenträger und liest echte FAT32-Dateien, so wie ein USB-Stick sie enthält</td></tr>
+<tr><td><b>Dateien zeigen</b></td><td>Ein Fenster listet den Inhalt des Datenträgers auf, gelesen beim Start aus dem echten Wurzelverzeichnis. Der Text wird auf den Fensterkörper beschnitten, läuft also nie über den Rand</td></tr>
 <tr><td><b>Sich abschalten</b></td><td>Roter Knopf oben rechts: Unterbrechungen sperren, Zeitgeber anhalten, Geräte zurücksetzen, Puffer überschreiben, Maschine abschalten</td></tr>
 </table>
 
@@ -113,7 +114,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>177 KB · 7.598 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>182 KB · 7832 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -129,7 +130,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 <td>Wandelt SVG-Icons in das eigene Vektorformat des Kernels. Läuft auf dem Entwicklungsrechner, nicht im System.</td>
 </tr>
 <tr>
-<td><b><code>docs/quellen.md</code></b><br><sub>92 KB · 1.335 Zeilen</sub></td>
+<td><b><code>docs/quellen.md</code></b><br><sub>98 KB · 1409 Zeilen</sub></td>
 <td><b>Die wichtigste Datei für die Vertrauenswürdigkeit des Codes.</b> Für jede Hardware-Adresse, jedes Bit und jede Startsequenz steht dort, aus welcher Quelle der Wert stammt. Dazu jeder Fehler mit Ursache, Nachweis und Behebung.</td>
 </tr>
 </table>
@@ -138,11 +139,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 7.598 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 7832 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **771 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **792 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -167,7 +168,7 @@ In `kernel.S` stecken **771 Sprungmarken**. Jede gehört zu einem Zuständigkeit
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **24.576 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **26.704 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -276,7 +277,7 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 6. Mauszeiger, Klickerkennung | ✅ |
 | 7. Speicherverwaltung, MMU aktiv | ✅ |
 | 8. Datenträger und FAT32 lesend | ✅ |
-| 9. Fenstersystem | ✅ |
+| 9. Fenstersystem | ✅ inklusive erstem Fensterinhalt |
 | 10. Netzwerk bis TCP | offen |
 | 11. Verschlüsselte Verbindungen | offen |
 | 12. Vektorgrafik | ✅ Schrift, Zeiger und Icons, offen als Zeichenfläche für Anwendungen |
@@ -337,12 +338,12 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 183 KB in drei Dateien |
-| Zeilen Assembler | 7.598 |
-| Sprungmarken | 771 |
-| **Fertiges Betriebssystem** | **24.576 Byte** |
+| Eigener Quelltext | 188 KB in drei Dateien |
+| Zeilen Assembler | 7832 |
+| Sprungmarken | 792 |
+| **Fertiges Betriebssystem** | **26.704 Byte** |
 | Speicherbedarf im Betrieb | 70 MB, fast vollständig Bildspeicher |
-| Dokumentation | 92 KB Quellenbelege |
+| Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
 | Entwicklungsziel | QEMU `virt` |
 | Späteres Hardwareziel | Raspberry Pi 5 |
