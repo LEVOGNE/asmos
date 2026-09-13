@@ -98,6 +98,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 | `make shot` | Macht ein Bildschirmfoto nach `screen.png` und beendet sich selbst |
 | `make debug` | Startet angehalten mit Debugger-Anschluss auf Port 1234 |
 | `make disk` | Erzeugt den FAT32-Testdatenträger neu |
+| `make font-rescue` | Holt die Systemschrift aus einem vorhandenen `disk.img` zurück |
 | `make dtb` | Liest die Hardwarebeschreibung der Maschine aus |
 | `make clean` | Räumt Bauartefakte auf |
 | `make distclean` | Räumt zusätzlich den Testdatenträger weg |
@@ -297,7 +298,7 @@ Der Code ist vollständig selbst geschrieben.
 | **Icons** | <b>Tabler Icons</b>, MIT-Lizenz, Copyright © 2020-2026 Paweł Kuna. Mit <code>tools/iconc.py</code> in ein eigenes Vektorformat gewandelt, die eingebetteten Daten sind abgeleitete Werke |
 | **Systemschrift** | <b>Babel Sans</b> von <b>Manfred Klein</b>, bezogen über dafont in der Kategorie Serifenlos, dort als kostenlos geführt. Der Kernel wertet die TrueType-Datei selbst aus |
 
-Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. <code>make disk</code> kopiert sie beim Erzeugen des Testdatenträgers vom Entwicklungsrechner. Die Angabe „kostenlos" ist eine Kategorie der Bezugsseite und kein formaler Lizenztext; wer die Schrift weitergeben will, sollte die Bedingungen des Autors prüfen.
+Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. <code>make disk</code> kopiert sie beim Erzeugen des Testdatenträgers vom Entwicklungsrechner und bricht ab, wenn sie fehlt, statt einen Datenträger ohne Schrift zu bauen. <code>make font-rescue</code> holt sie notfalls aus einem vorhandenen <code>disk.img</code> zurück. Die Angabe „kostenlos" ist eine Kategorie der Bezugsseite und kein formaler Lizenztext; wer die Schrift weitergeben will, sollte die Bedingungen des Autors prüfen.
 
 ---
 

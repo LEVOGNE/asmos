@@ -11,7 +11,10 @@ CPU     := cortex-a72
 DISK          := disk.img
 DISK_MB       := 64
 DISK_LABEL    := MONOLITH
-FONT_SRC      := /Users/l3v0/Desktop/asmos-assets/BabelSans-Oblique.ttf
+FONT_NAME     := BabelSans-Oblique.ttf
+FONT_STORE    := $(HOME)/.asmos/fonts/$(FONT_NAME)
+FONT_ALT      := $(HOME)/Desktop/asmos-assets/$(FONT_NAME)
+FONT_SRC      := $(firstword $(wildcard $(FONT_STORE) $(FONT_ALT)))
 
 DEVICES := -m 256M -device ramfb -device virtio-tablet-device -global virtio-mmio.force-legacy=false -drive file=$(DISK),if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 
@@ -79,12 +82,35 @@ check: kernel.bin disk-required
 disk-required:
 	@test -f "$(DISK)" || { echo "FEHLER: $(DISK) fehlt. Zuerst make disk ausfuehren."; exit 1; }
 
-disk:
-	@test -f "$(FONT_SRC)" || { \
-	  echo "FEHLER: Systemschrift fehlt: $(FONT_SRC)"; \
+font-store:
+	@test -n "$(FONT_SRC)" || { \
+	  echo "FEHLER: Systemschrift $(FONT_NAME) nicht gefunden."; \
+	  echo "  gesucht in $(FONT_STORE)"; \
+	  echo "  und in     $(FONT_ALT)"; \
 	  echo "Sie liegt aus Lizenzgruenden nicht im Repository."; \
-	  echo "Ohne sie waere der Datentraeger ohne Schrift, deshalb Abbruch."; \
+	  echo "Liegt sie noch in einem $(DISK), holt 'make font-rescue' sie zurueck."; \
 	  exit 1; }
+	@test -f "$(FONT_STORE)" || { \
+	  mkdir -p "$(dir $(FONT_STORE))"; \
+	  cp "$(FONT_SRC)" "$(FONT_STORE)"; \
+	  chmod 444 "$(FONT_STORE)"; \
+	  echo "HINWEIS: Sicherung der Systemschrift angelegt unter $(FONT_STORE)"; }
+
+font-rescue:
+	@set -eu; \
+	  test -f "$(DISK)" || { echo "FEHLER: $(DISK) fehlt, daraus laesst sich nichts holen."; exit 1; }; \
+	  MP=; \
+	  trap 'if [ -n "$$MP" ]; then hdiutil detach "$$MP" >/dev/null 2>&1 || true; fi' EXIT HUP INT TERM; \
+	  MP=$$(hdiutil attach -imagekey diskimage-class=CRawDiskImage "$(DISK)" | sed -n 's|.*\(/Volumes/.*\)|\1|p'); \
+	  test -n "$$MP" && test -f "$$MP/FONT.TTF" || { echo "FEHLER: keine FONT.TTF in $(DISK)."; exit 1; }; \
+	  mkdir -p "$(dir $(FONT_STORE))"; \
+	  rm -f "$(FONT_STORE)"; \
+	  cp "$$MP/FONT.TTF" "$(FONT_STORE)"; \
+	  chmod 444 "$(FONT_STORE)"; \
+	  echo "OK: Systemschrift zurueckgeholt nach $(FONT_STORE)"; \
+	  shasum -a 256 "$(FONT_STORE)"
+
+disk: font-store
 	@set -eu; \
 	  TMP=$$(mktemp "$(DISK).XXXXXX"); DEV=; MP=; \
 	  trap 'if [ -n "$$MP" ]; then hdiutil detach "$$MP" >/dev/null 2>&1 || true; fi; if [ -n "$$DEV" ]; then hdiutil detach "$$DEV" >/dev/null 2>&1 || true; fi; rm -f "$$TMP"' EXIT HUP INT TERM; \
@@ -117,4 +143,4 @@ clean:
 distclean: clean
 	rm -f $(DISK)
 
-.PHONY: all run fast serial debug check shot disk disk-required dtb clean distclean
+.PHONY: all run fast serial debug check shot disk disk-required font-store font-rescue dtb clean distclean

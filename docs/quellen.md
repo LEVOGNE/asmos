@@ -1487,3 +1487,25 @@ Ein einziger Punkt bleibt offen und ist hier festgehalten: `virtio_reset` spring
 Intern stand noch als Grenze vermerkt, `fat_find` und `fat_list_root` läsen nur den ersten Sektor, also höchstens sechzehn Einträge. Das trifft nicht mehr zu. `fat_root_walk` zählt in `fat_root_sector` über `FAT_SEC_PER_CLUS` und folgt danach über `fat_next_cluster` der Clusterkette.
 
 Beleg aus dem Überlauftest: Auf einem Datenträger mit 35 Einträgen wurden 24 erfasst, und 24 ist die Grenze `FILES_MAX`, nicht die Sektorgrenze. Ein Sektor fasst hart sechzehn Einträge, 512 geteilt durch 32. Der Vermerk ist gestrichen.
+
+---
+
+## Die Systemschrift ist zum zweiten Mal verschwunden (13.09.2026)
+
+Wenige Minuten nach der Wiederherstellung aus einem Datenträgerabbild war `~/Desktop/asmos-assets/` erneut samt Inhalt weg. Gesucht und nicht gefunden: in iCloud Drive, im Papierkorb, an jeder anderen Stelle unterhalb des Benutzerverzeichnisses. **Die Ursache ist unbekannt und wird hier nicht geraten.** Die Tatsache genügt: derselbe Ort hat zweimal in einer Sitzung versagt.
+
+Gerettet wurde erneut aus `disk.img`, nachweislich dieselbe Datei: 50.516 Byte, SHA-256 `1009de51b079e174d6b313a2269f2137db976bc98113718e20a4307ffbdeb50e`, Dateikopf `00010000`.
+
+### Ein Fehler, der sich wiederholt, ist ein Konstruktionsfehler
+
+Die Ablage liegt jetzt unter `~/.asmos/fonts/`, schreibgeschützt mit 444, und das Makefile ist gegen alle drei Fälle abgesichert, die tatsächlich eingetreten sind.
+
+| Fall | Verhalten | geprüft |
+|---|---|---|
+| Schrift nirgends auffindbar | `make disk` bricht ab, **bevor** das bestehende `disk.img` angefasst wird, und nennt beide Suchorte | `disk.img` byteweise unverändert |
+| Schrift nur am Rückfallort | Sicherung wird selbst angelegt, mit Hinweis | Datei erscheint unter `~/.asmos/fonts/`, 50.516 Byte |
+| Sicherung verloren, Abbild vorhanden | `make font-rescue` holt sie zurück und zeigt die Prüfsumme | Prüfsumme stimmt mit dem Sollwert überein, nichts bleibt gemountet |
+
+`FONT_SRC` wird über `$(firstword $(wildcard ...))` aufgelöst und nimmt den neuen Ort zuerst, den alten Desktop-Pfad als Rückfall. Damit läuft ein Rechner, auf dem die Datei noch am alten Ort liegt, unverändert weiter und legt beim nächsten `make disk` von selbst die Sicherung an.
+
+Was bewusst **nicht** gemacht wurde: die Schrift ins Repository legen. Die Bezugsseite führt sie als kostenlos, das ist eine Kategorie und kein Lizenztext.
