@@ -76,7 +76,9 @@
 
 .equ TIMER_INTID,           30
 .equ TIMER_CTL_ENABLE,      1
-.equ TIMER_HZ,              2
+.equ TIMER_HZ,              60
+.equ BLINK_HZ,              2
+.equ BLINK_DIVIDER,         (TIMER_HZ / BLINK_HZ)
 .equ CLICK_WINDOW_MS,       400
 .equ MS_PER_SECOND,         1000
 .equ CLICK_MAX,             3
@@ -405,7 +407,13 @@
 .equ WIN_W,                 8
 .equ WIN_H,                 12
 .equ WIN_TITLE,             16
-.equ WIN_SIZE,              24
+.equ WIN_TX,                24
+.equ WIN_TY,                32
+.equ WIN_SIZE,              40
+.equ ANIM_PROP_TX,          0
+.equ ANIM_PROP_TY,          1
+.equ ANIM_PROP_COUNT,       2
+.equ WIN_NONE,              -1
 .equ WIN_MAX,               8
 .equ WIN_BORDER,            2
 .equ WIN_TITLEBAR_H,        52
@@ -435,6 +443,29 @@
 .equ COLOR_RED,             0xffff00000000ffff
 .equ COLOR_GREEN,           0xffff0000ffff0000
 .equ COLOR_BLUE,            0xffffffff00000000
+
+.equ ANIM_MAX,              64
+.equ ANIM_ENTRY_SIZE,       80
+.equ ANIM_TARGET,           0
+.equ ANIM_START_TIME,       8
+.equ ANIM_DURATION,         16
+.equ ANIM_FROM,             24
+.equ ANIM_TO,               32
+.equ ANIM_VALUE,            40
+.equ ANIM_GROUP,            48
+.equ ANIM_PROP,             56
+.equ ANIM_EASING,           60
+.equ ANIM_STATE,            62
+.equ ANIM_FLAGS,            64
+.equ ANIM_TAG,              68
+.equ ANIM_GEN,              72
+.equ ANIM_FREE,             0
+.equ ANIM_RUNNING,          1
+.equ ANIM_FINISHED,         2
+.equ ANIM_STOP_HOLD,        0
+.equ ANIM_STOP_END,         1
+.equ ANIM_SLOT_MASK,        0xffff
+.equ ANIM_MS_PER_SECOND,    1000
 
 .equ ANIM_SHIFT,            32
 .equ ANIM_HALF,             0x80000000
@@ -580,6 +611,8 @@ boot_el1_entry:
     bl      vec_init
     ladr    x0, boot_banner
     bl      uart_puts
+    bl      anim_init
+    bl      win_drag_end
     bl      mem_init
     bl      pmm_init
     bl      mmu_init
@@ -601,6 +634,15 @@ boot_el1_entry:
 .if WIN_SELFTEST
     bl      win_selftest
 .endif
+    mov     x0, #0
+    mov     w1, #ANIM_PROP_TX
+    mov     x2, #1500
+    lsl     x2, x2, #ANIM_SHIFT
+    neg     x2, x2
+    mov     x3, #0
+    mov     w4, #700
+    mov     w5, #ANIM_EASE_CUBIC_OUT
+    bl      anim_start
     bl      cursor_show
 .if FS_SELFTEST
     bl      blk_selftest
@@ -1269,7 +1311,13 @@ win_dirty_rect:
     mov     x10, #WIN_SIZE
     madd    x9, x0, x10, x9
     ldr     w0, [x9, #WIN_X]
+    ldr     x11, [x9, #WIN_TX]
+    asr     x11, x11, #ANIM_SHIFT
+    add     w0, w0, w11
     ldr     w1, [x9, #WIN_Y]
+    ldr     x11, [x9, #WIN_TY]
+    asr     x11, x11, #ANIM_SHIFT
+    add     w1, w1, w11
     ldr     w2, [x9, #WIN_W]
     ldr     w3, [x9, #WIN_H]
     b       dirty_add
@@ -1616,6 +1664,411 @@ icon_set_cur:
     str     w0, [x2]
     ladr    x2, vg_cur_y
     str     w1, [x2]
+    ret
+
+
+
+anim_init:
+    ladr    x0, anim_list
+    mov     x1, #(ANIM_ENTRY_SIZE * ANIM_MAX)
+    add     x1, x0, x1
+
+anim_init_loop:
+    cmp     x0, x1
+    b.hs    anim_init_state
+    stp     xzr, xzr, [x0], #16
+    b       anim_init_loop
+
+anim_init_state:
+    ladr    x0, anim_active
+    str     wzr, [x0]
+    ladr    x0, anim_pending
+    strb    wzr, [x0]
+    ladr    x0, anim_gen_next
+    mov     w1, #1
+    str     w1, [x0]
+    ret
+
+anim_now:
+    mrs     x0, cntpct_el0
+    ret
+
+anim_ms_to_ticks:
+    mrs     x1, cntfrq_el0
+    cbz     x1, anim_ms_no_clock
+    mul     x0, x0, x1
+    mov     x1, #ANIM_MS_PER_SECOND
+    udiv    x0, x0, x1
+    ret
+
+anim_ms_no_clock:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, anim_noclock_msg
+    bl      uart_puts
+    ldp     x29, x30, [sp], #16
+    mov     x0, #0
+    ret
+
+anim_slot_addr:
+    and     x1, x0, #ANIM_SLOT_MASK
+    cmp     x1, #ANIM_MAX
+    b.hs    anim_slot_none
+    ladr    x2, anim_list
+    mov     x3, #ANIM_ENTRY_SIZE
+    madd    x2, x1, x3, x2
+    ldr     w3, [x2, #ANIM_GEN]
+    lsr     x4, x0, #16
+    cmp     w3, w4
+    b.ne    anim_slot_none
+    mov     x0, x2
+    ret
+
+anim_slot_none:
+    mov     x0, #0
+    ret
+
+anim_start:
+    stp     x29, x30, [sp, #-96]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    str     x27, [sp, #80]
+    mov     x19, x0
+    mov     w20, w1
+    mov     x21, x2
+    mov     x22, x3
+    mov     w23, w4
+    mov     w24, w5
+    mov     x0, x19
+    mov     w1, w20
+    bl      anim_find_running
+    cbz     x0, anim_start_slot
+    mov     x25, x0
+    bl      anim_now
+    ldr     x1, [x25, #ANIM_START_TIME]
+    ldr     x2, [x25, #ANIM_DURATION]
+    bl      anim_progress
+    mov     x26, x0
+    ldrh    w1, [x25, #ANIM_EASING]
+    mov     x0, x26
+    bl      anim_ease
+    mov     x2, x0
+    ldr     x0, [x25, #ANIM_FROM]
+    ldr     x1, [x25, #ANIM_TO]
+    bl      anim_lerp
+    mov     x21, x0
+    mov     w0, #ANIM_FREE
+    strh    w0, [x25, #ANIM_STATE]
+    ladr    x0, anim_active
+    ldr     w1, [x0]
+    sub     w1, w1, #1
+    str     w1, [x0]
+
+anim_start_slot:
+    bl      anim_alloc
+    cbz     x0, anim_start_fail
+    mov     x25, x0
+    str     x19, [x25, #ANIM_TARGET]
+    str     w20, [x25, #ANIM_PROP]
+    str     x21, [x25, #ANIM_FROM]
+    str     x22, [x25, #ANIM_TO]
+    str     x21, [x25, #ANIM_VALUE]
+    strh    w24, [x25, #ANIM_EASING]
+    mov     w0, w23
+    bl      anim_ms_to_ticks
+    str     x0, [x25, #ANIM_DURATION]
+    bl      anim_now
+    str     x0, [x25, #ANIM_START_TIME]
+    mov     w0, #ANIM_RUNNING
+    strh    w0, [x25, #ANIM_STATE]
+    ladr    x0, anim_active
+    ldr     w1, [x0]
+    add     w1, w1, #1
+    str     w1, [x0]
+    ldr     w0, [x25, #ANIM_GEN]
+    lsl     x0, x0, #16
+    ladr    x1, anim_list
+    sub     x1, x25, x1
+    mov     x2, #ANIM_ENTRY_SIZE
+    udiv    x1, x1, x2
+    orr     x0, x0, x1
+    b       anim_start_done
+
+anim_start_fail:
+    ladr    x0, anim_full_msg
+    bl      uart_puts
+    mov     x0, #0
+
+anim_start_done:
+    ldr     x27, [sp, #80]
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #96
+    ret
+
+anim_alloc:
+    ladr    x1, anim_list
+    mov     w2, #0
+
+anim_alloc_loop:
+    cmp     w2, #ANIM_MAX
+    b.hs    anim_alloc_none
+    mov     x3, #ANIM_ENTRY_SIZE
+    madd    x3, x2, x3, x1
+    ldrh    w4, [x3, #ANIM_STATE]
+    cbz     w4, anim_alloc_found
+    add     w2, w2, #1
+    b       anim_alloc_loop
+
+anim_alloc_found:
+    ladr    x4, anim_gen_next
+    ldr     w5, [x4]
+    str     w5, [x3, #ANIM_GEN]
+    add     w5, w5, #1
+    mov     w6, #ANIM_SLOT_MASK
+    cmp     w5, w6
+    b.lo    anim_alloc_gen_ok
+    mov     w5, #1
+
+anim_alloc_gen_ok:
+    str     w5, [x4]
+    mov     x0, x3
+    ret
+
+anim_alloc_none:
+    mov     x0, #0
+    ret
+
+anim_find_running:
+    ladr    x2, anim_list
+    mov     w3, #0
+
+anim_find_loop:
+    cmp     w3, #ANIM_MAX
+    b.hs    anim_find_none
+    mov     x4, #ANIM_ENTRY_SIZE
+    madd    x4, x3, x4, x2
+    ldrh    w5, [x4, #ANIM_STATE]
+    cmp     w5, #ANIM_RUNNING
+    b.ne    anim_find_next
+    ldr     x5, [x4, #ANIM_TARGET]
+    cmp     x5, x0
+    b.ne    anim_find_next
+    ldr     w5, [x4, #ANIM_PROP]
+    cmp     w5, w1
+    b.ne    anim_find_next
+    mov     x0, x4
+    ret
+
+anim_find_next:
+    add     w3, w3, #1
+    b       anim_find_loop
+
+anim_find_none:
+    mov     x0, #0
+    ret
+
+anim_apply:
+    cmp     x0, #WIN_MAX
+    b.hs    anim_apply_none
+    cmp     w1, #ANIM_PROP_COUNT
+    b.hs    anim_apply_none
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     x19, x0
+    mov     w20, w1
+    mov     x21, x2
+    bl      win_dirty_rect
+    ladr    x3, win_list
+    mov     x4, #WIN_SIZE
+    madd    x3, x19, x4, x3
+    cmp     w20, #ANIM_PROP_TY
+    b.eq    anim_apply_ty
+    str     x21, [x3, #WIN_TX]
+    b       anim_apply_mark
+
+anim_apply_ty:
+    str     x21, [x3, #WIN_TY]
+
+anim_apply_mark:
+    mov     x0, x19
+    bl      win_dirty_rect
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+anim_apply_none:
+    ret
+
+
+anim_tick:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    bl      anim_now
+    mov     x19, x0
+    ladr    x20, anim_list
+    mov     w21, #0
+
+anim_tick_loop:
+    cmp     w21, #ANIM_MAX
+    b.hs    anim_tick_done
+    mov     x0, #ANIM_ENTRY_SIZE
+    madd    x22, x21, x0, x20
+    ldrh    w0, [x22, #ANIM_STATE]
+    cmp     w0, #ANIM_RUNNING
+    b.ne    anim_tick_next
+    mov     x0, x19
+    ldr     x1, [x22, #ANIM_START_TIME]
+    ldr     x2, [x22, #ANIM_DURATION]
+    bl      anim_progress
+    mov     x23, x0
+    ldrh    w1, [x22, #ANIM_EASING]
+    mov     x0, x23
+    bl      anim_ease
+    mov     x2, x0
+    ldr     x0, [x22, #ANIM_FROM]
+    ldr     x1, [x22, #ANIM_TO]
+    bl      anim_lerp
+    str     x0, [x22, #ANIM_VALUE]
+    mov     x2, x0
+    ldr     x0, [x22, #ANIM_TARGET]
+    ldr     w1, [x22, #ANIM_PROP]
+    bl      anim_apply
+    mov     x0, #1
+    lsl     x0, x0, #ANIM_SHIFT
+    cmp     x23, x0
+    b.lo    anim_tick_next
+    ldr     x2, [x22, #ANIM_TO]
+    str     x2, [x22, #ANIM_VALUE]
+    ldr     x0, [x22, #ANIM_TARGET]
+    ldr     w1, [x22, #ANIM_PROP]
+    bl      anim_apply
+    mov     w0, #ANIM_FINISHED
+    strh    w0, [x22, #ANIM_STATE]
+    ladr    x0, anim_active
+    ldr     w1, [x0]
+    subs    w1, w1, #1
+    csel    w1, wzr, w1, mi
+    str     w1, [x0]
+
+anim_tick_next:
+    add     w21, w21, #1
+    b       anim_tick_loop
+
+anim_tick_done:
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+    ret
+
+anim_value:
+    stp     x29, x30, [sp, #-16]!
+    bl      anim_slot_addr
+    cbz     x0, anim_value_none
+    ldr     x0, [x0, #ANIM_VALUE]
+    ldp     x29, x30, [sp], #16
+    ret
+
+anim_value_none:
+    mov     x0, #0
+    ldp     x29, x30, [sp], #16
+    ret
+
+anim_state:
+    stp     x29, x30, [sp, #-16]!
+    bl      anim_slot_addr
+    cbz     x0, anim_state_none
+    ldrh    w0, [x0, #ANIM_STATE]
+    ldp     x29, x30, [sp], #16
+    ret
+
+anim_state_none:
+    mov     w0, #ANIM_FREE
+    ldp     x29, x30, [sp], #16
+    ret
+
+anim_cancel:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     w19, w1
+    bl      anim_slot_addr
+    cbz     x0, anim_cancel_done
+    ldrh    w1, [x0, #ANIM_STATE]
+    cmp     w1, #ANIM_RUNNING
+    b.ne    anim_cancel_free
+    cmp     w19, #ANIM_STOP_END
+    b.ne    anim_cancel_active
+    ldr     x1, [x0, #ANIM_TO]
+    str     x1, [x0, #ANIM_VALUE]
+
+anim_cancel_active:
+    ladr    x1, anim_active
+    ldr     w2, [x1]
+    subs    w2, w2, #1
+    csel    w2, wzr, w2, mi
+    str     w2, [x1]
+
+anim_cancel_free:
+    mov     w1, #ANIM_FREE
+    strh    w1, [x0, #ANIM_STATE]
+
+anim_cancel_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+anim_cancel_target:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     x19, x0
+    ladr    x20, anim_list
+    mov     w21, #0
+
+anim_cancel_target_loop:
+    cmp     w21, #ANIM_MAX
+    b.hs    anim_cancel_target_done
+    mov     x0, #ANIM_ENTRY_SIZE
+    madd    x0, x21, x0, x20
+    ldrh    w1, [x0, #ANIM_STATE]
+    cbz     w1, anim_cancel_target_next
+    ldr     x1, [x0, #ANIM_TARGET]
+    cmp     x1, x19
+    b.ne    anim_cancel_target_next
+    ldrh    w1, [x0, #ANIM_STATE]
+    cmp     w1, #ANIM_RUNNING
+    b.ne    anim_cancel_target_free
+    ladr    x1, anim_active
+    ldr     w2, [x1]
+    subs    w2, w2, #1
+    csel    w2, wzr, w2, mi
+    str     w2, [x1]
+
+anim_cancel_target_free:
+    mov     w1, #ANIM_FREE
+    strh    w1, [x0, #ANIM_STATE]
+
+anim_cancel_target_next:
+    add     w21, w21, #1
+    b       anim_cancel_target_loop
+
+anim_cancel_target_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+anim_count_active:
+    ladr    x0, anim_active
+    ldr     w0, [x0]
     ret
 
 
@@ -1969,24 +2422,291 @@ win_add_full:
     ldp     x29, x30, [sp], #16
     ret
 
-win_draw_one:
+win_eff_x:
+    ldr     w1, [x0, #WIN_X]
+    ldr     x2, [x0, #WIN_TX]
+    asr     x2, x2, #ANIM_SHIFT
+    add     w1, w1, w2
+    mov     w0, w1
+    ret
+
+win_eff_y:
+    ldr     w1, [x0, #WIN_Y]
+    ldr     x2, [x0, #WIN_TY]
+    asr     x2, x2, #ANIM_SHIFT
+    add     w1, w1, w2
+    mov     w0, w1
+    ret
+
+win_hit:
+    ladr    x9, win_count
+    ldr     w2, [x9]
+    cbz     w2, win_hit_none
+    ladr    x9, win_list
+
+win_hit_loop:
+    sub     w2, w2, #1
+    mov     x10, #WIN_SIZE
+    madd    x10, x2, x10, x9
+    ldr     w3, [x10, #WIN_X]
+    ldr     x11, [x10, #WIN_TX]
+    asr     x11, x11, #ANIM_SHIFT
+    add     w3, w3, w11
+    ldr     w4, [x10, #WIN_Y]
+    ldr     x11, [x10, #WIN_TY]
+    asr     x11, x11, #ANIM_SHIFT
+    add     w4, w4, w11
+    subs    w5, w0, w3
+    b.lt    win_hit_next
+    ldr     w6, [x10, #WIN_W]
+    cmp     w5, w6
+    b.ge    win_hit_next
+    subs    w5, w1, w4
+    b.lt    win_hit_next
+    ldr     w6, [x10, #WIN_H]
+    cmp     w5, w6
+    b.ge    win_hit_next
+    mov     w0, w2
+    ret
+
+win_hit_next:
+    cbnz    w2, win_hit_loop
+
+win_hit_none:
+    mov     w0, #WIN_NONE
+    ret
+
+win_on_titlebar:
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x0, x10, x9
+    ldr     w2, [x9, #WIN_Y]
+    ldr     x3, [x9, #WIN_TY]
+    asr     x3, x3, #ANIM_SHIFT
+    add     w2, w2, w3
+    subs    w1, w1, w2
+    b.lt    win_on_titlebar_no
+    cmp     w1, #(WIN_BORDER + WIN_TITLEBAR_H)
+    b.ge    win_on_titlebar_no
+    mov     w0, #1
+    ret
+
+win_on_titlebar_no:
+    mov     w0, #0
+    ret
+
+win_raise:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
+    ladr    x9, win_count
+    ldr     w1, [x9]
+    sub     w1, w1, #1
+    cmp     w0, w1
+    b.hs    win_raise_done
+    ladr    x19, win_list
+    mov     x20, #WIN_SIZE
+    madd    x21, x0, x20, x19
+    ladr    x2, win_swap
+    mov     x3, #0
+
+win_raise_save:
+    cmp     x3, #WIN_SIZE
+    b.hs    win_raise_shift
+    ldr     x4, [x21, x3]
+    str     x4, [x2, x3]
+    add     x3, x3, #8
+    b       win_raise_save
+
+win_raise_shift:
+    mov     w2, w0
+
+win_raise_shift_loop:
+    cmp     w2, w1
+    b.hs    win_raise_place
+    madd    x3, x2, x20, x19
+    add     x4, x3, x20
+    mov     x5, #0
+
+win_raise_copy:
+    cmp     x5, #WIN_SIZE
+    b.hs    win_raise_copy_done
+    ldr     x6, [x4, x5]
+    str     x6, [x3, x5]
+    add     x5, x5, #8
+    b       win_raise_copy
+
+win_raise_copy_done:
+    add     w2, w2, #1
+    b       win_raise_shift_loop
+
+win_raise_place:
+    madd    x3, x1, x20, x19
+    ladr    x2, win_swap
+    mov     x5, #0
+
+win_raise_place_loop:
+    cmp     x5, #WIN_SIZE
+    b.hs    win_raise_done
+    ldr     x6, [x2, x5]
+    str     x6, [x3, x5]
+    add     x5, x5, #8
+    b       win_raise_place_loop
+
+win_raise_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+win_drag_begin:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     w19, w0
+    mov     w20, w1
+    mov     w21, w2
+    mov     w0, w19
+    mov     w1, w20
+    bl      win_on_titlebar
+    cbz     w0, win_drag_begin_done
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x19, x10, x9
+    mov     x0, x9
+    bl      win_eff_x
+    sub     w0, w21, w0
+    ladr    x9, win_drag_dx
+    str     w0, [x9]
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x19, x10, x9
+    mov     x0, x9
+    bl      win_eff_y
+    sub     w0, w20, w0
+    ladr    x9, win_drag_dy
+    str     w0, [x9]
+    ladr    x9, win_drag_index
+    str     w19, [x9]
+
+win_drag_begin_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+win_drag_end:
+    ladr    x9, win_drag_index
+    mov     w0, #WIN_NONE
+    str     w0, [x9]
+    ret
+
+win_drag_move:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    ladr    x9, win_drag_index
+    ldr     w19, [x9]
+    cmp     w19, #0
+    b.lt    win_drag_move_done
+    ladr    x9, mouse_buttons
+    ldrb    w0, [x9]
+    cbz     w0, win_drag_move_stop
+    bl      mouse_get_pos
+    mov     w20, w0
+    mov     w21, w1
+    mov     w0, w19
+    bl      win_dirty_rect
+    ladr    x9, win_drag_dx
+    ldr     w0, [x9]
+    sub     w20, w20, w0
+    ladr    x9, win_drag_dy
+    ldr     w0, [x9]
+    sub     w21, w21, w0
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x19, x10, x9
+    ldr     x0, [x9, #WIN_TX]
+    asr     x0, x0, #ANIM_SHIFT
+    sub     w20, w20, w0
+    str     w20, [x9, #WIN_X]
+    ldr     x0, [x9, #WIN_TY]
+    asr     x0, x0, #ANIM_SHIFT
+    sub     w21, w21, w0
+    str     w21, [x9, #WIN_Y]
+    mov     w0, w19
+    bl      win_dirty_rect
+    b       win_drag_move_done
+
+win_drag_move_stop:
+    bl      win_drag_end
+
+win_drag_move_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+win_click:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     w19, w0
+    mov     w20, w1
+    bl      win_hit
+    cmp     w0, #0
+    b.lt    win_click_done
+    mov     w21, w0
+    ladr    x9, win_count
+    ldr     w0, [x9]
+    sub     w0, w0, #1
+    cmp     w21, w0
+    b.eq    win_click_drag
+    mov     w0, w21
+    bl      win_raise
+    ladr    x9, win_count
+    ldr     w21, [x9]
+    sub     w21, w21, #1
+    bl      dirty_all
+
+win_click_drag:
+    mov     w0, w21
+    mov     w1, w20
+    mov     w2, w19
+    bl      win_drag_begin
+
+win_click_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+
+win_draw_one:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    str     x23, [sp, #48]
     ladr    x19, win_list
     mov     x9, #WIN_SIZE
     madd    x19, x0, x9, x19
     mov     w20, w1
-    ldr     w0, [x19, #WIN_X]
-    ldr     w1, [x19, #WIN_Y]
+    ldr     w21, [x19, #WIN_X]
+    ldr     x9, [x19, #WIN_TX]
+    asr     x9, x9, #ANIM_SHIFT
+    add     w21, w21, w9
+    ldr     w22, [x19, #WIN_Y]
+    ldr     x9, [x19, #WIN_TY]
+    asr     x9, x9, #ANIM_SHIFT
+    add     w22, w22, w9
+    mov     w0, w21
+    mov     w1, w22
     ldr     w2, [x19, #WIN_W]
     ldr     w3, [x19, #WIN_H]
     ldr     x4, =COLOR_WIN_BORDER
     bl      fb_fill_rect
-    ldr     w0, [x19, #WIN_X]
-    add     w0, w0, #WIN_BORDER
-    ldr     w1, [x19, #WIN_Y]
-    add     w1, w1, #WIN_BORDER
+    add     w0, w21, #WIN_BORDER
+    add     w1, w22, #WIN_BORDER
     ldr     w2, [x19, #WIN_W]
     sub     w2, w2, #(WIN_BORDER * 2)
     mov     w3, #WIN_TITLEBAR_H
@@ -1999,27 +2719,24 @@ win_draw_one_inactive:
 
 win_draw_one_title:
     bl      fb_fill_rect
-    ldr     w0, [x19, #WIN_X]
-    add     w0, w0, #WIN_BORDER
-    ldr     w1, [x19, #WIN_Y]
-    add     w1, w1, #(WIN_BORDER + WIN_TITLEBAR_H)
+    add     w0, w21, #WIN_BORDER
+    add     w1, w22, #(WIN_BORDER + WIN_TITLEBAR_H)
     ldr     w2, [x19, #WIN_W]
     sub     w2, w2, #(WIN_BORDER * 2)
     ldr     w3, [x19, #WIN_H]
     sub     w3, w3, #(WIN_BORDER * 2 + WIN_TITLEBAR_H)
     ldr     x4, =COLOR_WIN_BODY
     bl      fb_fill_rect
-    ldr     w0, [x19, #WIN_X]
-    add     w0, w0, #(WIN_BORDER + WIN_TEXT_PAD)
-    ldr     w1, [x19, #WIN_Y]
-    add     w1, w1, #(WIN_BORDER + WIN_TITLEBAR_H - WIN_TEXT_PAD)
+    add     w0, w21, #(WIN_BORDER + WIN_TEXT_PAD)
+    add     w1, w22, #(WIN_BORDER + WIN_TITLEBAR_H - WIN_TEXT_PAD)
     ldr     x2, [x19, #WIN_TITLE]
     mov     w3, #WIN_TITLE_SIZE
     ldr     x4, =COLOR_WIN_TEXT
     bl      font_text
-    ldr     x21, [sp, #32]
+    ldr     x23, [sp, #48]
+    ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #48
+    ldp     x29, x30, [sp], #64
     ret
 
 win_draw_all:
@@ -4769,13 +5486,30 @@ timer_tick:
     ladr    x0, timer_interval
     ldr     x1, [x0]
     msr     cntp_tval_el0, x1
-    ladr    x0, console_cursor_phase
-    ldrb    w1, [x0]
-    eor     w1, w1, #1
-    strb    w1, [x0]
-    ladr    x0, console_blink_pending
+    ladr    x0, anim_active
+    ldr     w1, [x0]
+    cbz     w1, timer_tick_blink
+    ladr    x0, anim_pending
     mov     w1, #1
     strb    w1, [x0]
+
+timer_tick_blink:
+    ladr    x0, timer_blink_count
+    ldr     w1, [x0]
+    add     w1, w1, #1
+    cmp     w1, #BLINK_DIVIDER
+    b.lo    timer_tick_store
+    mov     w1, #0
+    ladr    x2, console_cursor_phase
+    ldrb    w3, [x2]
+    eor     w3, w3, #1
+    strb    w3, [x2]
+    ladr    x2, console_blink_pending
+    mov     w3, #1
+    strb    w3, [x2]
+
+timer_tick_store:
+    str     w1, [x0]
     ret
 
 uart_rx_get:
@@ -4841,15 +5575,38 @@ console_drain_click:
     ldr     w1, [x0, #4]
     ldr     w0, [x0]
     bl      power_hit
-    cbz     w0, console_drain_mouse
+    cbnz    w0, console_drain_power
+    ladr    x0, click_x
+    ldr     w1, [x0, #4]
+    ldr     w0, [x0]
+    bl      win_click
+    bl      cursor_hide
+    bl      win_repaint
+    bl      cursor_show
+    b       console_drain_mouse
+
+console_drain_power:
     bl      power_off
 
 console_drain_mouse:
     ladr    x0, mouse_dirty
     ldrb    w1, [x0]
+    cbz     w1, console_drain_anim
+    strb    wzr, [x0]
+    bl      win_drag_move
+    bl      cursor_hide
+    bl      win_repaint
+    bl      cursor_show
+
+console_drain_anim:
+    ladr    x0, anim_pending
+    ldrb    w1, [x0]
     cbz     w1, console_drain_blink
     strb    wzr, [x0]
-    bl      cursor_update
+    bl      anim_tick
+    bl      cursor_hide
+    bl      win_repaint
+    bl      cursor_show
 
 console_drain_blink:
     ladr    x0, console_blink_pending
@@ -5447,6 +6204,12 @@ win_title_3:
 
 .section .rodata
 
+anim_noclock_msg:
+    .asciz  "ANIM OHNE ZEITQUELLE, Endzustand direkt\r\n"
+
+anim_full_msg:
+    .asciz  "ANIM LISTE VOLL, Endzustand direkt setzen\r\n"
+
 power_msg:
     .asciz  "\r\nSHUTDOWN angefordert\r\n"
 
@@ -5821,6 +6584,22 @@ fb_pixel_count:
     .space  8
 
 .balign 8
+win_swap:
+    .space  WIN_SIZE
+
+.balign 4
+win_drag_index:
+    .space  4
+
+.balign 4
+win_drag_dx:
+    .space  4
+
+.balign 4
+win_drag_dy:
+    .space  4
+
+.balign 8
 win_count:
     .space  4
 
@@ -5859,6 +6638,22 @@ pmm_pages:
 .balign 8
 vg_emit:
     .space  8
+
+.balign 16
+anim_list:
+    .space  (ANIM_ENTRY_SIZE * ANIM_MAX)
+
+.balign 4
+anim_active:
+    .space  4
+
+.balign 4
+anim_gen_next:
+    .space  4
+
+.balign 4
+anim_pending:
+    .space  4
 
 .balign 4
 vg_half:
@@ -6018,6 +6813,10 @@ click_y:
 
 click_pending:
     .space  1
+
+.balign 4
+timer_blink_count:
+    .space  4
 
 .balign 8
 timer_freq:

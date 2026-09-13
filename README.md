@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-20.544%20Byte-brightgreen?style=flat-square" alt="20544 Byte">
+<img src="https://img.shields.io/badge/Kernel-24.728%20Byte-brightgreen?style=flat-square" alt="24728 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>20.544&nbsp;Byte</b> groß.<br>
+Das fertige System ist <b>24.728&nbsp;Byte</b> groß.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -155,7 +155,7 @@ In `kernel.S` stecken 586 Sprungmarken. Jede gehört zu einem Zuständigkeitsber
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **20.544 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **24.728 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 106 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `disk.img` | 64 MB | Testdatenträger mit echtem FAT32 und drei Testdateien |
@@ -253,7 +253,7 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 6. Mauszeiger, Klickerkennung | ✅ |
 | 7. Speicherverwaltung, MMU aktiv | ✅ |
 | 8. Datenträger und FAT32 lesend | ✅ |
-| 9. Fenstersystem | offen |
+| 9. Fenstersystem | fertig |
 | 10. Netzwerk bis TCP | offen |
 | 11. Verschlüsselte Verbindungen | offen |
 | 12. Vektorgrafik | teilweise, Schriftrendering fertig |
@@ -304,7 +304,7 @@ Der Code ist vollständig selbst geschrieben. Die Icons sind abgeleitete Werke a
 |---|---|
 | Eigener Quelltext | 132 KB in drei Dateien |
 | Zeilen Assembler | 5.260 |
-| **Fertiges Betriebssystem** | **20.544 Byte** |
+| **Fertiges Betriebssystem** | **24.728 Byte** |
 | Speicherbedarf im Betrieb | 71 MB, davon 70 MB Bildspeicher |
 | Dokumentation | 48 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |

@@ -937,3 +937,105 @@ Beim Schreiben war die Formel für den sanften Verlauf zunächst falsch, `1 - 2t
 ### Noch nicht umgesetzt
 
 Schritt 2 und folgende aus dem Plan: Animationsliste mit Platzkennung und Generation, getrennte Zeitverwaltung für Cursorblinken und Animationsbilder, danach Verschiebung und Ausschnitt. Der Zeitgeber läuft weiterhin mit 2 Hz.
+
+---
+
+## Animationskern, Schritt 2 und 3
+
+### Schritt 3 zuerst: der Zeitgeber gehört jetzt einem Block
+
+Der Zeitgeber lief mit 2 Hz und schaltete bei jedem Interrupt den Konsolencursor um. Er läuft jetzt mit **60 Hz** und trägt zwei getrennte Fälligkeiten:
+
+- Ein Teiler `BLINK_DIVIDER = TIMER_HZ / BLINK_HZ` schaltet den Cursor weiterhin mit 2 Hz.
+- Läuft mindestens eine Animation, setzt der Interrupt zusätzlich das Merkmal `anim_pending`.
+
+Der Interrupt rechnet nichts. Ausgewertet wird in der Hauptschleife, und nur wenn das Merkmal gesetzt ist. Ohne laufende Animation entsteht keine zusätzliche Arbeit.
+
+**Gegenprobe zur Blinkrate:** In fünf Sekunden nach dem Start erscheinen fünf sichtbare Cursorphasen. Bei 2 Hz sind das genau zehn Umschaltungen, davon fünf sichtbar. Bei ungeteilten 60 Hz wären es rund 300. Das Blinkverhalten ist also unverändert.
+
+### Schritt 2: Animationsliste mit Platzkennung und Generation
+
+64 Einträge zu je 80 Byte, zusammen 5 KiB, auf 16 Byte ausgerichtet. Feste Struktur nach dem Plan: Zielobjekt, Startzeit, Dauer, Start- und Zielwert, zuletzt berechneter Wert, Gruppe, Eigenschaft, Verlauf, Zustand, Optionen, Abschlusskennung, Generation.
+
+Ein Handle ist `(Generation << 16) | Platznummer`. `anim_slot_addr` prüft beide Teile. Ein Auftrag, dessen Platz inzwischen neu vergeben wurde, findet damit sein Ziel nicht mehr, statt ein fremdes Objekt zu verändern. Generation 0 wird nie vergeben, deshalb ist Handle 0 immer ungültig.
+
+Öffentliche Einsprungpunkte: `anim_init`, `anim_start`, `anim_cancel`, `anim_cancel_target`, `anim_tick`, `anim_value`, `anim_state`, `anim_count_active`, dazu `anim_now` und `anim_ms_to_ticks`.
+
+Startet eine zweite Animation derselben Eigenschaft am selben Ziel, wird der laufende Verlauf zum aktuellen Zeitpunkt ausgewertet und der neue Start beginnt bei diesem Wert. Ein Richtungswechsel springt also nicht.
+
+### Nachweis am laufenden System
+
+Eine Bewegung von -200 auf 0 über 200 ms, linear:
+
+| Zeitpunkt | Wert | Erwartung |
+|---|---:|---:|
+| 0 ms | -200,000 | -200 |
+| 100 ms | -99,740 | -100 |
+| 200 ms | **0,000** | 0 |
+
+Die Abweichung bei 100 ms entspricht der Zeit, die zwischen Warteschleife und Auswertung tatsächlich vergeht, also 0,26 Bildpunkten. Der Endwert wird **exakt** gesetzt, nicht interpoliert. Dreifaches Auswerten nach Ablauf ändert nichts, damit ist die geforderte Unabhängigkeit von der Bildanzahl belegt.
+
+| Weitere Prüfung | Ergebnis |
+|---|---|
+| Tabelle füllen | 64 Plätze belegt, der 65. Start meldet `ANIM LISTE VOLL` und gibt 0 zurück |
+| Veraltetes Handle nach Abbruch | `anim_value` liefert 0, kein Zugriff auf den neu vergebenen Platz |
+| `anim_cancel_target` | beendet alle 64 Einträge eines Ziels, danach null aktive |
+| Zustand nach Ablauf | `ANIM_FINISHED`, der Zähler aktiver Animationen geht auf null |
+
+### Ein Fehler beim Bauen
+
+`anim_ms_to_ticks` las anfangs `timer_freq`, das erst in `timer_init` gesetzt wird. Der Selbsttest lief davor, bekam Dauer null und war sofort fertig, was im ersten Durchlauf wie eine korrekte Animation aussah. Die Routine liest jetzt `cntfrq_el0` selbst und meldet `ANIM OHNE ZEITQUELLE`, wenn keine Zeitquelle vorhanden ist. Damit gibt es keine Reihenfolgeabhängigkeit beim Start mehr.
+
+### Noch nicht umgesetzt
+
+Gruppen mit gemeinsamer Zeitbasis, Abschlussmeldungen zum Abholen, und `anim_next_deadline` für einen bedarfsgerechten Zeitgeber. Vor allem aber: Die Werte werden bisher nur berechnet, noch kein Fenster liest sie. Das ist Schritt 4.
+
+---
+
+## Animationskern Schritt 4 und Abschluss des Fenstersystems
+
+### Ein Fehler, der Schritt 4 sofort lahmgelegt hätte
+
+Die Durchsicht vor dem Ausbau förderte zutage: **Abgelaufene Animationen gaben ihren Platz nie frei.** Gemessen mit 64 kurzen Animationen, die alle durchliefen:
+
+    1. gestartet          = 64
+    2. aktiv nach Ablauf  = 0
+    3. Start nach Ablauf  = ANIM LISTE VOLL
+
+Nach 64 Animationen war die Engine tot. Bei 60 Bildern je Sekunde wäre das eine Sache von Sekunden gewesen. Die Belegung nimmt jetzt freie Plätze zuerst und greift danach auf abgelaufene zurück. Die Generation wird dabei erhöht, alte Handles werden also ungültig, die Wiederverwendung ist damit nicht still.
+
+### Schritt 4: die Werte erreichen ein Fenster
+
+Die Fensterstruktur trennt jetzt Layout und Darstellung: `WIN_X` und `WIN_Y` bleiben die logische Position, `WIN_TX` und `WIN_TY` tragen eine Verschiebung in 32.32. Beim Zeichnen wird die effektive Position einmal berechnet, der ganzzahlige Anteil der Verschiebung addiert.
+
+`anim_apply` schreibt die Werte, prüft dabei Zielindex und Eigenschaft und markiert **alten und neuen** Bereich als verändert. Ohne die alte Markierung blieben Bildreste stehen. `win_dirty_rect` musste dafür ebenfalls die Verschiebung berücksichtigen, sonst markiert es den falschen Bereich.
+
+**Nachweis:** Ein Fenster gleitet in 700 ms mit kubischem Ausklingen von 1500 Bildpunkten links außerhalb an seine Zielposition. Bei 0,55 s ist der Titel als `ster A` angeschnitten, das Fenster ragt also noch heraus. Am Ende steht es sauber.
+
+**Abnahme erfüllt:** Der Endzustand nach der Bewegung ist **byteweise identisch** zum statischen Bild ohne Animation. Keine Reste.
+
+### Zwei Reihenfolgefehler beim Einbau
+
+`anim_init` lief nach dem ersten Animationsstart und löschte die eben angelegte Animation wieder. Das Handle war 0, obwohl der Zähler eine aktive Animation meldete. `anim_init` steht jetzt am Anfang der Startfolge.
+
+Der neue Abschnitt in der Ablaufkette der Hauptschleife wurde übersprungen, weil die vorherigen Zweige direkt zum Blinkteil sprangen. Aufgefallen, weil trotz laufender Animation keine einzige Auswertung stattfand.
+
+### Fenstersystem abgeschlossen
+
+| Funktion | Umsetzung |
+|---|---|
+| Treffererkennung | `win_hit` sucht von oben nach unten, mit effektiver Position einschliesslich Verschiebung |
+| Fokuswechsel | `win_raise` hebt das Fenster ans Listenende, dort wird es zuletzt gezeichnet und als aktiv dargestellt |
+| Ziehen | `win_drag_begin` merkt den Griffpunkt, aber nur auf der Titelleiste. `win_drag_move` folgt der Maus, solange die Taste gedrückt ist, und beendet sich beim Loslassen selbst |
+
+**Nachweis Fokuswechsel:** Ein Klick in die Bildmitte trifft das mittlere Fenster, das nicht oben liegt. Nach dem Klick liegt es vorn und trägt die aktive Titelleiste, das vorher oberste Fenster ist dahinter und grau.
+
+Das Ziehen ist eingebaut, aber nicht maschinell nachweisbar: Der QEMU-Monitor kann bei einem absoluten Gerät keine Mausbewegung einspeisen. Es braucht eine echte Mausbewegung im Fenster.
+
+### Ein bekannter Befund wurde dadurch akut und ist behoben
+
+`win_repaint` zeichnete unter dem sichtbaren Mauszeiger hindurch. Dessen gesicherter Hintergrund veraltete dadurch, und das nächste Verstecken schrieb alten Inhalt zurück. Solange nichts bewegt wurde, fiel das nicht auf. Beim Ziehen passiert es bei jeder Mausbewegung. Alle drei Neuzeichenpfade entfernen den Zeiger jetzt vorher und setzen ihn danach wieder. Gegenprobe: Das Ergebnis eines Klicks ist unverändert.
+
+### Maschinelle Nachprüfung des neuen Codes
+
+Werte über Aufrufe hinweg in flüchtigen Registern: keine. Routinen mit unausgeglichenem Stack: keine. Alle drei Startkonfigurationen erreichen `BOOT OK`.
