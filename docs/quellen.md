@@ -717,7 +717,7 @@ Die Dateigröße sollte zunächst auf Offset 76 in `font_state`. Dort liegt aber
 
 **Zusammengesetzte Glyphen** werden erkannt und gemeldet, aber nicht gezeichnet. BabelSans hat keine, viele andere Schriften bauen Umlaute so auf.
 
-**`tasks/todo.md` und `tasks/lessons.md` existieren nicht.** Teil H von `CLAUDE.md` sieht beide vor. Bisher wurde stattdessen diese Belegdatei geführt. Ob die Dateien angelegt werden sollen, ist eine Entscheidung des Projektinhabers.
+**`tasks/todo.md` und `tasks/lessons.md` existieren nicht.** Die internen Arbeitsvorgaben sehen beide vor. Bisher wurde stattdessen diese Belegdatei geführt. Ob die Dateien angelegt werden sollen, ist eine Entscheidung des Projektinhabers.
 
 ---
 
@@ -888,7 +888,7 @@ In einem früheren Abschnitt steht, ein Fenster über dem Bildrand könne grunds
 
 ## Animationskern, Schritt 1: die Rechenbasis in 32.32
 
-Umgesetzt nach dem Zusatzplan in Teil F2 von `CLAUDE.md`. Sechs Routinen mit dem Präfix `anim_`, fest im Kernel.
+Umgesetzt nach dem internen Zusatzplan für Animation und Compositor. Sechs Routinen mit dem Präfix `anim_`, fest im Kernel.
 
 | Routine | Aufgabe |
 |---|---|
@@ -1481,3 +1481,9 @@ Beim Nachprüfen der intern geführten offenen Punkte zeigte sich, dass der Code
 | „`fat_find` unterscheidet Lesefehler nicht von nicht gefunden" | Der Rückgabewert unterscheidet 1, 0 und -1. Beide Aufrufer werten das aus: `fat_load` mit `cmp w0, #1`, `fat_cat` mit `tbnz w0, #31` und anschliessendem `cbz` |
 
 Ein einziger Punkt bleibt offen und ist hier festgehalten: `virtio_reset` springt bei Misserfolg nach `boot_park`, hält also das System an. Das trifft im laufenden Betrieb auch den Fall, dass nur eine einzelne Datei nicht gelesen werden konnte. Es ist keine stille Fehlfunktion, die Meldung erscheint vorher, aber die Reaktion ist hart.
+
+### Nachtrag: die Sektorgrenze des Wurzelverzeichnisses ist längst gefallen
+
+Intern stand noch als Grenze vermerkt, `fat_find` und `fat_list_root` läsen nur den ersten Sektor, also höchstens sechzehn Einträge. Das trifft nicht mehr zu. `fat_root_walk` zählt in `fat_root_sector` über `FAT_SEC_PER_CLUS` und folgt danach über `fat_next_cluster` der Clusterkette.
+
+Beleg aus dem Überlauftest: Auf einem Datenträger mit 35 Einträgen wurden 24 erfasst, und 24 ist die Grenze `FILES_MAX`, nicht die Sektorgrenze. Ein Sektor fasst hart sechzehn Einträge, 512 geteilt durch 32. Der Vermerk ist gestrichen.
