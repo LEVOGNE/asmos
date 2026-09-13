@@ -409,10 +409,13 @@
 .equ WIN_TITLE,             16
 .equ WIN_TX,                24
 .equ WIN_TY,                32
-.equ WIN_SIZE,              40
+.equ WIN_FOCUS,             40
+.equ WIN_SIZE,              48
+.equ WIN_FOCUS_MS,          180
 .equ ANIM_PROP_TX,          0
 .equ ANIM_PROP_TY,          1
-.equ ANIM_PROP_COUNT,       2
+.equ ANIM_PROP_FOCUS,       2
+.equ ANIM_PROP_COUNT,       3
 .equ WIN_NONE,              -1
 .equ WIN_MAX,               8
 .equ WIN_BORDER,            2
@@ -502,7 +505,7 @@
 
 .equ BOOT_SELFTEST,         0
 .equ PMM_SELFTEST,          0
-.equ FS_SELFTEST,           1
+.equ FS_SELFTEST,          0
 .equ FS_SELFTEST_BIG,       0
 .equ FONT_SELFTEST,          1
 .equ TTF_TEST_SIZE,         90
@@ -634,15 +637,6 @@ boot_el1_entry:
 .if WIN_SELFTEST
     bl      win_selftest
 .endif
-    mov     x0, #0
-    mov     w1, #ANIM_PROP_TX
-    mov     x2, #1500
-    lsl     x2, x2, #ANIM_SHIFT
-    neg     x2, x2
-    mov     x3, #0
-    mov     w4, #700
-    mov     w5, #ANIM_EASE_CUBIC_OUT
-    bl      anim_start
     bl      cursor_show
 .if FS_SELFTEST
     bl      blk_selftest
@@ -1888,7 +1882,13 @@ anim_apply:
     madd    x3, x19, x4, x3
     cmp     w20, #ANIM_PROP_TY
     b.eq    anim_apply_ty
+    cmp     w20, #ANIM_PROP_FOCUS
+    b.eq    anim_apply_focus
     str     x21, [x3, #WIN_TX]
+    b       anim_apply_mark
+
+anim_apply_focus:
+    str     x21, [x3, #WIN_FOCUS]
     b       anim_apply_mark
 
 anim_apply_ty:
@@ -2409,6 +2409,24 @@ win_add:
     str     w2, [x11, #WIN_W]
     str     w3, [x11, #WIN_H]
     str     x4, [x11, #WIN_TITLE]
+    str     xzr, [x11, #WIN_TX]
+    str     xzr, [x11, #WIN_TY]
+    mov     x12, #1
+    lsl     x12, x12, #ANIM_SHIFT
+    str     x12, [x11, #WIN_FOCUS]
+    ladr    x12, win_list
+    mov     x13, #WIN_SIZE
+    mov     w14, #0
+
+win_add_clear_loop:
+    cmp     w14, w10
+    b.hs    win_add_clear_done
+    madd    x15, x14, x13, x12
+    str     xzr, [x15, #WIN_FOCUS]
+    add     w14, w14, #1
+    b       win_add_clear_loop
+
+win_add_clear_done:
     add     w10, w10, #1
     str     w10, [x9]
 
@@ -2421,6 +2439,36 @@ win_add_full:
     bl      uart_puts
     ldp     x29, x30, [sp], #16
     ret
+
+win_mix_color:
+    mov     x3, #0
+    mov     w4, #0
+    mov     x7, #0xffff
+
+win_mix_loop:
+    cmp     w4, #64
+    b.hs    win_mix_done
+    lsr     x5, x0, x4
+    and     x5, x5, #0xffff
+    lsr     x6, x1, x4
+    and     x6, x6, #0xffff
+    sub     x6, x6, x5
+    mul     x6, x6, x2
+    asr     x6, x6, #16
+    add     x5, x5, x6
+    cmp     x5, #0
+    csel    x5, xzr, x5, lt
+    cmp     x5, x7
+    csel    x5, x7, x5, gt
+    lsl     x5, x5, x4
+    orr     x3, x3, x5
+    add     w4, w4, #16
+    b       win_mix_loop
+
+win_mix_done:
+    mov     x0, x3
+    ret
+
 
 win_eff_x:
     ldr     w1, [x0, #WIN_X]
@@ -2647,6 +2695,75 @@ win_drag_move_done:
     ldp     x29, x30, [sp], #48
     ret
 
+win_focus_cancel:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     w19, #0
+
+win_focus_cancel_loop:
+    ladr    x0, win_count
+    ldr     w1, [x0]
+    cmp     w19, w1
+    b.hs    win_focus_cancel_done
+    mov     x0, x19
+    bl      anim_cancel_target
+    add     w19, w19, #1
+    b       win_focus_cancel_loop
+
+win_focus_cancel_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+win_focus_start:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    ladr    x0, win_count
+    ldr     w19, [x0]
+    cbz     w19, win_focus_start_done
+    sub     w19, w19, #1
+    ladr    x20, win_list
+    mov     x21, #WIN_SIZE
+    madd    x0, x19, x21, x20
+    ldr     x2, [x0, #WIN_FOCUS]
+    mov     x0, x19
+    mov     w1, #ANIM_PROP_FOCUS
+    mov     x3, #1
+    lsl     x3, x3, #ANIM_SHIFT
+    mov     w4, #WIN_FOCUS_MS
+    mov     w5, #ANIM_EASE_QUAD_OUT
+    bl      anim_start
+    cbz     w19, win_focus_start_done
+    mov     w0, #0
+
+win_focus_start_loop:
+    cmp     w0, w19
+    b.hs    win_focus_start_done
+    mov     x1, x0
+    madd    x2, x0, x21, x20
+    ldr     x2, [x2, #WIN_FOCUS]
+    cbz     x2, win_focus_start_next
+    stp     x0, x1, [sp, #-16]!
+    mov     x0, x1
+    mov     w1, #ANIM_PROP_FOCUS
+    mov     x3, #0
+    mov     w4, #WIN_FOCUS_MS
+    mov     w5, #ANIM_EASE_QUAD_OUT
+    bl      anim_start
+    ldp     x0, x1, [sp], #16
+
+win_focus_start_next:
+    add     w0, w0, #1
+    b       win_focus_start_loop
+
+win_focus_start_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+
 win_click:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
@@ -2663,10 +2780,13 @@ win_click:
     cmp     w21, w0
     b.eq    win_click_drag
     mov     w0, w21
+    bl      win_focus_cancel
+    mov     w0, w21
     bl      win_raise
     ladr    x9, win_count
     ldr     w21, [x9]
     sub     w21, w21, #1
+    bl      win_focus_start
     bl      dirty_all
 
 win_click_drag:
@@ -2710,14 +2830,18 @@ win_draw_one:
     ldr     w2, [x19, #WIN_W]
     sub     w2, w2, #(WIN_BORDER * 2)
     mov     w3, #WIN_TITLEBAR_H
-    cbz     w20, win_draw_one_inactive
-    ldr     x4, =COLOR_WIN_TITLE_ACT
-    b       win_draw_one_title
-
-win_draw_one_inactive:
-    ldr     x4, =COLOR_WIN_TITLE
-
-win_draw_one_title:
+    mov     w23, w3
+    stp     x0, x1, [sp, #-16]!
+    str     x2, [sp, #-16]!
+    ldr     x0, =COLOR_WIN_TITLE
+    ldr     x1, =COLOR_WIN_TITLE_ACT
+    ldr     x2, [x19, #WIN_FOCUS]
+    asr     x2, x2, #16
+    bl      win_mix_color
+    mov     x4, x0
+    ldr     x2, [sp], #16
+    ldp     x0, x1, [sp], #16
+    mov     w3, w23
     bl      fb_fill_rect
     add     w0, w21, #WIN_BORDER
     add     w1, w22, #(WIN_BORDER + WIN_TITLEBAR_H)
@@ -5567,10 +5691,6 @@ console_drain_click:
     ldrb    w1, [x0]
     cbz     w1, console_drain_mouse
     strb    wzr, [x0]
-    ladr    x0, click_label
-    ladr    x1, click_count
-    ldr     w1, [x1]
-    bl      uart_field
     ladr    x0, click_x
     ldr     w1, [x0, #4]
     ldr     w0, [x0]
@@ -6017,8 +6137,6 @@ boot_ok_msg:
     .asciz  "BOOT OK\r\n"
 
     vec_entry 6, panic_entry
-click_label:
-    .asciz  "\r\nCLICK n="
 console_overflow_msg:
     .asciz  "\r\nRX OVERFLOW\r\n"
 fat_big_end:

@@ -1051,3 +1051,44 @@ Der Kernel wertet die Datei vollständig selbst aus: `head`, `maxp`, `loca`, `gl
 Die Datei liegt nicht im Repository. `make disk` kopiert sie beim Erzeugen des Testdatenträgers aus `FONT_SRC`. Fehlt sie, meldet der Kernel `TTF UNAVAILABLE` und läuft ohne Schrift weiter.
 
 **Zur Einordnung:** „100 Prozent kostenlos" ist eine Kategorie der Bezugsseite, kein formaler Lizenztext wie MIT oder OFL. Für die Nutzung im Projekt reicht das; vor einer Weitergabe der Datei wären die Bedingungen des Autors zu prüfen. Deshalb bleibt sie vorerst ausserhalb des Repositoriums.
+
+---
+
+## Aufgeräumte Startausgabe und weicher Fokuswechsel
+
+### Was aus der Ausgabe verschwunden ist
+
+Die Dateisystem-Selbsttests sind abgeschaltet: keine Verzeichnisliste mehr, kein Inhalt von `HELLO.TXT`, `EMPTY.TXT` und `NOSUCH.TXT`, keine Signatur- und Herstellerzeile des Blockgeräts. Ebenfalls entfernt: die Meldung bei jedem Mausklick, die aus der Zeit stammt, als ein Klick noch keine sichtbare Wirkung hatte. Inzwischen wechselt er den Fokus oder zieht ein Fenster.
+
+Die Startausgabe umfasst jetzt nur noch die Diagnose, die beim Hochfahren wirklich zählt:
+
+    asmOS
+    RAM base=... size=...
+    FDT at=... len=...
+    PMM base=... pages=...
+    MMU ON
+    FB 3840x1600, intern 64 Bit je Punkt
+    VIRTIO at=... id=... ver=...
+    INPUT READY
+    BLK READY
+    FAT res=... spf=... data=... root=...
+    TTF units=1000 glyphs=244
+    BOOT OK
+
+Die Leseroutinen des Dateisystems bleiben im Kernel, nur ihre Testaufrufe sind fort. Sie werden gebraucht, sobald die Icon-Bibliothek vom Datenträger kommt.
+
+Auch die Startanimation ist entfernt. Sie war der Nachweis für Schritt 4, nicht als dauerhaftes Verhalten gedacht.
+
+### Der Fokuswechsel läuft jetzt weich
+
+Ein Klick auf ein hinteres Fenster holte es bisher hart nach vorn, die Titelleiste wechselte schlagartig die Farbe. Jetzt läuft der Wechsel über die Animationsengine.
+
+Die Fensterstruktur trägt dafür `WIN_FOCUS`, einen Wert zwischen 0 und 1 in 32.32. Beim Zeichnen mischt `win_mix_color` die Titelfarbe kanalweise zwischen inaktiv und aktiv, jeder der vier RGBA16-Kanäle einzeln und geklemmt. Beim Anheben startet für das neue oberste Fenster eine Animation auf 1 und für alle anderen mit Fokuswert auf 0, jeweils 180 ms mit quadratischem Ausklingen.
+
+**Ein Punkt, der Sorgfalt brauchte:** Animationen zielen auf den Fensterindex, und `win_raise` sortiert die Liste um. Laufende Übergänge würden danach auf das falsche Fenster wirken. Deshalb beendet `win_focus_cancel` alle Animationen, bevor umsortiert wird, und `win_focus_start` setzt sie danach mit den neuen Indizes neu auf.
+
+**Nachweis:** 70 ms nach dem Klick ist die Titelleiste des angeklickten Fensters noch gräulich gemischt, nach 670 ms voll aktiv. Der Zwischenzustand ist also sichtbar und nicht nur ein Umschalten.
+
+### Was das noch nicht ist
+
+Dies ist ein Farbübergang, kein Fenster-Fade. Ein ganzes Fenster ein- oder auszublenden setzt voraus, dass es als zusammenhängendes Bild vorliegt und mit einer Gesamtdeckkraft gemischt wird. Das ist Schritt 5 des Zusatzplans und braucht den Compositor sowie eine Mischroutine, die das Zielalpha mitführt. Der vorhandene Pixelmischer setzt es fest auf vollständig deckend.
