@@ -410,12 +410,19 @@
 .equ WIN_TX,                24
 .equ WIN_TY,                32
 .equ WIN_FOCUS,             40
-.equ WIN_SIZE,              48
+.equ WIN_ALPHA,             48
+.equ WIN_SIZE,              56
+.equ WIN_FADE_MS,           260
+.equ WIN_DRAG_MS,           90
 .equ WIN_FOCUS_MS,          180
 .equ ANIM_PROP_TX,          0
 .equ ANIM_PROP_TY,          1
 .equ ANIM_PROP_FOCUS,       2
-.equ ANIM_PROP_COUNT,       3
+.equ ANIM_PROP_SCREEN,      3
+.equ ANIM_PROP_ALPHA,       4
+.equ FADE_ONE,              0x10000
+.equ SCREEN_FADE_MS,        450
+.equ ANIM_PROP_COUNT,       5
 .equ WIN_NONE,              -1
 .equ WIN_MAX,               8
 .equ WIN_BORDER,            2
@@ -616,6 +623,9 @@ boot_el1_entry:
     bl      uart_puts
     bl      anim_init
     bl      win_drag_end
+    ladr    x0, fb_fade
+    mov     w1, #FADE_ONE
+    str     w1, [x0]
     bl      mem_init
     bl      pmm_init
     bl      mmu_init
@@ -633,10 +643,20 @@ boot_el1_entry:
     bl      blk_init
     bl      fat_init
     bl      font_init
+    ladr    x0, fb_fade
+    str     wzr, [x0]
     bl      win_demo
 .if WIN_SELFTEST
     bl      win_selftest
 .endif
+    mov     x0, #WIN_MAX
+    mov     w1, #ANIM_PROP_SCREEN
+    mov     x2, #0
+    mov     x3, #1
+    lsl     x3, x3, #ANIM_SHIFT
+    mov     w4, #SCREEN_FADE_MS
+    mov     w5, #ANIM_EASE_QUAD_OUT
+    bl      anim_start
     bl      cursor_show
 .if FS_SELFTEST
     bl      blk_selftest
@@ -848,10 +868,10 @@ fb_present_all:
     b       fb_present
 
 fb_present:
-    stp     x29, x30, [sp, #-64]!
+    stp     x29, x30, [sp, #-80]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
-    str     x23, [sp, #48]
+    stp     x23, x24, [sp, #48]
     mov     w19, w0
     mov     w20, w1
     add     w21, w0, w2
@@ -882,6 +902,11 @@ fb_present_row:
     bl      out_pixel_addr
     mov     x1, x0
     mov     w2, w21
+    ladr    x0, fb_fade
+    ldr     w24, [x0]
+    mov     w0, #FADE_ONE
+    cmp     w24, w0
+    b.ne    fb_present_col_fade
 
 fb_present_col:
     cbz     w2, fb_present_next
@@ -898,16 +923,37 @@ fb_present_col:
     sub     w2, w2, #1
     b       fb_present_col
 
+fb_present_col_fade:
+    cbz     w2, fb_present_next
+    ldr     x3, [x23], #FB_BPP
+    lsr     x4, x3, #(CH_SHIFT_B + 8)
+    and     x4, x4, #0xff
+    mul     x4, x4, x24
+    lsr     x4, x4, #16
+    lsr     x5, x3, #(CH_SHIFT_G + 8)
+    and     x5, x5, #0xff
+    mul     x5, x5, x24
+    lsr     x5, x5, #16
+    orr     x4, x4, x5, lsl #8
+    lsr     x5, x3, #(CH_SHIFT_R + 8)
+    and     x5, x5, #0xff
+    mul     x5, x5, x24
+    lsr     x5, x5, #16
+    orr     x4, x4, x5, lsl #16
+    str     w4, [x1], #OUT_BPP
+    sub     w2, w2, #1
+    b       fb_present_col_fade
+
 fb_present_next:
     add     w20, w20, #1
     sub     w22, w22, #1
     b       fb_present_row
 
 fb_present_done:
-    ldr     x23, [sp, #48]
+    ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #64
+    ldp     x29, x30, [sp], #80
     ret
 
 fb_clip_full:
@@ -1867,6 +1913,7 @@ anim_find_none:
 
 anim_apply:
     cmp     x0, #WIN_MAX
+    b.eq    anim_apply_screen
     b.hs    anim_apply_none
     cmp     w1, #ANIM_PROP_COUNT
     b.hs    anim_apply_none
@@ -1884,11 +1931,17 @@ anim_apply:
     b.eq    anim_apply_ty
     cmp     w20, #ANIM_PROP_FOCUS
     b.eq    anim_apply_focus
+    cmp     w20, #ANIM_PROP_ALPHA
+    b.eq    anim_apply_alpha
     str     x21, [x3, #WIN_TX]
     b       anim_apply_mark
 
 anim_apply_focus:
     str     x21, [x3, #WIN_FOCUS]
+    b       anim_apply_mark
+
+anim_apply_alpha:
+    str     x21, [x3, #WIN_ALPHA]
     b       anim_apply_mark
 
 anim_apply_ty:
@@ -1901,6 +1954,21 @@ anim_apply_mark:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
     ret
+
+anim_apply_screen:
+    cmp     w1, #ANIM_PROP_SCREEN
+    b.ne    anim_apply_none
+    asr     x2, x2, #16
+    cmp     x2, #0
+    csel    x2, xzr, x2, lt
+    mov     x3, #FADE_ONE
+    cmp     x2, x3
+    csel    x2, x3, x2, gt
+    ladr    x3, fb_fade
+    str     w2, [x3]
+    ladr    x3, fb_fade_dirty
+    mov     w4, #1
+    strb    w4, [x3]
 
 anim_apply_none:
     ret
@@ -2414,6 +2482,7 @@ win_add:
     mov     x12, #1
     lsl     x12, x12, #ANIM_SHIFT
     str     x12, [x11, #WIN_FOCUS]
+    str     xzr, [x11, #WIN_ALPHA]
     ladr    x12, win_list
     mov     x13, #WIN_SIZE
     mov     w14, #0
@@ -2467,6 +2536,46 @@ win_mix_loop:
 
 win_mix_done:
     mov     x0, x3
+    ret
+
+
+win_fade_all:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    ladr    x0, win_count
+    ldr     w20, [x0]
+    mov     w19, #0
+
+win_fade_all_loop:
+    cmp     w19, w20
+    b.hs    win_fade_all_done
+    mov     x0, x19
+    mov     w1, #ANIM_PROP_ALPHA
+    mov     x2, #0
+    mov     x3, #1
+    lsl     x3, x3, #ANIM_SHIFT
+    mov     w4, #WIN_FADE_MS
+    mov     w5, #ANIM_EASE_QUAD_OUT
+    bl      anim_start
+    add     w19, w19, #1
+    b       win_fade_all_loop
+
+win_fade_all_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+
+win_fade_color:
+    stp     x29, x30, [sp, #-16]!
+    mov     x1, x0
+    ldr     x2, [x19, #WIN_ALPHA]
+    asr     x2, x2, #16
+    ldr     x0, =COLOR_BACKGROUND
+    bl      win_mix_color
+    ldp     x29, x30, [sp], #16
     ret
 
 
@@ -2674,14 +2783,40 @@ win_drag_move:
     ladr    x9, win_list
     mov     x10, #WIN_SIZE
     madd    x9, x19, x10, x9
-    ldr     x0, [x9, #WIN_TX]
-    asr     x0, x0, #ANIM_SHIFT
-    sub     w20, w20, w0
+    ldr     w0, [x9, #WIN_X]
+    ldr     x1, [x9, #WIN_TX]
+    asr     x1, x1, #ANIM_SHIFT
+    add     w0, w0, w1
+    sub     w0, w0, w20
+    sxtw    x0, w0
+    lsl     x0, x0, #ANIM_SHIFT
+    str     x0, [x9, #WIN_TX]
     str     w20, [x9, #WIN_X]
-    ldr     x0, [x9, #WIN_TY]
-    asr     x0, x0, #ANIM_SHIFT
-    sub     w21, w21, w0
+    ldr     w1, [x9, #WIN_Y]
+    ldr     x2, [x9, #WIN_TY]
+    asr     x2, x2, #ANIM_SHIFT
+    add     w1, w1, w2
+    sub     w1, w1, w21
+    sxtw    x1, w1
+    lsl     x1, x1, #ANIM_SHIFT
+    str     x1, [x9, #WIN_TY]
     str     w21, [x9, #WIN_Y]
+    stp     x0, x1, [sp, #-16]!
+    mov     x0, x19
+    mov     w1, #ANIM_PROP_TX
+    ldr     x2, [sp]
+    mov     x3, #0
+    mov     w4, #WIN_DRAG_MS
+    mov     w5, #ANIM_EASE_QUAD_OUT
+    bl      anim_start
+    ldp     x2, x1, [sp], #16
+    mov     x0, x19
+    mov     x2, x1
+    mov     w1, #ANIM_PROP_TY
+    mov     x3, #0
+    mov     w4, #WIN_DRAG_MS
+    mov     w5, #ANIM_EASE_QUAD_OUT
+    bl      anim_start
     mov     w0, w19
     bl      win_dirty_rect
     b       win_drag_move_done
@@ -2823,7 +2958,13 @@ win_draw_one:
     mov     w1, w22
     ldr     w2, [x19, #WIN_W]
     ldr     w3, [x19, #WIN_H]
-    ldr     x4, =COLOR_WIN_BORDER
+    stp     x0, x1, [sp, #-32]!
+    stp     x2, x3, [sp, #16]
+    ldr     x0, =COLOR_WIN_BORDER
+    bl      win_fade_color
+    mov     x4, x0
+    ldp     x2, x3, [sp, #16]
+    ldp     x0, x1, [sp], #32
     bl      fb_fill_rect
     add     w0, w21, #WIN_BORDER
     add     w1, w22, #WIN_BORDER
@@ -2838,6 +2979,7 @@ win_draw_one:
     ldr     x2, [x19, #WIN_FOCUS]
     asr     x2, x2, #16
     bl      win_mix_color
+    bl      win_fade_color
     mov     x4, x0
     ldr     x2, [sp], #16
     ldp     x0, x1, [sp], #16
@@ -2849,13 +2991,25 @@ win_draw_one:
     sub     w2, w2, #(WIN_BORDER * 2)
     ldr     w3, [x19, #WIN_H]
     sub     w3, w3, #(WIN_BORDER * 2 + WIN_TITLEBAR_H)
-    ldr     x4, =COLOR_WIN_BODY
+    stp     x0, x1, [sp, #-32]!
+    stp     x2, x3, [sp, #16]
+    ldr     x0, =COLOR_WIN_BODY
+    bl      win_fade_color
+    mov     x4, x0
+    ldp     x2, x3, [sp, #16]
+    ldp     x0, x1, [sp], #32
     bl      fb_fill_rect
     add     w0, w21, #(WIN_BORDER + WIN_TEXT_PAD)
     add     w1, w22, #(WIN_BORDER + WIN_TITLEBAR_H - WIN_TEXT_PAD)
     ldr     x2, [x19, #WIN_TITLE]
     mov     w3, #WIN_TITLE_SIZE
-    ldr     x4, =COLOR_WIN_TEXT
+    stp     x0, x1, [sp, #-32]!
+    stp     x2, x3, [sp, #16]
+    ldr     x0, =COLOR_WIN_TEXT
+    bl      win_fade_color
+    mov     x4, x0
+    ldp     x2, x3, [sp, #16]
+    ldp     x0, x1, [sp], #32
     bl      font_text
     ldr     x23, [sp, #48]
     ldp     x21, x22, [sp, #32]
@@ -2933,6 +3087,7 @@ win_demo:
     mov     w3, #1040
     ladr    x4, win_title_3
     bl      win_add
+    bl      win_fade_all
     bl      win_draw_all
     bl      fb_present_all
     ldp     x29, x30, [sp], #16
@@ -5727,6 +5882,11 @@ console_drain_anim:
     bl      cursor_hide
     bl      win_repaint
     bl      cursor_show
+    ladr    x0, fb_fade_dirty
+    ldrb    w1, [x0]
+    cbz     w1, console_drain_blink
+    strb    wzr, [x0]
+    bl      fb_present_all
 
 console_drain_blink:
     ladr    x0, console_blink_pending
@@ -6688,6 +6848,14 @@ fwcfg_entry:
 .balign 16
 fb_config:
     .space  FB_CFG_SIZE
+
+.balign 4
+fb_fade:
+    .space  4
+
+.balign 4
+fb_fade_dirty:
+    .space  4
 
 .balign 4
 fb_clip:

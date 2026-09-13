@@ -1092,3 +1092,48 @@ Die Fensterstruktur trägt dafür `WIN_FOCUS`, einen Wert zwischen 0 und 1 in 32
 ### Was das noch nicht ist
 
 Dies ist ein Farbübergang, kein Fenster-Fade. Ein ganzes Fenster ein- oder auszublenden setzt voraus, dass es als zusammenhängendes Bild vorliegt und mit einer Gesamtdeckkraft gemischt wird. Das ist Schritt 5 des Zusatzplans und braucht den Compositor sowie eine Mischroutine, die das Zielalpha mitführt. Der vorhandene Pixelmischer setzt es fest auf vollständig deckend.
+
+---
+
+## Drei Übergänge: Start, Fenster, Ziehen
+
+### Aufblenden beim Start
+
+Der Bildschirm beginnt schwarz und blendet in 450 ms auf. Der Faktor sitzt an der günstigsten Stelle: in der Umwandlung von 64 auf 32 Bit, durch die ohnehin jeder Bildpunkt läuft. Damit kostet der Fade nur eine Multiplikation je Farbkanal.
+
+Damit der Normalbetrieb unberührt bleibt, gibt es **zwei Schleifen**. Steht der Faktor auf voll, läuft die bisherige ohne Multiplikation. Die Entscheidung fällt einmal je Bildzeile.
+
+Gemessen an der Fensterfläche, Zielwert R=200:
+
+| Zeitpunkt | R | G | B |
+|---|---:|---:|---:|
+| 0,32 s | 50 | 51 | 52 |
+| 0,45 s | 153 | 156 | 159 |
+| 0,62 s | 198 | 202 | 206 |
+| 1,2 s | 200 | 204 | 208 |
+
+### Fenster blenden auf
+
+Jedes neu angelegte Fenster startet bei Deckkraft null und blendet in 260 ms auf. Ein einzelnes Fenster über seinem Untergrund zu mischen hiesse, jeden seiner rund 1,1 Millionen Bildpunkte einzeln zu verrechnen. Stattdessen werden die **vier Fensterfarben** einmal gegen die Hintergrundfarbe gewichtet, danach wird normal gefüllt. Der Aufwand liegt damit bei vier Mischungen statt einer Million.
+
+Gemessen, Zielwert wieder R=200:
+
+| Zeitpunkt | R | G | B |
+|---|---:|---:|---:|
+| 0,36 s | 14 | 15 | 15 |
+| 0,48 s | 123 | 125 | 128 |
+| 0,62 s | 199 | 203 | 207 |
+
+**Die Grenze dieses Verfahrens:** Es mischt gegen die Hintergrundfarbe, nicht gegen das, was tatsächlich darunter liegt. Für ein Fenster über dem Desktop stimmt das Ergebnis. Über einem anderen Fenster wäre es genau genommen falsch. Ein echtes Ausblenden eines ganzen Fensters bleibt Schritt 5 mit dem Compositor.
+
+### Ziehen mit weichem Nachlauf
+
+Das Fenster klebte bisher hart an der Maus. Jetzt springt die **logische** Position sofort mit, und die **Darstellung** zieht in 90 Grad quadratisch ausklingend nach. Umgesetzt über die vorhandene Trennung: Beim Setzen der neuen Layout-Position wird die Verschiebung so nachgeführt, dass das Fenster optisch zunächst stehen bleibt, und danach eine Animation dieser Verschiebung auf null gestartet.
+
+Nicht maschinell nachweisbar, weil der QEMU-Monitor bei absoluten Geräten keine Mausbewegung einspeist.
+
+### Ein Fehler beim Bauen, wieder eine Textersetzung
+
+`win_fade_all` landete in `win_repaint_full` statt in `win_demo`. Damit startete das Aufblenden bei **jedem** Vollbild neu und blieb dauerhaft bei null, die Fenster waren unsichtbar. Sichtbar wurde es erst durch die Farbmessung: Die Fensterfläche zeigte exakt die Hintergrundfarbe R=16 G=32 B=48.
+
+Dazu ein Reihenfolgefehler: Während des Bildschirm-Fades sprang die Hauptschleife am Neuzeichnen vorbei und gab nur neu aus. Der Fenster-Fade lief in dieser Zeit ab, ohne je gezeichnet zu werden. Jetzt wird erst gezeichnet, dann bei Bedarf zusätzlich vollständig ausgegeben.
