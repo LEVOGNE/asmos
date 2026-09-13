@@ -265,7 +265,14 @@ Zusätzlich fertig: TrueType-Renderer als Systemschrift, Zeiger mit Alphakanal a
 
 ## Lizenzen
 
-Der Code ist vollständig selbst geschrieben. Die Icons sind abgeleitete Werke aus <b>Tabler Icons</b> (MIT-Lizenz, Copyright © 2020-2026 Paweł Kuna) und wurden mit <code>tools/iconc.py</code> in ein eigenes Vektorformat gewandelt. Die verwendete Schrift liegt nicht im Repository, weil ihre Lizenz nicht geklärt ist, nur der Code, der sie auswertet.
+Der Code ist vollständig selbst geschrieben.
+
+| Bestandteil | Herkunft |
+|---|---|
+| **Icons** | <b>Tabler Icons</b>, MIT-Lizenz, Copyright © 2020-2026 Paweł Kuna. Mit <code>tools/iconc.py</code> in ein eigenes Vektorformat gewandelt, die eingebetteten Daten sind abgeleitete Werke |
+| **Systemschrift** | <b>Babel Sans</b> von <b>Manfred Klein</b>, bezogen über dafont in der Kategorie Serifenlos, dort als kostenlos geführt. Der Kernel wertet die TrueType-Datei selbst aus |
+
+Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. <code>make disk</code> kopiert sie beim Erzeugen des Testdatenträgers vom Entwicklungsrechner. Die Angabe „kostenlos" ist eine Kategorie der Bezugsseite und kein formaler Lizenztext; wer die Schrift weitergeben will, sollte die Bedingungen des Autors prüfen.
 
 ---
 

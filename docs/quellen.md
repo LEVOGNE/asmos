@@ -1039,3 +1039,15 @@ Das Ziehen ist eingebaut, aber nicht maschinell nachweisbar: Der QEMU-Monitor ka
 ### Maschinelle Nachprüfung des neuen Codes
 
 Werte über Aufrufe hinweg in flüchtigen Registern: keine. Routinen mit unausgeglichenem Stack: keine. Alle drei Startkonfigurationen erreichen `BOOT OK`.
+
+---
+
+## Herkunft der Systemschrift
+
+**Babel Sans**, Autor **Manfred Klein**, bezogen über dafont in der Kategorie Serifenlos, dort als kostenlos geführt, vier Schriftdateien im Paket. Verwendet wird `BabelSans-Oblique.ttf` mit 50.516 Byte, 244 Glyphen, 1000 Einheiten je Geviert.
+
+Der Kernel wertet die Datei vollständig selbst aus: `head`, `maxp`, `loca`, `glyf`, `cmap` Format 4, `hmtx` und `hhea`. Auf dem Entwicklungsrechner wird nichts vorgerastert.
+
+Die Datei liegt nicht im Repository. `make disk` kopiert sie beim Erzeugen des Testdatenträgers aus `FONT_SRC`. Fehlt sie, meldet der Kernel `TTF UNAVAILABLE` und läuft ohne Schrift weiter.
+
+**Zur Einordnung:** „100 Prozent kostenlos" ist eine Kategorie der Bezugsseite, kein formaler Lizenztext wie MIT oder OFL. Für die Nutzung im Projekt reicht das; vor einer Weitergabe der Datei wären die Bedingungen des Autors zu prüfen. Deshalb bleibt sie vorerst ausserhalb des Repositoriums.
