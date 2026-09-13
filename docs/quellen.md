@@ -1243,3 +1243,48 @@ Das ist kein Absturz, aber ein unbrauchbares System nach einer Meldung, die nur 
 Beim ersten Versuch griff der Rückfall nicht, obwohl der Wert korrekt gesetzt wurde: Das Bild war zu diesem Zeitpunkt bereits ausgegeben, und niemand löste eine Neuausgabe aus. Der Fehler lag also nicht im Setzen, sondern im fehlenden Anstoss danach.
 
 Gegenprobe mit voller Liste: vorher R=0, nachher R=200, also normale Darstellung. Der Normalfall blendet unverändert auf, gemessen R=14 bei 0,36 s, R=121 bei 0,48 s, R=200 am Ende.
+
+---
+
+## Durchsicht der Gerätetreiber, offene Punkte der externen Analyse
+
+Diese Runde arbeitete die Treiberbefunde ab, die bisher nur vermerkt waren. **Drei bestätigt und behoben.**
+
+### Die vom Gerät gelieferte Deskriptor-Kennung war ungeprüft
+
+`virtio_input_poll` nahm die Kennung aus dem Rückgabering und verwendete sie unmittelbar als Index in den Ereignispuffer. Der Puffer fasst acht Einträge zu je acht Byte, also 64 Byte. Eine Kennung von 65535 hätte einen Zugriff **524.216 Byte hinter dem Puffer** ergeben.
+
+Bei einem korrekt arbeitenden Gerät tritt das nicht auf, bei einem fehlerhaften oder böswilligen schon. Die Kennung wird jetzt gegen die Warteschlangengrösse geprüft; bei Verstoss meldet der Kernel `VIRTIO UNGUELTIGE DESKRIPTOR-ID` und überspringt den Eintrag, statt ins Leere zu greifen.
+
+### Fehlende Barriere vor dem Veröffentlichen des Index
+
+Zwischen dem Eintragen des zurückgegebenen Deskriptors in den Ring und dem Erhöhen des Index fehlte `dmb ishst`. Die Virtio-Spezifikation verlangt diese Reihenfolge ausdrücklich: Das Gerät darf den neuen Index nicht sehen, bevor der Ringeintrag sichtbar ist. Auf einem einzelnen Kern unter QEMU folgenlos, auf echter Hardware mit eigenständigem Gerätezugriff nicht.
+
+### Die Geräteversion wurde ausgegeben, aber nicht geprüft
+
+`virtio_find` prüfte Kennung und Magic, nicht aber die MMIO-Version. Ein Gerät der Version 1 hat ein anderes Warteschlangenformat und wäre falsch angesteuert worden. Das Makefile erzwingt zwar Version 2, aber der Kernel verliess sich darauf.
+
+Gegenprobe ohne die erzwingende Option:
+
+    VIRTIO ALTE VERSION, Geraet uebersprungen
+    INPUT UNAVAILABLE
+    VIRTIO ALTE VERSION, Geraet uebersprungen
+    BLK UNAVAILABLE
+    BOOT OK
+
+Statt eines falsch angesteuerten Geräts also eine klare Meldung und ein weiterlaufendes System. Genau dieser Fall, virtio meldet Version 1, hat in der Projektgeschichte schon einmal Zeit gekostet.
+
+### Die Dateisystem-Geometrie war nur halb geprüft
+
+Die Sektoren je Cluster wurden nur gegen null geprüft. Die FAT-Spezifikation lässt ausschliesslich Zweierpotenzen von 1 bis 128 zu. Ein Wert wie 255 hätte die Clusterberechnung mit dem Faktor 255 mal 512 weitergeführt.
+
+Belegt mit einem Abbild, dessen Byte an Offset 0x0D auf 255 gesetzt wurde:
+
+| Stand | Ergebnis |
+|---|---|
+| vorher | `FAT res=... spf=... data=... root=...`, das Dateisystem wurde angenommen |
+| nachher | `FAT INVALID`, sauber abgelehnt, `BOOT OK` |
+
+### Noch offen aus derselben Liste
+
+Ein Zeitüberschreitung beim Blockgerät setzt nur den Basiszeiger auf null und beendet keinen laufenden Auftrag. `power_device_off` bestätigt den abgeschlossenen Rücksetzvorgang nicht. `fat_find` führt einen Lesefehler auf denselben Rückgabepfad wie „nicht gefunden" und filtert Verzeichnis- und Datenträgereinträge nicht.

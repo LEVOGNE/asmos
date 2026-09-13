@@ -157,6 +157,7 @@
 .equ VRING_USED_ELEM_SIZE,      8
 .equ VRING_IDX_MASK,            0xffff
 
+.equ VIRTIO_VERSION_MODERN,     2
 .equ VIRTIO_QUEUE_SIZE,         8
 .equ VIRTIO_QUEUE_MASK,         7
 .equ VIRTIO_EVENT_SIZE,         8
@@ -3607,8 +3608,18 @@ virtio_find_loop:
     ldr     w0, [x2, #VIRTIO_REG_DEVICE_ID]
     cmp     w0, w4
     b.ne    virtio_find_next
+    ldr     w0, [x2, #VIRTIO_REG_VERSION]
+    cmp     w0, #VIRTIO_VERSION_MODERN
+    b.ne    virtio_find_oldver
     mov     x0, x2
     ret
+
+virtio_find_oldver:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, virtio_oldver_msg
+    bl      uart_puts
+    ldp     x29, x30, [sp], #16
+    b       virtio_find_next
 
 virtio_find_next:
     add     x2, x2, #VIRTIO_MMIO_STRIDE
@@ -3771,6 +3782,11 @@ fat_init:
     b.ne    fat_init_fail
     ldrb    w0, [x19, #BPB_SEC_PER_CLUS]
     cbz     w0, fat_init_fail
+    cmp     w0, #128
+    b.hi    fat_init_fail
+    sub     w1, w0, #1
+    tst     w0, w1
+    b.ne    fat_init_fail
     str     w0, [x20, #FAT_SEC_PER_CLUS]
     mov     x0, x19
     mov     x1, #BPB_RESERVED
@@ -4332,6 +4348,8 @@ virtio_input_poll_loop:
     add     x1, x1, #VRING_USED_RING
     add     x1, x1, x0, lsl #3
     ldr     w0, [x1]
+    cmp     w0, #VIRTIO_QUEUE_SIZE
+    b.hs    virtio_input_poll_baddesc
     ladr    x1, virtio_events
     add     x1, x1, x0, lsl #3
     ldrh    w6, [x1]
@@ -4342,12 +4360,20 @@ virtio_input_poll_loop:
     and     w3, w2, #VIRTIO_QUEUE_MASK
     add     x4, x1, x3, lsl #1
     strh    w0, [x4, #VRING_AVAIL_RING]
+    dmb     ishst
     add     w2, w2, #1
     strh    w2, [x1, #VRING_AVAIL_IDX]
     mov     w0, w6
     mov     w1, w7
     mov     w2, w8
     bl      mouse_apply
+    add     w21, w21, #1
+    and     w21, w21, #VRING_IDX_MASK
+    b       virtio_input_poll_loop
+
+virtio_input_poll_baddesc:
+    ladr    x0, virtio_baddesc_msg
+    bl      uart_puts
     add     w21, w21, #1
     and     w21, w21, #VRING_IDX_MASK
     b       virtio_input_poll_loop
@@ -6527,6 +6553,12 @@ win_title_3:
     vec_entry 15, panic_entry
 
 .section .rodata
+
+virtio_baddesc_msg:
+    .asciz  "VIRTIO UNGUELTIGE DESKRIPTOR-ID\r\n"
+
+virtio_oldver_msg:
+    .asciz  "VIRTIO ALTE VERSION, Geraet uebersprungen\r\n"
 
 anim_noclock_msg:
     .asciz  "ANIM OHNE ZEITQUELLE, Endzustand direkt\r\n"
