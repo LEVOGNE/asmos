@@ -1213,3 +1213,33 @@ Fenster testweise auf `x = -400, y = -200` gesetzt, also über den linken und ob
 ### Maschinelle Nachprüfung
 
 Über alle 606 Marken: kein Wert überlebt einen Aufruf in einem flüchtigen Register, keine Routine mit unausgeglichenem Stack. Geprüft wird jetzt in **beiden** Betriebsarten, emuliert und beschleunigt.
+
+---
+
+## Durchsicht unter Last: der Rückfall bei voller Animationsliste fehlte
+
+### Was der Dauerlauf zeigte
+
+Achtzig Klicks in zwei Schüben, dazwischen alle Übergänge: keine Panik, keine Grenzmeldung, keine volle Liste, sauberes Bild am Ende. Der Betrieb selbst ist stabil.
+
+### Der Befund
+
+Der Zusatzplan verlangt für den Fall einer vollen Animationsliste: *Fehler zurückgeben, die Oberfläche kann den Endzustand direkt setzen.* Der erste Teil war umgesetzt, der zweite nicht. Die Aufrufer prüften den Rückgabewert gar nicht.
+
+Künstlich nachgestellt, indem alle 64 Plätze mit langlaufenden Animationen belegt wurden, bevor die Übergänge starten. Ergebnis: vier Meldungen `ANIM LISTE VOLL`, und der **Bildschirm blieb vollständig schwarz**, gemessen R=0 G=0 B=0. Der Helligkeitsfaktor stand auf null, weil das Aufblenden nie begann, und die Fenster hatten Deckkraft null.
+
+Das ist kein Absturz, aber ein unbrauchbares System nach einer Meldung, die nur im Protokoll steht.
+
+**Ein Hinweis zur Testkonstruktion:** Der erste Versuch schlug fehl, weil alle Füllanimationen dasselbe Ziel und dieselbe Eigenschaft hatten. `anim_start` findet eine laufende Animation derselben Eigenschaft am selben Ziel und setzt sie fort, deshalb blieb es bei einem einzigen Eintrag. Erst mit 64 verschiedenen Zielen war die Liste wirklich voll.
+
+### Behoben an drei Stellen
+
+| Stelle | Rückfall |
+|---|---|
+| Aufblenden des Bildschirms | Helligkeit sofort auf voll, **und neu ausgeben** |
+| Aufblenden der Fenster | Deckkraft des betroffenen Fensters sofort auf voll |
+| Fokuswechsel | Fokuswert des neuen obersten auf eins, der übrigen auf null |
+
+Beim ersten Versuch griff der Rückfall nicht, obwohl der Wert korrekt gesetzt wurde: Das Bild war zu diesem Zeitpunkt bereits ausgegeben, und niemand löste eine Neuausgabe aus. Der Fehler lag also nicht im Setzen, sondern im fehlenden Anstoss danach.
+
+Gegenprobe mit voller Liste: vorher R=0, nachher R=200, also normale Darstellung. Der Normalfall blendet unverändert auf, gemessen R=14 bei 0,36 s, R=121 bei 0,48 s, R=200 am Ende.

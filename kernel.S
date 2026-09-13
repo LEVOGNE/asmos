@@ -658,6 +658,13 @@ boot_el1_entry:
     mov     w4, #SCREEN_FADE_MS
     mov     w5, #ANIM_EASE_QUAD_OUT
     bl      anim_start
+    cbnz    x0, boot_fade_ok
+    ladr    x0, fb_fade
+    mov     w1, #FADE_ONE
+    str     w1, [x0]
+    bl      fb_present_all
+
+boot_fade_ok:
     bl      cursor_show
 .if FS_SELFTEST
     bl      blk_selftest
@@ -2559,6 +2566,15 @@ win_fade_all_loop:
     mov     w4, #WIN_FADE_MS
     mov     w5, #ANIM_EASE_QUAD_OUT
     bl      anim_start
+    cbnz    x0, win_fade_all_next
+    ladr    x0, win_list
+    mov     x1, #WIN_SIZE
+    madd    x0, x19, x1, x0
+    mov     x1, #1
+    lsl     x1, x1, #ANIM_SHIFT
+    str     x1, [x0, #WIN_ALPHA]
+
+win_fade_all_next:
     add     w19, w19, #1
     b       win_fade_all_loop
 
@@ -2886,6 +2902,13 @@ win_focus_start:
     mov     w4, #WIN_FOCUS_MS
     mov     w5, #ANIM_EASE_QUAD_OUT
     bl      anim_start
+    cbnz    x0, win_focus_top_ok
+    madd    x0, x19, x21, x20
+    mov     x1, #1
+    lsl     x1, x1, #ANIM_SHIFT
+    str     x1, [x0, #WIN_FOCUS]
+
+win_focus_top_ok:
     cbz     w19, win_focus_start_done
     mov     w0, #0
 
@@ -2903,6 +2926,12 @@ win_focus_start_loop:
     mov     w4, #WIN_FOCUS_MS
     mov     w5, #ANIM_EASE_QUAD_OUT
     bl      anim_start
+    cbnz    x0, win_focus_other_ok
+    ldr     x0, [sp]
+    madd    x0, x0, x21, x20
+    str     xzr, [x0, #WIN_FOCUS]
+
+win_focus_other_ok:
     ldp     x0, x1, [sp], #16
 
 win_focus_start_next:
