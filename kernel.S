@@ -76,7 +76,7 @@
 
 .equ TIMER_INTID,           27
 .equ TIMER_CTL_ENABLE,      1
-.equ TIMER_HZ,              60
+.equ TIMER_HZ,              30
 .equ BLINK_HZ,              2
 .equ BLINK_DIVIDER,         (TIMER_HZ / BLINK_HZ)
 .equ CLICK_WINDOW_MS,       400
@@ -125,6 +125,7 @@
 .equ VIRTIO_REG_INT_STATUS,     0x060
 .equ VIRTIO_REG_INT_ACK,        0x064
 .equ VIRTIO_REG_STATUS,         0x070
+.equ VIRTIO_REG_CONFIG_GEN,     0x0fc
 .equ VIRTIO_REG_DESC_LOW,       0x080
 .equ VIRTIO_REG_DESC_HIGH,      0x084
 .equ VIRTIO_REG_AVAIL_LOW,      0x090
@@ -182,6 +183,8 @@
 .equ BPB_SEC_PER_FAT32,     0x24
 .equ BPB_ROOT_CLUSTER,      0x2c
 .equ BPB_FAT_SZ16,          0x16
+.equ BPB_TOTAL16,           0x13
+.equ BPB_TOTAL32,           0x20
 .equ BPB_EXT_FLAGS,         0x28
 .equ EXT_FLAGS_NO_MIRROR,   0x80
 .equ EXT_FLAGS_ACTIVE,      0x0f
@@ -215,7 +218,9 @@
 .equ FONT_FILESIZE,         80
 .equ FONT_NUMH,             68
 .equ HHEA_NUM_HMETRICS,     34
-.equ FONT_STATE_SIZE,       88
+.equ FONT_LENGTHS,          88
+.equ FONT_CMAP4_END,        120
+.equ FONT_STATE_SIZE,       128
 
 .equ CMAP_NTABLES,          2
 .equ CMAP_RECORDS,          4
@@ -268,7 +273,9 @@
 .equ FAT_SECTORS,           12
 .equ FAT_DATA_START,        16
 .equ FAT_ROOT_CLUSTER,      20
-.equ FAT_STATE_SIZE,        24
+.equ FAT_CLUSTER_END,       24
+.equ FAT_TOTAL_SECTORS,      28
+.equ FAT_STATE_SIZE,        32
 
 .equ DIR_ENTRY_SIZE,        32
 .equ DIR_NAME_LEN,          11
@@ -522,9 +529,25 @@
 .equ TTF_TEST_Y,            420
 .equ TTF_TEST_ADVANCE,      52
 
-.macro ladr reg, sym
+.macro ladr_far reg, sym
     adrp    \reg, \sym
     add     \reg, \reg, :lo12:\sym
+.endm
+
+.macro ladr reg, sym
+.ifc \sym,fb_output
+    ladr_far \reg, \sym
+.else
+.ifc \sym,__bss_end
+    ladr_far \reg, \sym
+.else
+.ifc \sym,__image_end
+    ladr_far \reg, \sym
+.else
+    adr     \reg, \sym
+.endif
+.endif
+.endif
 .endm
 
 .macro irq_save
@@ -616,11 +639,39 @@ boot_from_el2:
 boot_el1_entry:
     ladr    x0, __stack_top
     mov     sp, x0
+    bl      uart_init
+    bl      vec_init
+    mov     x0, x21
+    bl      fdt_find_memory
+    mov     x2, #RAM_BASE_FIXED
+    cmp     x0, x2
+    b.ne    boot_memory_fail
+    adds    x22, x0, x1
+    b.cs    boot_memory_fail
+    ladr    x2, __image_end
+    cmp     x22, x2
+    b.lo    boot_memory_fail
+    ladr    x3, __bss_start
+    ldr     w4, [x21, #4]
+    rev     w4, w4
+    add     x5, x21, x4
+    cmp     x5, x3
+    b.ls    boot_memory_ready
+    cmp     x21, x2
+    b.hs    boot_memory_ready
+    sub     x22, x22, x4
+    bic     x22, x22, #7
+    cmp     x22, x2
+    b.lo    boot_memory_fail
+    mov     x0, x21
+    mov     x1, x22
+    mov     w2, w4
+    bl      mem_copy
+    mov     x21, x22
+boot_memory_ready:
     bl      boot_clear_bss
     ladr    x0, fdt_base
     str     x21, [x0]
-    bl      uart_init
-    bl      vec_init
     ladr    x0, boot_banner
     bl      uart_puts
     bl      anim_init
@@ -702,6 +753,11 @@ boot_fade_ok:
     bl      uart_puts
     b       console_run
 
+boot_memory_fail:
+    ladr    x0, mem_fail_msg
+    bl      uart_puts
+    b       boot_park
+
 boot_clear_bss:
     ladr    x0, __bss_start
     ladr    x1, __bss_end
@@ -709,7 +765,7 @@ boot_clear_bss:
 boot_clear_bss_loop:
     cmp     x0, x1
     b.hs    boot_clear_bss_done
-    str     xzr, [x0], #8
+    stp     xzr, xzr, [x0], #16
     b       boot_clear_bss_loop
 
 boot_clear_bss_done:
@@ -751,6 +807,7 @@ fwcfg_dma_error:
     ret
 
 fwcfg_dma_ok:
+    dmb     sy
     mov     w0, #0
     ret
 
@@ -877,92 +934,60 @@ fb_present_all:
     b       fb_present
 
 fb_present:
-    stp     x29, x30, [sp, #-80]!
-    stp     x19, x20, [sp, #16]
-    stp     x21, x22, [sp, #32]
-    stp     x23, x24, [sp, #48]
-    mov     w19, w0
-    mov     w20, w1
-    add     w21, w0, w2
-    add     w22, w1, w3
-    cmp     w19, wzr
-    csel    w19, wzr, w19, lt
-    cmp     w20, wzr
-    csel    w20, wzr, w20, lt
-    mov     w0, #FB_WIDTH
-    cmp     w21, w0
-    csel    w21, w0, w21, gt
-    mov     w0, #FB_HEIGHT
-    cmp     w22, w0
-    csel    w22, w0, w22, gt
-    subs    w21, w21, w19
-    b.le    fb_present_done
-    subs    w22, w22, w20
-    b.le    fb_present_done
-
+    stp     x29, x30, [sp, #-16]!
+    bl      fb_rect_screen
+    cbz     w2, fb_present_done
+    mov     x8, #FB_STRIDE
+    mov     x9, #OUT_STRIDE
+    ladr    x6, fb_render
+    madd    x6, x1, x8, x6
+    add     x6, x6, x0, lsl #3
+    ladr    x7, fb_output
+    madd    x7, x1, x9, x7
+    add     x7, x7, x0, lsl #2
+    ladr    x10, fb_fade
+    ldr     w10, [x10]
 fb_present_row:
-    cbz     w22, fb_present_done
-    mov     w0, w19
-    mov     w1, w20
-    bl      fb_pixel_addr
-    mov     x23, x0
-    mov     w0, w19
-    mov     w1, w20
-    bl      out_pixel_addr
-    mov     x1, x0
-    mov     w2, w21
-    ladr    x0, fb_fade
-    ldr     w24, [x0]
-    mov     w0, #FADE_ONE
-    cmp     w24, w0
+    mov     x11, x6
+    mov     x12, x7
+    mov     w13, w2
+    mov     w4, #FADE_ONE
+    cmp     w10, w4
     b.ne    fb_present_col_fade
-
 fb_present_col:
-    cbz     w2, fb_present_next
-    ldr     x3, [x23], #FB_BPP
-    lsr     x4, x3, #(CH_SHIFT_B + 8)
-    and     x4, x4, #0xff
-    lsr     x5, x3, #(CH_SHIFT_G + 8)
-    and     x5, x5, #0xff
-    orr     x4, x4, x5, lsl #8
-    lsr     x5, x3, #(CH_SHIFT_R + 8)
-    and     x5, x5, #0xff
-    orr     x4, x4, x5, lsl #16
-    str     w4, [x1], #OUT_BPP
-    sub     w2, w2, #1
-    b       fb_present_col
-
+    ldr     x14, [x11], #FB_BPP
+    ubfx    x4, x14, #(CH_SHIFT_B + 8), #8
+    ubfx    x5, x14, #(CH_SHIFT_G + 8), #8
+    orr     w4, w4, w5, lsl #8
+    ubfx    x5, x14, #(CH_SHIFT_R + 8), #8
+    orr     w4, w4, w5, lsl #16
+    str     w4, [x12], #OUT_BPP
+    subs    w13, w13, #1
+    b.ne    fb_present_col
+    b       fb_present_next
 fb_present_col_fade:
-    cbz     w2, fb_present_next
-    ldr     x3, [x23], #FB_BPP
-    lsr     x4, x3, #(CH_SHIFT_B + 8)
-    and     x4, x4, #0xff
-    mul     x4, x4, x24
-    lsr     x4, x4, #16
-    lsr     x5, x3, #(CH_SHIFT_G + 8)
-    and     x5, x5, #0xff
-    mul     x5, x5, x24
-    lsr     x5, x5, #16
-    orr     x4, x4, x5, lsl #8
-    lsr     x5, x3, #(CH_SHIFT_R + 8)
-    and     x5, x5, #0xff
-    mul     x5, x5, x24
-    lsr     x5, x5, #16
-    orr     x4, x4, x5, lsl #16
-    str     w4, [x1], #OUT_BPP
-    sub     w2, w2, #1
-    b       fb_present_col_fade
-
+    ldr     x14, [x11], #FB_BPP
+    ubfx    x4, x14, #(CH_SHIFT_B + 8), #8
+    mul     w4, w4, w10
+    lsr     w4, w4, #16
+    ubfx    x5, x14, #(CH_SHIFT_G + 8), #8
+    mul     w5, w5, w10
+    lsr     w5, w5, #16
+    orr     w4, w4, w5, lsl #8
+    ubfx    x5, x14, #(CH_SHIFT_R + 8), #8
+    mul     w5, w5, w10
+    lsr     w5, w5, #16
+    orr     w4, w4, w5, lsl #16
+    str     w4, [x12], #OUT_BPP
+    subs    w13, w13, #1
+    b.ne    fb_present_col_fade
 fb_present_next:
-    add     w20, w20, #1
-    sub     w22, w22, #1
-    b       fb_present_row
-
+    add     x6, x6, x8
+    add     x7, x7, x9
+    subs    w3, w3, #1
+    b.ne    fb_present_row
 fb_present_done:
-    ldp     x23, x24, [sp, #48]
-    ldp     x21, x22, [sp, #32]
-    ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #80
+    ldp     x29, x30, [sp], #16
     ret
 
 fb_clip_full:
@@ -976,23 +1001,48 @@ fb_clip_full:
     ret
 
 fb_clip_set:
+    stp     x29, x30, [sp, #-16]!
+    bl      fb_rect_screen
     ladr    x4, fb_clip
     add     w2, w0, w2
     add     w3, w1, w3
-    cmp     w0, wzr
-    csel    w0, wzr, w0, lt
-    cmp     w1, wzr
-    csel    w1, wzr, w1, lt
-    mov     w5, #FB_WIDTH
-    cmp     w2, w5
-    csel    w2, w5, w2, gt
-    mov     w5, #FB_HEIGHT
-    cmp     w3, w5
-    csel    w3, w5, w3, gt
-    str     w0, [x4, #CLIP_X]
-    str     w1, [x4, #CLIP_Y]
-    str     w2, [x4, #CLIP_X2]
-    str     w3, [x4, #CLIP_Y2]
+    stp     w0, w1, [x4]
+    stp     w2, w3, [x4, #8]
+    ldp     x29, x30, [sp], #16
+    ret
+
+fb_rect_screen:
+    mov     x10, #0
+    mov     x11, #0
+    mov     x12, #FB_WIDTH
+    mov     x13, #FB_HEIGHT
+fb_rect_clip:
+    cmp     w2, #0
+    b.le    fb_rect_empty
+    cmp     w3, #0
+    b.le    fb_rect_empty
+    sxtw    x0, w0
+    sxtw    x1, w1
+    add     x2, x0, w2, sxtw
+    add     x3, x1, w3, sxtw
+    cmp     x0, x10
+    csel    x0, x10, x0, lt
+    cmp     x1, x11
+    csel    x1, x11, x1, lt
+    cmp     x2, x12
+    csel    x2, x12, x2, gt
+    cmp     x3, x13
+    csel    x3, x13, x3, gt
+    subs    x2, x2, x0
+    b.le    fb_rect_empty
+    subs    x3, x3, x1
+    b.le    fb_rect_empty
+    ret
+fb_rect_empty:
+    mov     x0, #0
+    mov     x1, #0
+    mov     x2, #0
+    mov     x3, #0
     ret
 
 fb_pixel_addr:
@@ -1014,24 +1064,10 @@ out_pixel_addr:
 fb_fill_rect:
     stp     x29, x30, [sp, #-16]!
     ladr    x9, fb_clip
-    add     w2, w0, w2
-    add     w3, w1, w3
-    ldr     w10, [x9, #CLIP_X]
-    cmp     w0, w10
-    csel    w0, w10, w0, lt
-    ldr     w10, [x9, #CLIP_Y]
-    cmp     w1, w10
-    csel    w1, w10, w1, lt
-    ldr     w10, [x9, #CLIP_X2]
-    cmp     w2, w10
-    csel    w2, w10, w2, gt
-    ldr     w10, [x9, #CLIP_Y2]
-    cmp     w3, w10
-    csel    w3, w10, w3, gt
-    subs    w2, w2, w0
-    b.le    fb_fill_rect_done
-    subs    w3, w3, w1
-    b.le    fb_fill_rect_done
+    ldp     w10, w11, [x9]
+    ldp     w12, w13, [x9, #8]
+    bl      fb_rect_clip
+    cbz     w2, fb_fill_rect_done
 .if FB_COUNT_PIXELS
     ladr    x9, fb_pixel_count
     ldr     x10, [x9]
@@ -1044,14 +1080,16 @@ fb_fill_rect:
 
 fb_fill_rect_row:
     cbz     w3, fb_fill_rect_done
-    mov     w6, w2
+    lsr     w6, w2, #1
     mov     x7, x5
-
-fb_fill_rect_col:
-    cbz     w6, fb_fill_rect_next
+    tbz     w2, #0, fb_fill_rect_pairs
     str     x4, [x7], #FB_BPP
-    sub     w6, w6, #1
-    b       fb_fill_rect_col
+fb_fill_rect_pairs:
+    cbz     w6, fb_fill_rect_next
+fb_fill_rect_col:
+    stp     x4, x4, [x7], #(FB_BPP * 2)
+    subs    w6, w6, #1
+    b.ne    fb_fill_rect_col
 
 fb_fill_rect_next:
     mov     x6, #FB_STRIDE
@@ -1118,6 +1156,7 @@ cursor_show:
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
     stp     x23, x24, [sp, #48]
+    bl      cursor_hide
     ladr    x19, cursor_state
     bl      mouse_get_pos
     mov     w20, w0
@@ -1162,16 +1201,14 @@ cursor_show_draw_row:
     ladr    x21, cursor_alpha_rle
     add     x21, x21, x9, lsl #1
     mov     w7, #0
-    ladr    x24, cursor_white
-    mov     x9, #CURSOR_WHITE_STRIDE
-    madd    x24, x6, x9, x24
     mov     w4, #0
     mov     x5, x20
 
 cursor_show_draw_col:
     cmp     w4, w22
     b.hs    cursor_show_draw_next
-    cbnz    w7, cursor_show_draw_run
+    tst     w7, #0x7f
+    b.ne    cursor_show_draw_run
     ldrb    w7, [x21], #1
     ldrb    w8, [x21], #1
 
@@ -1181,14 +1218,7 @@ cursor_show_draw_run:
     cbz     w12, cursor_show_draw_skip
     mov     w13, #ALPHA_8_TO_16
     mul     w12, w12, w13
-    lsr     w13, w4, #3
-    ldrb    w13, [x24, w13, uxtw]
-    and     w14, w4, #7
-    mov     w15, #7
-    sub     w15, w15, w14
-    lsr     w13, w13, w15
-    tst     w13, #1
-    b.eq    cursor_show_draw_dark
+    tbz     w7, #7, cursor_show_draw_dark
     mov     x10, x12
     orr     x10, x10, x12, lsl #CH_SHIFT_G
     orr     x10, x10, x12, lsl #CH_SHIFT_B
@@ -1286,6 +1316,10 @@ dirty_all:
     ret
 
 dirty_add:
+    stp     x29, x30, [sp, #-16]!
+    bl      fb_rect_screen
+    ldp     x29, x30, [sp], #16
+    cbz     w2, dirty_add_done
     ladr    x9, dirty_count
     ldrb    w10, [x9, #4]
     cbnz    w10, dirty_add_done
@@ -1355,7 +1389,16 @@ dirty_add_overflow:
     strb    w10, [x9, #4]
     ret
 
+win_dirty_title:
+    mov     w3, #(WIN_BORDER * 2 + WIN_TITLEBAR_H)
+    b       win_dirty_bounds
 win_dirty_rect:
+    mov     w3, #0
+win_dirty_bounds:
+    ladr    x9, win_count
+    ldr     w9, [x9]
+    cmp     x0, x9
+    b.hs    dirty_add_done
     ladr    x9, win_list
     mov     x10, #WIN_SIZE
     madd    x9, x0, x10, x9
@@ -1368,7 +1411,9 @@ win_dirty_rect:
     asr     x11, x11, #ANIM_SHIFT
     add     w1, w1, w11
     ldr     w2, [x9, #WIN_W]
-    ldr     w3, [x9, #WIN_H]
+    ldr     w12, [x9, #WIN_H]
+    cmp     w3, #0
+    csel    w3, w12, w3, eq
     b       dirty_add
 
 win_repaint:
@@ -1424,6 +1469,10 @@ win_repaint_end:
     ret
 
 win_move:
+    ladr    x9, win_count
+    ldr     w9, [x9]
+    cmp     w0, w9
+    b.hs    win_move_invalid
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
@@ -1445,6 +1494,9 @@ win_move:
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
+    ret
+
+win_move_invalid:
     ret
 
 vg_sqrt:
@@ -1759,6 +1811,7 @@ anim_ms_no_clock:
     ret
 
 anim_slot_addr:
+    cbz     x0, anim_slot_none
     and     x1, x0, #ANIM_SLOT_MASK
     cmp     x1, #ANIM_MAX
     b.hs    anim_slot_none
@@ -1766,8 +1819,9 @@ anim_slot_addr:
     mov     x3, #ANIM_ENTRY_SIZE
     madd    x2, x1, x3, x2
     ldr     w3, [x2, #ANIM_GEN]
+    cbz     w3, anim_slot_none
     lsr     x4, x0, #16
-    cmp     w3, w4
+    cmp     x3, x4
     b.ne    anim_slot_none
     mov     x0, x2
     ret
@@ -1789,6 +1843,9 @@ anim_start:
     mov     x22, x3
     mov     w23, w4
     mov     w24, w5
+    cmp     w24, #ANIM_EASE_COUNT
+    b.hs    anim_start_invalid
+anim_start_valid:
     mov     x0, x19
     mov     w1, w20
     bl      anim_find_running
@@ -1847,6 +1904,13 @@ anim_start_slot:
 anim_start_fail:
     ladr    x0, anim_full_msg
     bl      uart_puts
+    b       anim_start_zero
+
+anim_start_invalid:
+    ladr    x0, anim_invalid_msg
+    bl      uart_puts
+
+anim_start_zero:
     mov     x0, #0
 
 anim_start_done:
@@ -1868,7 +1932,8 @@ anim_alloc_loop:
     mov     x3, #ANIM_ENTRY_SIZE
     madd    x3, x2, x3, x1
     ldrh    w4, [x3, #ANIM_STATE]
-    cbz     w4, anim_alloc_found
+    cmp     w4, #ANIM_RUNNING
+    b.ne    anim_alloc_found
     add     w2, w2, #1
     b       anim_alloc_loop
 
@@ -1877,10 +1942,8 @@ anim_alloc_found:
     ldr     w5, [x4]
     str     w5, [x3, #ANIM_GEN]
     add     w5, w5, #1
-    mov     w6, #ANIM_SLOT_MASK
-    cmp     w5, w6
-    b.lo    anim_alloc_gen_ok
-    mov     w5, #1
+    cmp     w5, #0
+    csinc   w5, w5, wzr, ne
 
 anim_alloc_gen_ok:
     str     w5, [x4]
@@ -1926,13 +1989,37 @@ anim_apply:
     b.hs    anim_apply_none
     cmp     w1, #ANIM_PROP_COUNT
     b.hs    anim_apply_none
+    cmp     w1, #ANIM_PROP_SCREEN
+    b.eq    anim_apply_none
+    ladr    x3, win_count
+    ldr     w3, [x3]
+    cmp     x0, x3
+    b.hs    anim_apply_none
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
     mov     x19, x0
     mov     w20, w1
     mov     x21, x2
+    ladr    x3, win_list
+    mov     x4, #WIN_SIZE
+    madd    x3, x19, x4, x3
+    cmp     w20, #ANIM_PROP_ALPHA
+    mov     w4, #3
+    csel    w4, w4, w20, eq
+    add     x3, x3, #WIN_TX
+    ldr     x4, [x3, x4, lsl #3]
+    cmp     x4, x21
+    b.eq    anim_apply_ret
+    cmp     w20, #ANIM_PROP_FOCUS
+    b.eq    anim_apply_mark_title
     bl      win_dirty_rect
+    b       anim_apply_write
+
+anim_apply_mark_title:
+    bl      win_dirty_title
+
+anim_apply_write:
     ladr    x3, win_list
     mov     x4, #WIN_SIZE
     madd    x3, x19, x4, x3
@@ -1958,7 +2045,15 @@ anim_apply_ty:
 
 anim_apply_mark:
     mov     x0, x19
+    cmp     w20, #ANIM_PROP_FOCUS
+    b.eq    anim_apply_mark_title2
     bl      win_dirty_rect
+    b       anim_apply_ret
+
+anim_apply_mark_title2:
+    bl      win_dirty_title
+
+anim_apply_ret:
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
@@ -2022,11 +2117,6 @@ anim_tick_loop:
     lsl     x0, x0, #ANIM_SHIFT
     cmp     x23, x0
     b.lo    anim_tick_next
-    ldr     x2, [x22, #ANIM_TO]
-    str     x2, [x22, #ANIM_VALUE]
-    ldr     x0, [x22, #ANIM_TARGET]
-    ldr     w1, [x22, #ANIM_PROP]
-    bl      anim_apply
     mov     w0, #ANIM_FINISHED
     strh    w0, [x22, #ANIM_STATE]
     ladr    x0, anim_active
@@ -2077,29 +2167,34 @@ anim_cancel:
     str     x19, [sp, #16]
     mov     w19, w1
     bl      anim_slot_addr
-    cbz     x0, anim_cancel_done
-    ldrh    w1, [x0, #ANIM_STATE]
-    cmp     w1, #ANIM_RUNNING
-    b.ne    anim_cancel_free
-    cmp     w19, #ANIM_STOP_END
-    b.ne    anim_cancel_active
-    ldr     x1, [x0, #ANIM_TO]
-    str     x1, [x0, #ANIM_VALUE]
-
-anim_cancel_active:
-    ladr    x1, anim_active
-    ldr     w2, [x1]
-    subs    w2, w2, #1
-    csel    w2, wzr, w2, mi
-    str     w2, [x1]
-
-anim_cancel_free:
-    mov     w1, #ANIM_FREE
-    strh    w1, [x0, #ANIM_STATE]
-
-anim_cancel_done:
+    mov     w1, w19
+    bl      anim_cancel_slot
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
+    ret
+
+anim_cancel_slot:
+    cbz     x0, anim_cancel_slot_done
+    ldrh    w2, [x0, #ANIM_STATE]
+    cmp     w2, #ANIM_RUNNING
+    b.ne    anim_cancel_slot_free
+    ladr    x3, anim_active
+    ldr     w2, [x3]
+    sub     w2, w2, #1
+    str     w2, [x3]
+    strh    wzr, [x0, #ANIM_STATE]
+    str     wzr, [x0, #ANIM_GEN]
+    cmp     w1, #ANIM_STOP_END
+    b.ne    anim_cancel_slot_done
+    ldr     x2, [x0, #ANIM_TO]
+    str     x2, [x0, #ANIM_VALUE]
+    ldr     w1, [x0, #ANIM_PROP]
+    ldr     x0, [x0, #ANIM_TARGET]
+    b       anim_apply
+anim_cancel_slot_free:
+    strh    wzr, [x0, #ANIM_STATE]
+    str     wzr, [x0, #ANIM_GEN]
+anim_cancel_slot_done:
     ret
 
 anim_cancel_target:
@@ -2132,6 +2227,7 @@ anim_cancel_target_loop:
 anim_cancel_target_free:
     mov     w1, #ANIM_FREE
     strh    w1, [x0, #ANIM_STATE]
+    str     wzr, [x0, #ANIM_GEN]
 
 anim_cancel_target_next:
     add     w21, w21, #1
@@ -2141,6 +2237,25 @@ anim_cancel_target_done:
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
+    ret
+
+anim_raise_targets:
+    ladr    x2, anim_list
+    mov     w3, #ANIM_MAX
+anim_raise_targets_loop:
+    ldr     x4, [x2, #ANIM_TARGET]
+    cmp     x4, x0
+    b.lo    anim_raise_targets_next
+    cmp     x4, x1
+    b.hi    anim_raise_targets_next
+    cmp     x4, x0
+    sub     x5, x4, #1
+    csel    x4, x1, x5, eq
+    str     x4, [x2, #ANIM_TARGET]
+anim_raise_targets_next:
+    add     x2, x2, #ANIM_ENTRY_SIZE
+    subs    w3, w3, #1
+    b.ne    anim_raise_targets_loop
     ret
 
 anim_count_active:
@@ -2165,15 +2280,25 @@ anim_qmul:
     ret
 
 anim_lerp:
-    stp     x29, x30, [sp, #-32]!
-    str     x19, [sp, #16]
-    mov     x19, x0
-    sub     x0, x1, x0
-    mov     x1, x2
-    bl      anim_qmul
-    add     x0, x19, x0
-    ldr     x19, [sp, #16]
-    ldp     x29, x30, [sp], #32
+    cbz     x2, anim_lerp_done
+    mov     x3, #0x100000000
+    cmp     x2, x3
+    b.hs    anim_lerp_target
+    sub     x3, x3, x2
+    mul     x4, x0, x3
+    smulh   x5, x0, x3
+    mul     x6, x1, x2
+    smulh   x7, x1, x2
+    adds    x4, x4, x6
+    adc     x5, x5, x7
+    mov     x6, #ANIM_HALF
+    adds    x4, x4, x6
+    adc     x5, x5, xzr
+    extr    x0, x5, x4, #ANIM_SHIFT
+anim_lerp_done:
+    ret
+anim_lerp_target:
+    mov     x0, x1
     ret
 
 anim_progress:
@@ -2274,8 +2399,9 @@ anim_to_raster:
 
 anim_to_raster_clamp:
     mov     x0, #0x7fffffff
+    mov     x2, #-2147483648
     cmp     x1, #0
-    csinv   x0, x0, xzr, eq
+    csel    x0, x0, x2, eq
     ret
 
 
@@ -2293,20 +2419,18 @@ power_wipe_done:
     ret
 
 power_device_off:
+    stp     x29, x30, [sp, #-16]!
     ladr    x0, virtio_input_base
-    ldr     x1, [x0]
-    cbz     x1, power_device_blk
-    str     wzr, [x1, #VIRTIO_REG_STATUS]
-    dsb     sy
-
+    ldr     x0, [x0]
+    cbz     x0, power_device_blk
+    bl      virtio_reset
 power_device_blk:
     ladr    x0, blk_base
-    ldr     x1, [x0]
-    cbz     x1, power_device_done
-    str     wzr, [x1, #VIRTIO_REG_STATUS]
-    dsb     sy
-
+    ldr     x0, [x0]
+    cbz     x0, power_device_done
+    bl      virtio_reset
 power_device_done:
+    ldp     x29, x30, [sp], #16
     ret
 
 power_off:
@@ -2679,6 +2803,7 @@ win_raise:
     sub     w1, w1, #1
     cmp     w0, w1
     b.hs    win_raise_done
+    bl      anim_raise_targets
     ladr    x19, win_list
     mov     x20, #WIN_SIZE
     madd    x21, x0, x20, x19
@@ -2790,6 +2915,16 @@ win_drag_move:
     bl      mouse_get_pos
     mov     w20, w0
     mov     w21, w1
+    mov     x0, x19
+    mov     w1, #ANIM_PROP_TX
+    bl      anim_find_running
+    mov     w1, #ANIM_STOP_HOLD
+    bl      anim_cancel_slot
+    mov     x0, x19
+    mov     w1, #ANIM_PROP_TY
+    bl      anim_find_running
+    mov     w1, #ANIM_STOP_HOLD
+    bl      anim_cancel_slot
     mov     w0, w19
     bl      win_dirty_rect
     ladr    x9, win_drag_dx
@@ -2817,43 +2952,14 @@ win_drag_move:
     ladr    x9, win_list
     mov     x10, #WIN_SIZE
     madd    x9, x19, x10, x9
-    ldr     w0, [x9, #WIN_X]
-    ldr     x1, [x9, #WIN_TX]
-    asr     x1, x1, #ANIM_SHIFT
-    add     w0, w0, w1
-    sub     w0, w0, w20
-    sxtw    x0, w0
-    lsl     x0, x0, #ANIM_SHIFT
-    str     x0, [x9, #WIN_TX]
+    str     xzr, [x9, #WIN_TX]
+    str     xzr, [x9, #WIN_TY]
     str     w20, [x9, #WIN_X]
-    ldr     w1, [x9, #WIN_Y]
-    ldr     x2, [x9, #WIN_TY]
-    asr     x2, x2, #ANIM_SHIFT
-    add     w1, w1, w2
-    sub     w1, w1, w21
-    sxtw    x1, w1
-    lsl     x1, x1, #ANIM_SHIFT
-    str     x1, [x9, #WIN_TY]
     str     w21, [x9, #WIN_Y]
-    stp     x0, x1, [sp, #-16]!
-    mov     x0, x19
-    mov     w1, #ANIM_PROP_TX
-    ldr     x2, [sp]
-    mov     x3, #0
-    mov     w4, #WIN_DRAG_MS
-    mov     w5, #ANIM_EASE_QUAD_OUT
-    bl      anim_start
-    ldp     x2, x1, [sp], #16
-    mov     x0, x19
-    mov     x2, x1
-    mov     w1, #ANIM_PROP_TY
-    mov     x3, #0
-    mov     w4, #WIN_DRAG_MS
-    mov     w5, #ANIM_EASE_QUAD_OUT
-    bl      anim_start
     mov     w0, w19
     bl      win_dirty_rect
     b       win_drag_move_done
+
 
 win_drag_move_stop:
     bl      win_drag_end
@@ -2962,14 +3068,13 @@ win_click:
     cmp     w21, w0
     b.eq    win_click_drag
     mov     w0, w21
-    bl      win_focus_cancel
-    mov     w0, w21
     bl      win_raise
     ladr    x9, win_count
     ldr     w21, [x9]
     sub     w21, w21, #1
     bl      win_focus_start
-    bl      dirty_all
+    mov     w0, w21
+    bl      win_dirty_rect
 
 win_click_drag:
     mov     w0, w21
@@ -3333,33 +3438,35 @@ pmm_alloc:
     ladr    x2, pmm_base
     ldr     x3, [x2, #8]
     mov     x4, #0
-
 pmm_alloc_loop:
     cmp     x4, x3
     b.hs    pmm_alloc_none
     lsr     x5, x4, #3
-    ldrb    w6, [x1, x5]
-    and     w7, w4, #7
-    lsr     w8, w6, w7
-    tst     w8, #1
-    b.eq    pmm_alloc_found
-    add     x4, x4, #1
+    ldr     x6, [x1, x5]
+    mvn     x7, x6
+    cbnz    x7, pmm_alloc_found
+    add     x4, x4, #64
     b       pmm_alloc_loop
-
 pmm_alloc_found:
-    mov     w8, #1
-    lsl     w8, w8, w7
-    orr     w6, w6, w8
-    strb    w6, [x1, x5]
+    rbit    x7, x7
+    clz     x7, x7
+    add     x4, x4, x7
+    cmp     x4, x3
+    b.hs    pmm_alloc_none
+    mov     x8, #1
+    lsl     x8, x8, x7
+    orr     x6, x6, x8
+    str     x6, [x1, x5]
     ldr     x0, [x2]
     add     x0, x0, x4, lsl #PAGE_SHIFT
     ret
-
 pmm_alloc_none:
     mov     x0, #0
     ret
 
 pmm_free:
+    tst     x0, #(PAGE_SIZE - 1)
+    b.ne    pmm_free_done
     ladr    x1, pmm_base
     ldr     x2, [x1]
     subs    x0, x0, x2
@@ -3493,23 +3600,50 @@ fdt_find_memory:
     stp     x29, x30, [sp, #-64]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
-    ladr    x0, fdt_base
-    ldr     x22, [x0]
+    stp     x23, x24, [sp, #48]
+    mov     x22, x0
     cbz     x22, fdt_find_memory_fail
+    tst     x22, #3
+    b.ne    fdt_find_memory_fail
     ldr     w0, [x22]
     rev     w0, w0
     ldr     w1, =FDT_MAGIC
     cmp     w0, w1
     b.ne    fdt_find_memory_fail
+    ldr     w1, [x22, #4]
+    rev     w1, w1
+    cmp     w1, #40
+    b.lo    fdt_find_memory_fail
     ldr     w0, [x22, #FDT_OFF_DT_STRUCT]
     rev     w0, w0
+    cmp     w0, #40
+    b.lo    fdt_find_memory_fail
+    tst     w0, #3
+    b.ne    fdt_find_memory_fail
+    ldr     w2, [x22, #36]
+    rev     w2, w2
+    add     x3, x0, x2
+    cmp     x3, x1
+    b.hi    fdt_find_memory_fail
     add     x19, x22, x0
+    add     x23, x22, x3
     ldr     w0, [x22, #FDT_OFF_DT_STRINGS]
     rev     w0, w0
+    cmp     w0, #40
+    b.lo    fdt_find_memory_fail
+    ldr     w2, [x22, #32]
+    rev     w2, w2
+    add     x3, x0, x2
+    cmp     x3, x1
+    b.hi    fdt_find_memory_fail
     add     x20, x22, x0
+    add     x24, x22, x3
     mov     w21, #0
 
 fdt_find_memory_loop:
+    add     x0, x19, #4
+    cmp     x0, x23
+    b.hi    fdt_find_memory_fail
     ldr     w0, [x19]
     rev     w0, w0
     cmp     w0, #FDT_TOKEN_BEGIN_NODE
@@ -3533,28 +3667,53 @@ fdt_find_memory_endnode:
 
 fdt_find_memory_node:
     add     x0, x19, #4
+    mov     x1, x23
+    bl      string_length_bounded
+    tbnz    x0, #63, fdt_find_memory_fail
+    mov     x22, x0
+    mov     w21, #0
+    cmp     x22, #6
+    b.lo    fdt_find_memory_node_next
+    add     x0, x19, #4
     ladr    x1, fdt_memory_name
     bl      string_starts_with
-    mov     w21, w0
-    add     x0, x19, #4
-    bl      string_length
-    add     x0, x0, #1
+    cbz     w0, fdt_find_memory_node_next
+    ldrb    w1, [x19, #10]
+    cmp     w1, #0
+    cset    w21, eq
+    cmp     w1, #64
+    cset    w0, eq
+    orr     w21, w21, w0
+fdt_find_memory_node_next:
+    add     x0, x22, #1
     bl      fdt_align4
     add     x19, x19, #4
     add     x19, x19, x0
     b       fdt_find_memory_loop
 
 fdt_find_memory_prop:
+    add     x0, x19, #FDT_PROP_HEADER_SIZE
+    cmp     x0, x23
+    b.hi    fdt_find_memory_fail
     ldr     w0, [x19, #4]
     rev     w0, w0
     mov     w22, w0
+    add     x1, x19, #FDT_PROP_HEADER_SIZE
+    add     x1, x1, x22
+    cmp     x1, x23
+    b.hi    fdt_find_memory_fail
     cbz     w21, fdt_find_memory_prop_skip
     ldr     w0, [x19, #8]
     rev     w0, w0
     add     x0, x20, x0
+    add     x1, x0, #4
+    cmp     x1, x24
+    b.hi    fdt_find_memory_fail
     ladr    x1, fdt_reg_name
     bl      string_equal
     cbz     w0, fdt_find_memory_prop_skip
+    cmp     w22, #16
+    b.lo    fdt_find_memory_fail
     ldr     w0, [x19, #FDT_PROP_HEADER_SIZE]
     rev     w0, w0
     ldr     w2, [x19, #(FDT_PROP_HEADER_SIZE + 4)]
@@ -3565,6 +3724,7 @@ fdt_find_memory_prop:
     ldr     w2, [x19, #(FDT_PROP_HEADER_SIZE + 12)]
     rev     w2, w2
     orr     x1, x2, x1, lsl #32
+    ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #64
@@ -3580,9 +3740,24 @@ fdt_find_memory_prop_skip:
 fdt_find_memory_fail:
     mov     x0, #0
     mov     x1, #0
+    ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #64
+    ret
+
+string_length_bounded:
+    mov     x2, x0
+string_length_bounded_loop:
+    cmp     x0, x1
+    b.hs    string_length_bounded_fail
+    ldrb    w3, [x0], #1
+    cbnz    w3, string_length_bounded_loop
+    sub     x0, x0, x2
+    sub     x0, x0, #1
+    ret
+string_length_bounded_fail:
+    mov     x0, #-1
     ret
 
 string_length:
@@ -3615,10 +3790,14 @@ virtio_find_loop:
     ret
 
 virtio_find_oldver:
-    stp     x29, x30, [sp, #-16]!
+    stp     x29, x30, [sp, #-48]!
+    stp     x2, x3, [sp, #16]
+    str     x4, [sp, #32]
     ladr    x0, virtio_oldver_msg
     bl      uart_puts
-    ldp     x29, x30, [sp], #16
+    ldr     x4, [sp, #32]
+    ldp     x2, x3, [sp, #16]
+    ldp     x29, x30, [sp], #48
     b       virtio_find_next
 
 virtio_find_next:
@@ -3628,13 +3807,29 @@ virtio_find_next:
     mov     x0, #0
     ret
 
+virtio_reset:
+    str     wzr, [x0, #VIRTIO_REG_STATUS]
+    dsb     sy
+    mov     x9, #BLK_TIMEOUT
+virtio_reset_wait:
+    ldr     w10, [x0, #VIRTIO_REG_STATUS]
+    cbz     w10, virtio_reset_done
+    subs    x9, x9, #1
+    b.ne    virtio_reset_wait
+    ladr    x0, virtio_reset_msg
+    bl      uart_puts
+    b       boot_park
+virtio_reset_done:
+    dsb     sy
+    ret
+
 virtio_setup:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
     mov     x19, x0
     mov     x20, x4
-    str     wzr, [x19, #VIRTIO_REG_STATUS]
+    bl      virtio_reset
     mov     w0, #VIRTIO_STATUS_ACK
     str     w0, [x19, #VIRTIO_REG_STATUS]
     mov     w0, #(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER)
@@ -3791,6 +3986,7 @@ fat_init:
     mov     x0, x19
     mov     x1, #BPB_RESERVED
     bl      mem_read16
+    cbz     w0, fat_init_fail
     str     w0, [x20, #FAT_START]
     ldrb    w1, [x19, #BPB_NUM_FATS]
     mov     x0, x19
@@ -3801,10 +3997,36 @@ fat_init:
     str     w0, [x20, #FAT_SECTORS]
     ldr     w1, [x20, #FAT_COUNT]
     cbz     w1, fat_init_fail
-    mul     w0, w0, w1
+    umull   x0, w0, w1
     ldr     w1, [x20, #FAT_START]
-    add     w0, w0, w1
+    add     x0, x0, x1
+    lsr     x1, x0, #32
+    cbnz    x1, fat_init_fail
     str     w0, [x20, #FAT_DATA_START]
+    mov     x0, x19
+    mov     x1, #BPB_TOTAL16
+    bl      mem_read16
+    cbnz    w0, fat_init_total
+    mov     x0, x19
+    mov     x1, #BPB_TOTAL32
+    bl      mem_read32
+fat_init_total:
+    str     w0, [x20, #FAT_TOTAL_SECTORS]
+    ldr     w1, [x20, #FAT_DATA_START]
+    subs    w0, w0, w1
+    b.ls    fat_init_fail
+    ldr     w1, [x20, #FAT_SEC_PER_CLUS]
+    udiv    w0, w0, w1
+    cbz     w0, fat_init_fail
+    add     x0, x0, #2
+    mov     w1, #0x0ffffff0
+    cmp     x0, x1
+    b.hi    fat_init_fail
+    ldr     w1, [x20, #FAT_SECTORS]
+    lsl     x1, x1, #7
+    cmp     x0, x1
+    b.hi    fat_init_fail
+    str     w0, [x20, #FAT_CLUSTER_END]
     mov     x0, x19
     mov     x1, #BPB_FAT_SZ16
     bl      mem_read16
@@ -3830,6 +4052,9 @@ fat_init_root:
     bl      mem_read32
     cmp     w0, #FAT_MIN_CLUSTER
     b.lo    fat_init_fail
+    ldr     w1, [x20, #FAT_CLUSTER_END]
+    cmp     w0, w1
+    b.hs    fat_init_fail
     str     w0, [x20, #FAT_ROOT_CLUSTER]
     ladr    x0, fat_label_res
     ldr     w1, [x20, #FAT_START]
@@ -3851,6 +4076,9 @@ fat_init_root:
     ret
 
 fat_init_fail:
+    ladr    x0, fat_state
+    stp     xzr, xzr, [x0]
+    stp     xzr, xzr, [x0, #16]
     ladr    x0, fat_fail_msg
     bl      uart_puts
     mov     w0, #1
@@ -3862,6 +4090,9 @@ fat_cluster_to_sector:
     cmp     w0, #FAT_MIN_CLUSTER
     b.lo    fat_cluster_invalid
     ladr    x1, fat_state
+    ldr     w2, [x1, #FAT_CLUSTER_END]
+    cmp     w0, w2
+    b.hs    fat_cluster_invalid
     ldr     w2, [x1, #FAT_SEC_PER_CLUS]
     sub     w0, w0, #2
     mul     w0, w0, w2
@@ -3873,84 +4104,126 @@ fat_cluster_invalid:
     mov     w0, #0
     ret
 
-fat_list_root:
-    stp     x29, x30, [sp, #-48]!
+fat_root_walk:
+    stp     x29, x30, [sp, #-80]!
     stp     x19, x20, [sp, #16]
-    str     x21, [sp, #32]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    mov     x23, x0
+    mov     x24, x1
     ladr    x0, fat_state
-    ldr     w0, [x0, #FAT_ROOT_CLUSTER]
+    ldr     w19, [x0, #FAT_ROOT_CLUSTER]
+    ldr     w25, [x0, #FAT_CLUSTER_END]
+fat_root_cluster:
+    subs    w25, w25, #1
+    b.ls    fat_root_error
+    mov     w0, w19
     bl      fat_cluster_to_sector
+    cbz     w0, fat_root_error
+    mov     w20, w0
+    ladr    x0, fat_state
+    ldr     w21, [x0, #FAT_SEC_PER_CLUS]
+fat_root_sector:
+    mov     w0, w20
     ladr    x1, blk_buffer
     bl      blk_read
-    cbnz    w0, fat_list_done
-    ladr    x19, blk_buffer
-    mov     w20, #(BLK_SECTOR_SIZE / DIR_ENTRY_SIZE)
-
-fat_list_loop:
-    cbz     w20, fat_list_done
-    ldrb    w0, [x19]
-    cbz     w0, fat_list_done
+    cbnz    w0, fat_root_error
+    ladr    x22, blk_buffer
+    mov     w26, #(BLK_SECTOR_SIZE / DIR_ENTRY_SIZE)
+fat_root_entry:
+    ldrb    w0, [x22]
+    cbz     w0, fat_root_done
     cmp     w0, #DIR_FREE
-    b.eq    fat_list_next
-    ldrb    w0, [x19, #DIR_ATTR]
-    cmp     w0, #DIR_ATTR_LFN
-    b.eq    fat_list_next
+    b.eq    fat_root_next
+    ldrb    w0, [x22, #DIR_ATTR]
     tst     w0, #DIR_ATTR_VOLUME
-    b.ne    fat_list_next
+    b.ne    fat_root_next
+    mov     x0, x22
+    mov     x1, x24
+    blr     x23
+    cbnz    w0, fat_root_done
+fat_root_next:
+    add     x22, x22, #DIR_ENTRY_SIZE
+    subs    w26, w26, #1
+    b.ne    fat_root_entry
+    add     w20, w20, #1
+    subs    w21, w21, #1
+    b.ne    fat_root_sector
+    mov     w0, w19
+    bl      fat_next_cluster
+    mov     w19, w0
+    mov     w1, #FAT_EOC
+    cmp     w0, w1
+    b.lo    fat_root_cluster
+    mov     w0, #0
+    b       fat_root_done
+fat_root_error:
+    mov     w0, #-1
+fat_root_done:
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #80
+    ret
+
+fat_list_root:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, fat_list_entry
+    mov     x1, #0
+    bl      fat_root_walk
+    tbz     w0, #31, fat_list_done
+    ladr    x0, fat_error_msg
+    bl      uart_puts
+fat_list_done:
+    ladr    x0, uart_newline
+    bl      uart_puts
+    ldp     x29, x30, [sp], #16
+    ret
+fat_list_entry:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     x19, x0
     ladr    x0, fat_entry_prefix
     bl      uart_puts
     mov     x0, x19
     mov     w1, #DIR_NAME_LEN
     bl      uart_putn
-    ladr    x0, fat_size_label
     mov     x0, x19
     mov     x1, #DIR_SIZE
     bl      mem_read32
     mov     x1, x0
     ladr    x0, fat_size_label
     bl      uart_field
-
-fat_list_next:
-    add     x19, x19, #DIR_ENTRY_SIZE
-    sub     w20, w20, #1
-    b       fat_list_loop
-
-fat_list_done:
-    ladr    x0, uart_newline
-    bl      uart_puts
-    ldr     x21, [sp, #32]
-    ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #48
+    mov     w0, #0
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
     ret
 
 fat_find:
+    stp     x29, x30, [sp, #-32]!
+    str     x0, [sp, #16]
+    str     xzr, [sp, #24]
+    ladr    x0, fat_find_entry
+    add     x1, sp, #16
+    bl      fat_root_walk
+    ldp     w1, w2, [sp, #24]
+    ldp     x29, x30, [sp], #32
+    ret
+fat_find_entry:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
-    mov     x21, x0
-    ladr    x0, fat_state
-    ldr     w0, [x0, #FAT_ROOT_CLUSTER]
-    bl      fat_cluster_to_sector
-    ladr    x1, blk_buffer
-    bl      blk_read
-    cbnz    w0, fat_find_none
-    ladr    x19, blk_buffer
-    mov     w20, #(BLK_SECTOR_SIZE / DIR_ENTRY_SIZE)
-
-fat_find_loop:
-    cbz     w20, fat_find_none
-    ldrb    w0, [x19]
-    cbz     w0, fat_find_none
-    cmp     w0, #DIR_FREE
-    b.eq    fat_find_next
-    ldrb    w0, [x19, #DIR_ATTR]
-    cmp     w0, #DIR_ATTR_LFN
-    b.eq    fat_find_next
-    mov     x0, x19
-    mov     x1, x21
+    mov     x19, x0
+    mov     x20, x1
+    ldrb    w1, [x19, #DIR_ATTR]
+    tst     w1, #DIR_ATTR_DIR
+    b.ne    fat_find_entry_none
+    ldr     x1, [x20]
     mov     w2, #DIR_NAME_LEN
     bl      mem_equal
-    cbz     w0, fat_find_next
+    cbz     w0, fat_find_entry_done
     mov     x0, x19
     mov     x1, #DIR_CLUSTER_HIGH
     bl      mem_read16
@@ -3959,26 +4232,16 @@ fat_find_loop:
     mov     x1, #DIR_CLUSTER_LOW
     bl      mem_read16
     orr     w21, w0, w21, lsl #16
+    and     w21, w21, #FAT_ENTRY_MASK
     mov     x0, x19
     mov     x1, #DIR_SIZE
     bl      mem_read32
-    mov     w2, w0
-    mov     w1, w21
+    stp     w21, w0, [x20, #8]
     mov     w0, #1
-    ldr     x21, [sp, #32]
-    ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #48
-    ret
-
-fat_find_next:
-    add     x19, x19, #DIR_ENTRY_SIZE
-    sub     w20, w20, #1
-    b       fat_find_loop
-
-fat_find_none:
+    b       fat_find_entry_done
+fat_find_entry_none:
     mov     w0, #0
-    mov     w1, #0
-    mov     w2, #0
+fat_find_entry_done:
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
@@ -4005,6 +4268,19 @@ mem_equal_no:
 
 mem_copy:
     cbz     w2, mem_copy_done
+    cmp     x1, x0
+    b.ls    mem_copy_loop
+    add     x3, x0, x2
+    cmp     x1, x3
+    b.hs    mem_copy_loop
+    add     x0, x0, x2
+    add     x1, x1, x2
+mem_copy_back:
+    ldrb    w3, [x0, #-1]!
+    strb    w3, [x1, #-1]!
+    subs    w2, w2, #1
+    b.ne    mem_copy_back
+    ret
 
 mem_copy_loop:
     ldrb    w3, [x0], #1
@@ -4024,7 +4300,8 @@ fat_load:
     mov     x24, x1
     mov     w25, w2
     bl      fat_find
-    cbz     w0, fat_load_fail
+    cmp     w0, #1
+    b.ne    fat_load_fail
     mov     w19, w1
     mov     w20, w2
     cmp     w20, w25
@@ -4095,6 +4372,7 @@ fat_cat:
     stp     x21, x22, [sp, #32]
     str     x23, [sp, #48]
     bl      fat_find
+    tbnz    w0, #31, fat_cat_error
     cbz     w0, fat_cat_missing
     mov     w19, w1
     mov     w20, w2
@@ -4210,6 +4488,21 @@ blk_read:
     ladr    x19, blk_base
     ldr     x19, [x19]
     cbz     x19, blk_read_fail
+    mov     w6, #8
+blk_read_capacity:
+    ldr     w2, [x19, #VIRTIO_REG_CONFIG_GEN]
+    ldr     w3, [x19, #VIRTIO_REG_CONFIG]
+    ldr     w4, [x19, #(VIRTIO_REG_CONFIG + 4)]
+    ldr     w5, [x19, #VIRTIO_REG_CONFIG_GEN]
+    cmp     w2, w5
+    b.eq    blk_read_capacity_ready
+    subs    w6, w6, #1
+    b.ne    blk_read_capacity
+    b       blk_read_fail
+blk_read_capacity_ready:
+    orr     x3, x3, x4, lsl #32
+    cmp     x0, x3
+    b.hs    blk_read_fail
     mov     x20, x1
     ladr    x1, blk_hdr
     mov     w2, #BLK_T_IN
@@ -4263,14 +4556,22 @@ blk_read_wait:
     b.ne    blk_read_ready
     subs    x20, x20, #1
     b.ne    blk_read_wait
-    ladr    x0, blk_base
-    str     xzr, [x0]
-    ladr    x0, blk_timeout_msg
-    bl      uart_puts
-    b       blk_read_fail
+    ladr    x20, blk_timeout_msg
+    b       blk_read_stop
 
 blk_read_ready:
     dmb     ishld
+    sub     w5, w5, w21
+    and     w5, w5, #VRING_IDX_MASK
+    cmp     w5, #1
+    b.ne    blk_read_bad
+    and     w21, w21, #(BLK_QUEUE_SIZE - 1)
+    add     x4, x4, x21, lsl #3
+    ldr     w5, [x4, #VRING_USED_RING]
+    cbnz    w5, blk_read_bad
+    ldr     w5, [x4, #(VRING_USED_RING + 4)]
+    cmp     w5, #(BLK_SECTOR_SIZE + 1)
+    b.ne    blk_read_bad
 
 blk_read_check:
     ldr     w0, [x19, #VIRTIO_REG_INT_STATUS]
@@ -4285,6 +4586,15 @@ blk_read_check:
     ldp     x29, x30, [sp], #48
     ret
 
+blk_read_bad:
+    ladr    x20, blk_read_fail_msg
+blk_read_stop:
+    mov     x0, x19
+    bl      virtio_reset
+    ladr    x0, blk_base
+    str     xzr, [x0]
+    mov     x0, x20
+    bl      uart_puts
 blk_read_fail:
     mov     w0, #1
     ldr     x21, [sp, #32]
@@ -4339,6 +4649,10 @@ virtio_input_poll:
     dmb     ishld
     ladr    x0, virtio_last_used
     ldrh    w21, [x0]
+    sub     w1, w20, w21
+    and     w1, w1, #VRING_IDX_MASK
+    cmp     w1, #VIRTIO_QUEUE_SIZE
+    b.hi    virtio_input_poll_baddesc
 
 virtio_input_poll_loop:
     cmp     w21, w20
@@ -4347,6 +4661,9 @@ virtio_input_poll_loop:
     ladr    x1, virtio_used
     add     x1, x1, #VRING_USED_RING
     add     x1, x1, x0, lsl #3
+    ldr     w2, [x1, #4]
+    cmp     w2, #VIRTIO_EVENT_SIZE
+    b.ne    virtio_input_poll_baddesc
     ldr     w0, [x1]
     cmp     w0, #VIRTIO_QUEUE_SIZE
     b.hs    virtio_input_poll_baddesc
@@ -4360,7 +4677,7 @@ virtio_input_poll_loop:
     and     w3, w2, #VIRTIO_QUEUE_MASK
     add     x4, x1, x3, lsl #1
     strh    w0, [x4, #VRING_AVAIL_RING]
-    dmb     ishst
+    dmb     ish
     add     w2, w2, #1
     strh    w2, [x1, #VRING_AVAIL_IDX]
     mov     w0, w6
@@ -4372,11 +4689,15 @@ virtio_input_poll_loop:
     b       virtio_input_poll_loop
 
 virtio_input_poll_baddesc:
+    mov     x0, x19
+    bl      virtio_reset
+    ladr    x0, virtio_input_base
+    str     xzr, [x0]
+    ladr    x0, virtio_input_intid
+    str     wzr, [x0]
     ladr    x0, virtio_baddesc_msg
     bl      uart_puts
-    add     w21, w21, #1
-    and     w21, w21, #VRING_IDX_MASK
-    b       virtio_input_poll_loop
+    b       virtio_input_poll_end
 
 virtio_input_poll_kick:
     ladr    x0, virtio_last_used
@@ -4627,15 +4948,20 @@ font_find_loop:
 
 font_find_hit:
     mov     x0, #FONT_TABLE_ENTRY
-    madd    x0, x22, x0, x20
-    add     x0, x0, #FONT_TABLE_DIR
-    add     x0, x0, #FONT_TAG_OFFSET
+    madd    x22, x22, x0, x20
+    add     x22, x22, #(FONT_TABLE_DIR + FONT_TAG_OFFSET)
+    mov     x0, x22
     bl      font_be32
-    ladr    x1, font_state
-    ldr     w2, [x1, #FONT_FILESIZE]
-    cmp     w0, w2
-    b.hs    font_find_none
-    add     x0, x20, x0
+    mov     w21, w0
+    add     x0, x22, #4
+    bl      font_be32
+    mov     w1, w0
+    add     x2, x21, x1
+    ladr    x0, font_state
+    ldr     w0, [x0, #FONT_FILESIZE]
+    cmp     x2, x0
+    b.hi    font_find_none
+    add     x0, x20, x21
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
@@ -4653,35 +4979,53 @@ font_find_cmap4:
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
     mov     x19, x0
+    add     x20, x0, x1
     add     x0, x19, #CMAP_NTABLES
     bl      font_be16
-    mov     w20, w0
-    mov     w21, #0
-
+    mov     w21, w0
+    add     x22, x19, #CMAP_RECORDS
+    add     x0, x22, x21, lsl #3
+    cmp     x0, x20
+    b.hi    font_find_cmap4_none
 font_find_cmap4_loop:
-    cmp     w21, w20
-    b.hs    font_find_cmap4_none
-    mov     x0, #CMAP_RECORD_SIZE
-    madd    x0, x21, x0, x19
-    add     x0, x0, #(CMAP_RECORDS + CMAP_REC_OFFSET)
+    cbz     w21, font_find_cmap4_none
+    add     x0, x22, #CMAP_REC_OFFSET
     bl      font_be32
-    add     x22, x19, x0
-    mov     x0, x22
+    add     x3, x19, x0
+    add     x0, x3, #4
+    cmp     x0, x20
+    b.hi    font_find_cmap4_none
+    mov     x0, x3
     bl      font_be16
     cmp     w0, #4
     b.eq    font_find_cmap4_hit
-    add     w21, w21, #1
+    add     x22, x22, #CMAP_RECORD_SIZE
+    sub     w21, w21, #1
     b       font_find_cmap4_loop
-
 font_find_cmap4_hit:
+    mov     x22, x3
+    add     x0, x22, #2
+    bl      font_be16
+    cmp     w0, #16
+    b.lo    font_find_cmap4_none
+    add     x21, x22, x0
+    cmp     x21, x20
+    b.hi    font_find_cmap4_none
+    add     x0, x22, #CMAP4_SEGX2
+    bl      font_be16
+    cbz     w0, font_find_cmap4_none
+    tbnz    w0, #0, font_find_cmap4_none
+    add     x0, x22, x0, lsl #2
+    add     x0, x0, #16
+    cmp     x0, x21
+    b.hi    font_find_cmap4_none
+    ladr    x0, font_state
+    str     x21, [x0, #FONT_CMAP4_END]
     mov     x0, x22
-    ldp     x21, x22, [sp, #32]
-    ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #48
-    ret
-
+    b       font_find_cmap4_done
 font_find_cmap4_none:
     mov     x0, #0
+font_find_cmap4_done:
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
@@ -4735,6 +5079,11 @@ font_glyph_found:
     add     x1, x27, x0
     sub     w2, w19, w25
     add     x0, x1, x2, lsl #1
+    add     x1, x0, #2
+    ladr    x2, font_state
+    ldr     x2, [x2, #FONT_CMAP4_END]
+    cmp     x1, x2
+    b.hi    font_glyph_index_none
     bl      font_be16
     cbz     w0, font_glyph_index_none
     add     w0, w0, w26
@@ -4821,6 +5170,10 @@ font_load_glyph:
     stp     x25, x26, [sp, #64]
     stp     x27, x28, [sp, #80]
     mov     w19, w0
+    ladr    x1, font_state
+    ldr     w1, [x1, #FONT_NGLYPHS]
+    cmp     w19, w1
+    b.hs    font_load_glyph_empty
     bl      font_glyph_offset
     mov     w20, w0
     add     w0, w19, #1
@@ -4830,12 +5183,14 @@ font_load_glyph:
     ladr    x0, font_state
     ldr     x22, [x0, #FONT_GLYF]
     add     x22, x22, x20
-    ldr     w1, [x0, #FONT_FILESIZE]
-    ladr    x0, font_buffer
-    add     x0, x0, x1
-    add     x1, x22, x21
-    cmp     x1, x0
+    ldr     w1, [x0, #(FONT_LENGTHS + 3 * 4)]
+    add     x2, x20, x21
+    cmp     x2, x1
     b.hi    font_load_glyph_outside
+    cmp     w21, #GLYF_ENDPTS
+    b.lo    font_load_glyph_outside
+    add     x21, x22, x21
+    str     x21, [sp, #96]
     mov     x0, x22
     bl      font_be16s
     tbnz    w0, #31, font_load_glyph_composite
@@ -4846,13 +5201,23 @@ font_load_glyph:
     ladr    x24, glyph_state
     str     w23, [x24, #GLYPH_NCONTOURS]
     add     x25, x22, #GLYF_ENDPTS
+    add     x0, x25, x23, lsl #1
+    add     x0, x0, #2
+    cmp     x0, x21
+    b.hi    font_load_glyph_outside
     mov     w26, #0
+    mov     w20, #0
 
 font_load_ends:
     cmp     w26, w23
     b.hs    font_load_ends_done
     add     x0, x25, x26, lsl #1
     bl      font_be16
+    cmp     w0, w20
+    b.lo    font_load_glyph_outside
+    cmp     w0, #GLYPH_MAX_POINTS
+    b.hs    font_load_glyph_outside
+    add     w20, w0, #1
     ladr    x1, glyph_ends
     strh    w0, [x1, x26, lsl #1]
     add     w26, w26, #1
@@ -4871,18 +5236,27 @@ font_load_ends_done:
     bl      font_be16
     add     x25, x25, #2
     add     x25, x25, x0
+    cmp     x25, x21
+    b.hi    font_load_glyph_outside
     ladr    x28, glyph_flags
     mov     w26, #0
 
 font_load_flags:
     cmp     w26, w27
     b.hs    font_load_flags_done
+    cmp     x25, x21
+    b.hs    font_load_glyph_outside
     ldrb    w0, [x25], #1
     strb    w0, [x28, w26, uxtw]
     add     w26, w26, #1
     tst     w0, #PT_REPEAT
     b.eq    font_load_flags
+    cmp     x25, x21
+    b.hs    font_load_glyph_outside
     ldrb    w1, [x25], #1
+    add     w2, w26, w1
+    cmp     w2, w27
+    b.hi    font_load_glyph_outside
 
 font_load_flags_repeat:
     cbz     w1, font_load_flags
@@ -4894,6 +5268,31 @@ font_load_flags_repeat:
     b       font_load_flags_repeat
 
 font_load_flags_done:
+    mov     w26, #0
+    mov     w20, #0
+font_load_coord_size:
+    cmp     w26, w27
+    b.hs    font_load_coord_check
+    ldrb    w0, [x28, x26]
+    mov     w1, #2
+    tst     w0, #PT_X_SAME
+    csel    w1, wzr, w1, ne
+    tst     w0, #PT_X_SHORT
+    mov     w2, #1
+    csel    w1, w2, w1, ne
+    add     w20, w20, w1
+    mov     w1, #2
+    tst     w0, #PT_Y_SAME
+    csel    w1, wzr, w1, ne
+    tst     w0, #PT_Y_SHORT
+    csel    w1, w2, w1, ne
+    add     w20, w20, w1
+    add     w26, w26, #1
+    b       font_load_coord_size
+font_load_coord_check:
+    add     x0, x25, x20
+    cmp     x0, x21
+    b.hi    font_load_glyph_outside
     mov     w26, #0
     mov     w20, #0
 
@@ -4964,8 +5363,6 @@ font_load_y_done:
     b       font_load_glyph_end
 
 font_load_glyph_composite:
-    bl      font_limit_report
-
 font_load_glyph_outside:
     bl      font_limit_report
 
@@ -5115,7 +5512,6 @@ vg_quad_loop:
     mul     w3, w1, w25
     lsl     w3, w3, #1
     mul     w4, w25, w25
-    mul     w6, w28, w28
     smull   x5, w19, w2
     smull   x6, w21, w3
     add     x5, x5, x6
@@ -5175,9 +5571,34 @@ font_build_contour:
     bl      font_point
     mov     w23, w0
     mov     w24, w1
+    str     w22, [sp, #124]
+    mov     w0, w21
+    bl      font_point_flag
+    add     w27, w21, #1
+    cbnz    w0, font_build_start_ready
+    mov     w0, w22
+    bl      font_point
+    mov     w25, w0
+    mov     w26, w1
+    mov     w0, w22
+    bl      font_point_flag
+    cbz     w0, font_build_start_mid
+    mov     w23, w25
+    mov     w24, w26
+    sub     w22, w22, #1
+    b       font_build_start_first
+font_build_start_mid:
+    sxtw    x0, w23
+    add     x0, x0, w25, sxtw
+    asr     x23, x0, #1
+    sxtw    x0, w24
+    add     x0, x0, w26, sxtw
+    asr     x24, x0, #1
+font_build_start_first:
+    mov     w27, w21
+font_build_start_ready:
     mov     w25, w23
     mov     w26, w24
-    add     w27, w21, #1
 
 font_build_point:
     cmp     w27, w22
@@ -5255,6 +5676,7 @@ font_build_close:
     mov     w2, w25
     mov     w3, w26
     bl      vg_edge_add
+    ldr     w22, [sp, #124]
     add     w21, w22, #1
     add     w20, w20, #1
     b       font_build_contour
@@ -5269,6 +5691,10 @@ font_build_end:
     ret
 
 fb_blend_pixel:
+    cbz     x1, fb_blend_done
+    mov     x4, #ALPHA_MAX
+    cmp     x1, x4
+    b.eq    fb_blend_opaque
     ldr     x3, [x0]
     mov     x4, #ALPHA_MAX
     sub     x5, x4, x1
@@ -5319,70 +5745,61 @@ fb_blend_pixel:
     orr     x6, x6, x9, lsl #CH_SHIFT_B
     orr     x6, x6, x4, lsl #CH_SHIFT_A
     str     x6, [x0]
+fb_blend_done:
+    ret
+fb_blend_opaque:
+    orr     x2, x2, #0xffff000000000000
+    str     x2, [x0]
     ret
 
 vg_cov_span:
+    ladr    x9, vg_cov_xmin
+    ldp     w2, w3, [x9]
+    lsl     w2, w2, #FIX_SHIFT
+    lsl     w3, w3, #FIX_SHIFT
+    cmp     w0, w2
+    csel    w0, w2, w0, lt
+    cmp     w1, w3
+    csel    w1, w3, w1, gt
+    cmp     w0, w1
+    b.ge    cov_span_done
+    sub     w0, w0, w2
+    sub     w1, w1, w2
+    lsr     w2, w0, #FIX_SHIFT
+    lsr     w3, w1, #FIX_SHIFT
     ladr    x9, vg_cov_buffer
-    ladr    x10, vg_cov_xmin
-    ldr     w10, [x10]
-    asr     w2, w0, #FIX_SHIFT
-    asr     w3, w1, #FIX_SHIFT
-    sub     w4, w2, w10
-    tbnz    w4, #31, cov_span_done
+    add     x9, x9, x2, lsl #2
     cmp     w2, w3
     b.ne    cov_span_multi
     sub     w5, w1, w0
-    cmp     w4, #VG_COV_MAX
-    b.hs    cov_span_done
-    ldr     w6, [x9, w4, uxtw #2]
-    add     w6, w6, w5
-    str     w6, [x9, w4, uxtw #2]
-    ret
+    b       cov_span_tail_add
 
 cov_span_multi:
-    sub     w6, w3, w10
-    cmp     w6, #VG_COV_MAX
-    b.lo    cov_span_multi_ok
-    stp     x29, x30, [sp, #-16]!
-    bl      font_limit_report
-    ldp     x29, x30, [sp], #16
-    ladr    x9, vg_cov_buffer
-    ladr    x10, vg_cov_xmin
-    ldr     w10, [x10]
-
-cov_span_multi_ok:
     and     w5, w0, #0xffff
     mov     w6, #FIX_ONE
     sub     w5, w6, w5
-    cmp     w4, #VG_COV_MAX
-    b.hs    cov_span_tail
-    ldr     w7, [x9, w4, uxtw #2]
+    ldr     w7, [x9]
     add     w7, w7, w5
-    str     w7, [x9, w4, uxtw #2]
+    str     w7, [x9], #4
+    add     w2, w2, #1
 
 cov_span_mid:
-    add     w2, w2, #1
     cmp     w2, w3
     b.hs    cov_span_tail
-    sub     w4, w2, w10
-    tbnz    w4, #31, cov_span_mid
-    cmp     w4, #VG_COV_MAX
-    b.hs    cov_span_tail
-    ldr     w7, [x9, w4, uxtw #2]
-    mov     w8, #FIX_ONE
-    add     w7, w7, w8
-    str     w7, [x9, w4, uxtw #2]
+    ldr     w7, [x9]
+    add     w7, w7, w6
+    str     w7, [x9], #4
+    add     w2, w2, #1
     b       cov_span_mid
 
 cov_span_tail:
-    sub     w4, w3, w10
-    tbnz    w4, #31, cov_span_done
-    cmp     w4, #VG_COV_MAX
-    b.hs    cov_span_done
     and     w5, w1, #0xffff
-    ldr     w7, [x9, w4, uxtw #2]
+    cbz     w5, cov_span_done
+
+cov_span_tail_add:
+    ldr     w7, [x9]
     add     w7, w7, w5
-    str     w7, [x9, w4, uxtw #2]
+    str     w7, [x9]
 
 cov_span_done:
     ret
@@ -5401,6 +5818,7 @@ vg_fill:
     mov     w21, #0x7fffffff
     mov     w22, #0x80000000
     mov     w9, #0x7fffffff
+    mov     w10, #0x80000000
     ladr    x23, vg_edge_list
     mov     w24, #0
 
@@ -5418,17 +5836,32 @@ font_fill_bounds:
     ldr     w1, [x0, #VG_EDGE_XTOP]
     cmp     w1, w9
     csel    w9, w1, w9, lt
+    cmp     w1, w10
+    csel    w10, w1, w10, gt
     ldr     w1, [x0, #VG_EDGE_XBOT]
     cmp     w1, w9
     csel    w9, w1, w9, lt
+    cmp     w1, w10
+    csel    w10, w1, w10, gt
     add     w24, w24, #1
     b       font_fill_bounds
 
 font_fill_rows:
     asr     w9, w9, #FIX_SHIFT
-    sub     w9, w9, #1
+    asr     w10, w10, #FIX_SHIFT
+    add     w10, w10, #1
+    ladr    x0, fb_clip
+    ldr     w1, [x0, #CLIP_X]
+    cmp     w9, w1
+    csel    w9, w1, w9, lt
+    ldr     w1, [x0, #CLIP_X2]
+    cmp     w10, w1
+    csel    w10, w1, w10, gt
+    subs    w1, w10, w9
+    b.le    font_fill_end
+    str     w1, [sp, #136]
     ladr    x0, vg_cov_xmin
-    str     w9, [x0]
+    stp     w9, w10, [x0]
     asr     w25, w21, #FIX_SHIFT
     asr     w26, w22, #FIX_SHIFT
     add     w26, w26, #1
@@ -5449,9 +5882,10 @@ font_fill_row:
     b.ge    font_fill_end
     ladr    x0, vg_cov_buffer
     mov     w1, #0
+    ldr     w2, [sp, #136]
 
 font_fill_clear:
-    cmp     w1, #VG_COV_MAX
+    cmp     w1, w2
     b.hs    font_fill_subs
     str     wzr, [x0, w1, uxtw #2]
     add     w1, w1, #1
@@ -5492,10 +5926,8 @@ font_fill_scan:
     ldr     w6, [x0, #VG_EDGE_DIR]
     cmp     w28, #VG_XS_MAX
     b.lo    font_fill_scan_store
-    stp     x0, x1, [sp, #128]
     bl      font_limit_report
-    ldp     x0, x1, [sp, #128]
-    b       font_fill_scan_next
+    b       font_fill_end
 
 font_fill_scan_store:
     ladr    x7, vg_xs_list
@@ -5586,9 +6018,10 @@ font_fill_emit:
     ladr    x0, vg_cov_xmin
     ldr     w11, [x0]
     mov     w12, #0
+    ldr     w24, [sp, #136]
 
 font_fill_emit_loop:
-    cmp     w12, #VG_COV_MAX
+    cmp     w12, w24
     b.hs    font_fill_next
     ladr    x0, vg_cov_buffer
     ldr     w13, [x0, w12, uxtw #2]
@@ -5598,10 +6031,6 @@ font_fill_emit_loop:
     cmp     w13, w0
     csel    w13, w0, w13, hi
     add     w14, w11, w12
-    tbnz    w14, #31, font_fill_emit_next
-    mov     w0, #FB_WIDTH
-    cmp     w14, w0
-    b.hs    font_fill_emit_next
     mov     w0, w14
     mov     w1, w25
     stp     x11, x12, [sp, #96]
@@ -5695,41 +6124,36 @@ font_text_done:
     ret
 
 font_init:
-    stp     x29, x30, [sp, #-32]!
-    str     x19, [sp, #16]
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    ladr    x19, font_state
+    mov     x0, x19
+    mov     x1, #FONT_STATE_SIZE
+    bl      power_wipe
     ladr    x0, font_name
     ladr    x1, font_buffer
     mov     w2, #FONT_MAX_SIZE
     bl      fat_load
-    cbz     w0, font_init_fail
-    ladr    x19, font_state
+    cmp     w0, #FONT_TABLE_DIR
+    b.lo    font_init_fail
     str     w0, [x19, #FONT_FILESIZE]
-    ladr    x0, font_tag_head
+    mov     w20, #0
+    ladr    x21, font_table_tags
+font_init_tables:
+    add     x0, x21, x20, lsl #2
     bl      font_find_table
     cbz     x0, font_init_fail
-    str     x0, [x19, #FONT_HEAD]
-    ladr    x0, font_tag_maxp
-    bl      font_find_table
-    cbz     x0, font_init_fail
-    str     x0, [x19, #FONT_MAXP]
-    ladr    x0, font_tag_loca
-    bl      font_find_table
-    cbz     x0, font_init_fail
-    str     x0, [x19, #FONT_LOCA]
-    ladr    x0, font_tag_glyf
-    bl      font_find_table
-    cbz     x0, font_init_fail
-    str     x0, [x19, #FONT_GLYF]
-    ladr    x0, font_tag_cmap
-    bl      font_find_table
-    cbz     x0, font_init_fail
-    str     x0, [x19, #FONT_CMAP]
-    ladr    x0, font_tag_hmtx
-    bl      font_find_table
-    str     x0, [x19, #FONT_HMTX]
-    ladr    x0, font_tag_hhea
-    bl      font_find_table
-    str     x0, [x19, #FONT_HHEA]
+    ladr    x2, font_table_min
+    ldrb    w2, [x2, x20]
+    cmp     w1, w2
+    b.lo    font_init_fail
+    str     x0, [x19, x20, lsl #3]
+    add     x2, x19, #FONT_LENGTHS
+    str     w1, [x2, x20, lsl #2]
+    add     w20, w20, #1
+    cmp     w20, #7
+    b.lo    font_init_tables
     ldr     x0, [x19, #FONT_HEAD]
     add     x0, x0, #HEAD_UNITS_PER_EM
     bl      font_be16
@@ -5738,23 +6162,36 @@ font_init:
     ldr     x0, [x19, #FONT_HEAD]
     add     x0, x0, #HEAD_INDEX_TO_LOC
     bl      font_be16
+    cmp     w0, #1
+    b.hi    font_init_fail
     str     w0, [x19, #FONT_LOCFMT]
     ldr     x0, [x19, #FONT_MAXP]
     add     x0, x0, #MAXP_NUM_GLYPHS
     bl      font_be16
+    cbz     w0, font_init_fail
     str     w0, [x19, #FONT_NGLYPHS]
+    add     w0, w0, #1
+    ldr     w1, [x19, #FONT_LOCFMT]
+    add     w1, w1, #1
+    lsl     w0, w0, w1
+    ldr     w1, [x19, #(FONT_LENGTHS + 2 * 4)]
+    cmp     w0, w1
+    b.hi    font_init_fail
     ldr     x0, [x19, #FONT_HHEA]
-    cbz     x0, font_init_nohhea
     add     x0, x0, #HHEA_NUM_HMETRICS
     bl      font_be16
+    cbz     w0, font_init_fail
+    ldr     w1, [x19, #FONT_NGLYPHS]
+    cmp     w0, w1
+    b.hi    font_init_fail
     str     w0, [x19, #FONT_NUMH]
-    b       font_init_cmap
-
-font_init_nohhea:
-    str     wzr, [x19, #FONT_NUMH]
-
-font_init_cmap:
+    add     w0, w0, w1
+    lsl     w0, w0, #1
+    ldr     w1, [x19, #(FONT_LENGTHS + 5 * 4)]
+    cmp     w0, w1
+    b.hi    font_init_fail
     ldr     x0, [x19, #FONT_CMAP]
+    ldr     w1, [x19, #(FONT_LENGTHS + 4 * 4)]
     bl      font_find_cmap4
     cbz     x0, font_init_fail
     str     x0, [x19, #FONT_CMAP4]
@@ -5769,16 +6206,20 @@ font_init_cmap:
     ladr    x0, uart_newline
     bl      uart_puts
     mov     w0, #1
-    ldr     x19, [sp, #16]
-    ldp     x29, x30, [sp], #32
-    ret
-
+    b       font_init_done
 font_init_fail:
+    mov     x0, x19
+    mov     x1, #FONT_STATE_SIZE
+    bl      power_wipe
+    ladr    x0, vg_scale
+    str     wzr, [x0]
     ladr    x0, font_fail_msg
     bl      uart_puts
     mov     w0, #0
-    ldr     x19, [sp, #16]
-    ldp     x29, x30, [sp], #32
+font_init_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
     ret
 
 gic_init:
@@ -5895,62 +6336,73 @@ console_run_awake:
     msr     daifclr, #DAIF_I
     b       console_run_loop
 
-console_drain:
-    stp     x29, x30, [sp, #-16]!
+console_take_flag:
+    mrs     x2, daif
+    msr     daifset, #DAIF_I
+    mov     x1, x0
+    ldrb    w0, [x1]
+    strb    wzr, [x1]
+    msr     daif, x2
+    ret
 
+click_take:
+    mrs     x3, daif
+    msr     daifset, #DAIF_I
+    ladr    x4, click_pending
+    ldrb    w0, [x4]
+    strb    wzr, [x4]
+    ladr    x4, click_x
+    ldr     w1, [x4]
+    ldr     w2, [x4, #4]
+    msr     daif, x3
+    ret
+
+console_drain:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    mov     w19, #0
+    mov     w20, #UART_RX_RING_SIZE
 console_drain_rx:
     bl      uart_rx_get
     cmn     w0, #1
     b.eq    console_drain_overflow
     bl      console_echo
-    b       console_drain_rx
-
+    subs    w20, w20, #1
+    b.ne    console_drain_rx
 console_drain_overflow:
     ladr    x0, uart_rx_overflow
-    ldrb    w1, [x0]
-    cbz     w1, console_drain_click
-    strb    wzr, [x0]
+    bl      console_take_flag
+    cbz     w0, console_drain_click
     ladr    x0, console_overflow_msg
     bl      uart_puts
-
 console_drain_click:
-    ladr    x0, click_pending
-    ldrb    w1, [x0]
-    cbz     w1, console_drain_mouse
-    strb    wzr, [x0]
-    ladr    x0, click_x
-    ldr     w1, [x0, #4]
-    ldr     w0, [x0]
+    bl      click_take
+    cbz     w0, console_drain_mouse
+    stp     w1, w2, [sp, #32]
+    mov     w0, w1
+    mov     w1, w2
     bl      power_hit
     cbnz    w0, console_drain_power
-    ladr    x0, click_x
-    ldr     w1, [x0, #4]
-    ldr     w0, [x0]
+    ldp     w0, w1, [sp, #32]
     bl      win_click
-    bl      cursor_hide
-    bl      win_repaint
-    bl      cursor_show
+    mov     w19, #1
     b       console_drain_mouse
-
 console_drain_power:
     bl      power_off
-
 console_drain_mouse:
     ladr    x0, mouse_dirty
-    ldrb    w1, [x0]
-    cbz     w1, console_drain_anim
-    strb    wzr, [x0]
+    bl      console_take_flag
+    cbz     w0, console_drain_anim
     bl      win_drag_move
-    bl      cursor_hide
-    bl      win_repaint
-    bl      cursor_show
-
+    mov     w19, #1
 console_drain_anim:
     ladr    x0, anim_pending
-    ldrb    w1, [x0]
-    cbz     w1, console_drain_blink
-    strb    wzr, [x0]
+    bl      console_take_flag
+    cbz     w0, console_drain_repaint
     bl      anim_tick
+    mov     w19, #1
+console_drain_repaint:
+    cbz     w19, console_drain_blink
     bl      cursor_hide
     bl      win_repaint
     bl      cursor_show
@@ -5959,16 +6411,14 @@ console_drain_anim:
     cbz     w1, console_drain_blink
     strb    wzr, [x0]
     bl      fb_present_all
-
 console_drain_blink:
     ladr    x0, console_blink_pending
-    ldrb    w1, [x0]
-    cbz     w1, console_drain_done
-    strb    wzr, [x0]
+    bl      console_take_flag
+    cbz     w0, console_drain_done
     bl      console_draw_cursor
-
 console_drain_done:
-    ldp     x29, x30, [sp], #16
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
     ret
 
 console_echo:
@@ -6244,6 +6694,8 @@ uart_rx_isr_done:
 mem_init:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
+    ladr    x0, fdt_base
+    ldr     x0, [x0]
     bl      fdt_find_memory
     cbz     x1, mem_init_fail
     ladr    x19, ram_base
@@ -6272,22 +6724,23 @@ mem_init_fail:
 fat_next_cluster:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
-    mov     w19, w0
-    lsl     w0, w0, #2
+    cmp     w0, #FAT_MIN_CLUSTER
+    b.lo    fat_next_cluster_end
     ladr    x1, fat_state
+    ldr     w2, [x1, #FAT_CLUSTER_END]
+    cmp     w0, w2
+    b.hs    fat_next_cluster_end
+    lsl     w0, w0, #2
     ldr     w2, [x1, #FAT_START]
-    lsr     w3, w0, #9
-    add     w3, w3, w2
     and     w19, w0, #(BLK_SECTOR_SIZE - 1)
-    mov     w0, w3
+    add     w0, w2, w0, lsr #9
     ladr    x1, fat_buffer
     bl      blk_read
     cbnz    w0, fat_next_cluster_end
     ladr    x0, fat_buffer
     mov     x1, x19
     bl      mem_read32
-    ldr     w1, =FAT_ENTRY_MASK
-    and     w0, w0, w1
+    and     w0, w0, #FAT_ENTRY_MASK
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
@@ -6316,6 +6769,9 @@ console_pending:
     ldrb    w2, [x1]
     cbnz    w2, console_pending_yes
     ladr    x1, console_blink_pending
+    ldrb    w2, [x1]
+    cbnz    w2, console_pending_yes
+    ladr    x1, anim_pending
     ldrb    w2, [x1]
     cbnz    w2, console_pending_yes
     mov     w0, #0
@@ -6563,6 +7019,12 @@ virtio_oldver_msg:
 anim_noclock_msg:
     .asciz  "ANIM OHNE ZEITQUELLE, Endzustand direkt\r\n"
 
+virtio_reset_msg:
+    .asciz  "VIRTIO RESET FEHLER, STOP\r\n"
+
+anim_invalid_msg:
+    .asciz  "ANIM UNGUELTIG\r\n"
+
 anim_full_msg:
     .asciz  "ANIM LISTE VOLL, Endzustand direkt setzen\r\n"
 
@@ -6604,6 +7066,11 @@ win_full_msg:
 
 
 
+
+font_table_tags:
+    .ascii  "headmaxplocaglyfcmaphmtxhhea"
+font_table_min:
+    .byte   54, 6, 2, 0, 4, 4, 36
 
 font_name:
     .ascii  "FONT    TTF"
@@ -6653,169 +7120,75 @@ fat_big_name:
 
 .balign 2
 cursor_alpha_rows:
-    .2byte  0, 1, 2, 8, 18, 28, 37, 48
-    .2byte  61, 74, 87, 100, 114, 128, 141, 154
-    .2byte  167, 180, 192, 203, 216, 227, 238, 249
-    .2byte  260, 272, 284, 298, 312, 326, 340, 351
-    .2byte  363, 374, 385, 396, 407, 417, 428, 439
-    .2byte  450, 461, 470, 478, 486, 493, 499, 500
+    .2byte  0, 1, 2, 8, 18, 28, 37, 48, 61, 74, 87, 100
+    .2byte  114, 128, 141, 154, 167, 180, 192, 203, 216, 227, 238, 249
+    .2byte  260, 272, 284, 298, 312, 326, 340, 351, 363, 374, 385, 396
+    .2byte  407, 417, 428, 439, 450, 461, 470, 478, 486, 493, 499, 500
 
 cursor_alpha_rle:
-    .byte   48, 0x00
-    .byte   48, 0x00
-    .byte   6, 0x00, 1, 0x0e, 1, 0x3c, 1, 0x3e, 1, 0x12, 38, 0x00
-    .byte   4, 0x00, 1, 0x09, 1, 0x93, 1, 0xf9, 2, 0xff, 1, 0xfc, 1, 0xb4, 1, 0x48
-    .byte   1, 0x01, 35, 0x00
-    .byte   3, 0x00, 1, 0x09, 1, 0xcb, 1, 0xff, 4, 0xe5, 2, 0xff, 1, 0xdb, 1, 0x71
-    .byte   1, 0x10, 33, 0x00
-    .byte   3, 0x00, 1, 0x94, 1, 0xff, 7, 0xe5, 2, 0xff, 1, 0xf5, 1, 0x9a, 1, 0x2f
-    .byte   31, 0x00
-    .byte   2, 0x00, 1, 0x0e, 1, 0xf9, 3, 0xe5, 3, 0xff, 5, 0xe5, 2, 0xff, 1, 0xc3
-    .byte   1, 0x58, 1, 0x05, 28, 0x00
-    .byte   2, 0x00, 1, 0x3c, 1, 0xff, 2, 0xe5, 1, 0xff, 2, 0xe5, 4, 0xff, 4, 0xe5
-    .byte   2, 0xff, 1, 0xe7, 1, 0x81, 1, 0x1a, 26, 0x00
-    .byte   2, 0x00, 1, 0x3e, 1, 0xff, 2, 0xe5, 1, 0xff, 5, 0xe5, 3, 0xff, 4, 0xe5
-    .byte   2, 0xff, 1, 0xfb, 1, 0xaa, 1, 0x3e, 24, 0x00
-    .byte   2, 0x00, 1, 0x13, 1, 0xfc, 2, 0xe5, 2, 0xff, 6, 0xe5, 3, 0xff, 5, 0xe5
-    .byte   2, 0xff, 1, 0xd2, 1, 0x67, 1, 0x0b, 21, 0x00
-    .byte   3, 0x00, 1, 0xb3, 1, 0xff, 2, 0xe5, 1, 0xff, 8, 0xe5, 4, 0xff, 4, 0xe5
-    .byte   2, 0xff, 1, 0xf0, 1, 0x90, 1, 0x26, 19, 0x00
-    .byte   3, 0x00, 1, 0x47, 1, 0xff, 2, 0xe5, 1, 0xff, 11, 0xe5, 3, 0xff, 5, 0xe5
-    .byte   1, 0xff, 1, 0xfe, 1, 0xb9, 1, 0x4e, 1, 0x02, 16, 0x00
-    .byte   3, 0x00, 1, 0x01, 1, 0xdb, 1, 0xff, 1, 0xe5, 2, 0xff, 12, 0xe5, 3, 0xff
-    .byte   5, 0xe5, 2, 0xff, 1, 0xdf, 1, 0x77, 1, 0x13, 14, 0x00
-    .byte   4, 0x00, 1, 0x70, 1, 0xff, 2, 0xe5, 1, 0xff, 14, 0xe5, 4, 0xff, 4, 0xe5
-    .byte   2, 0xff, 1, 0xf7, 1, 0xa0, 1, 0x34, 12, 0x00
-    .byte   4, 0x00, 1, 0x10, 1, 0xf5, 2, 0xe5, 2, 0xff, 16, 0xe5, 3, 0xff, 5, 0xe5
-    .byte   2, 0xff, 1, 0xc9, 1, 0x5d, 1, 0x07, 9, 0x00
-    .byte   5, 0x00, 1, 0x99, 1, 0xff, 2, 0xe5, 1, 0xff, 18, 0xe5, 4, 0xff, 4, 0xe5
-    .byte   2, 0xff, 1, 0xea, 1, 0x86, 1, 0x1e, 7, 0x00
-    .byte   5, 0x00, 1, 0x2e, 1, 0xff, 2, 0xe5, 2, 0xff, 20, 0xe5, 3, 0xff, 5, 0xe5
-    .byte   1, 0xff, 1, 0xfc, 1, 0xaf, 1, 0x37, 5, 0x00
-    .byte   6, 0x00, 1, 0xc3, 1, 0xff, 2, 0xe5, 1, 0xff, 22, 0xe5, 3, 0xff, 5, 0xe5
-    .byte   1, 0xff, 1, 0xfe, 1, 0x80, 4, 0x00
-    .byte   6, 0x00, 1, 0x57, 1, 0xff, 2, 0xe5, 1, 0xff, 24, 0xe5, 4, 0xff, 4, 0xe5
-    .byte   1, 0xff, 1, 0x5f, 3, 0x00
-    .byte   6, 0x00, 1, 0x05, 1, 0xe6, 1, 0xff, 1, 0xe5, 2, 0xff, 26, 0xe5, 3, 0xff
-    .byte   2, 0xe5, 1, 0xff, 1, 0xe1, 1, 0x01, 2, 0x00
-    .byte   7, 0x00, 1, 0x80, 1, 0xff, 2, 0xe5, 1, 0xff, 28, 0xe5, 2, 0xff, 2, 0xe5
-    .byte   1, 0xff, 1, 0x29, 2, 0x00
-    .byte   7, 0x00, 1, 0x1a, 1, 0xfb, 2, 0xe5, 2, 0xff, 28, 0xe5, 1, 0xff, 2, 0xe5
-    .byte   1, 0xff, 1, 0x3d, 2, 0x00
-    .byte   8, 0x00, 1, 0xa9, 1, 0xff, 2, 0xe5, 1, 0xff, 27, 0xe5, 2, 0xff, 2, 0xe5
-    .byte   1, 0xff, 1, 0x22, 2, 0x00
-    .byte   8, 0x00, 1, 0x3e, 1, 0xff, 2, 0xe5, 2, 0xff, 22, 0xe5, 5, 0xff, 2, 0xe5
-    .byte   1, 0xff, 1, 0xd5, 3, 0x00
-    .byte   9, 0x00, 1, 0xd2, 1, 0xff, 2, 0xe5, 1, 0xff, 18, 0xe5, 5, 0xff, 5, 0xe5
-    .byte   1, 0xff, 1, 0xfe, 1, 0x4c, 3, 0x00
-    .byte   9, 0x00, 1, 0x67, 1, 0xff, 2, 0xe5, 1, 0xff, 15, 0xe5, 4, 0xff, 7, 0xe5
-    .byte   2, 0xff, 1, 0xf9, 1, 0x67, 4, 0x00
-    .byte   9, 0x00, 1, 0x0b, 1, 0xf0, 2, 0xe5, 2, 0xff, 12, 0xe5, 3, 0xff, 7, 0xe5
-    .byte   2, 0xff, 1, 0xfe, 1, 0xd1, 1, 0x88, 1, 0x22, 5, 0x00
-    .byte   10, 0x00, 1, 0x90, 1, 0xff, 2, 0xe5, 1, 0xff, 11, 0xe5, 2, 0xff, 5, 0xe5
-    .byte   3, 0xff, 1, 0xe1, 1, 0x9d, 1, 0x59, 1, 0x16, 8, 0x00
-    .byte   10, 0x00, 1, 0x26, 1, 0xfe, 2, 0xe5, 2, 0xff, 10, 0xe5, 1, 0xff, 2, 0xe5
-    .byte   3, 0xff, 1, 0xee, 1, 0xac, 1, 0x69, 1, 0x25, 12, 0x00
-    .byte   11, 0x00, 1, 0xb9, 1, 0xff, 2, 0xe5, 1, 0xff, 9, 0xe5, 2, 0xff, 1, 0xe5
-    .byte   1, 0xff, 1, 0xee, 1, 0x7a, 1, 0x34, 1, 0x02, 15, 0x00
-    .byte   11, 0x00, 1, 0x4e, 1, 0xff, 2, 0xe5, 1, 0xff, 9, 0xe5, 1, 0xff, 2, 0xe5
-    .byte   1, 0xff, 1, 0x79, 18, 0x00
-    .byte   11, 0x00, 1, 0x02, 1, 0xe0, 1, 0xff, 1, 0xe5, 2, 0xff, 8, 0xe5, 1, 0xff
-    .byte   2, 0xe5, 1, 0xff, 1, 0x34, 18, 0x00
-    .byte   12, 0x00, 1, 0x77, 1, 0xff, 2, 0xe5, 1, 0xff, 7, 0xe5, 2, 0xff, 2, 0xe5
-    .byte   1, 0xed, 1, 0x02, 18, 0x00
-    .byte   12, 0x00, 1, 0x14, 1, 0xf7, 2, 0xe5, 2, 0xff, 6, 0xe5, 1, 0xff, 2, 0xe5
-    .byte   1, 0xff, 1, 0xac, 19, 0x00
-    .byte   13, 0x00, 1, 0xa0, 1, 0xff, 2, 0xe5, 1, 0xff, 6, 0xe5, 1, 0xff, 2, 0xe5
-    .byte   1, 0xff, 1, 0x68, 19, 0x00
-    .byte   13, 0x00, 1, 0x35, 1, 0xff, 2, 0xe5, 2, 0xff, 5, 0xe5, 1, 0xff, 2, 0xe5
-    .byte   1, 0xff, 1, 0x24, 19, 0x00
-    .byte   14, 0x00, 1, 0xc9, 1, 0xff, 2, 0xe5, 1, 0xff, 4, 0xe5, 2, 0xff, 2, 0xe5
-    .byte   1, 0xe0, 20, 0x00
-    .byte   14, 0x00, 1, 0x5e, 1, 0xff, 2, 0xe5, 1, 0xff, 4, 0xe5, 1, 0xff, 2, 0xe5
-    .byte   1, 0xff, 1, 0x9d, 20, 0x00
-    .byte   14, 0x00, 1, 0x07, 1, 0xeb, 2, 0xe5, 2, 0xff, 3, 0xe5, 1, 0xff, 2, 0xe5
-    .byte   1, 0xff, 1, 0x59, 20, 0x00
-    .byte   15, 0x00, 1, 0x87, 1, 0xff, 2, 0xe5, 1, 0xff, 3, 0xe5, 1, 0xff, 2, 0xe5
-    .byte   1, 0xfe, 1, 0x16, 20, 0x00
-    .byte   15, 0x00, 1, 0x1f, 1, 0xfc, 2, 0xe5, 2, 0xff, 1, 0xe5, 2, 0xff, 1, 0xe5
-    .byte   1, 0xff, 1, 0xd1, 21, 0x00
-    .byte   16, 0x00, 1, 0xb0, 1, 0xff, 2, 0xe5, 3, 0xff, 2, 0xe5, 1, 0xff, 1, 0x87
-    .byte   21, 0x00
-    .byte   16, 0x00, 1, 0x38, 1, 0xfe, 6, 0xe5, 1, 0xff, 1, 0xf9, 1, 0x22, 21, 0x00
-    .byte   17, 0x00, 1, 0x81, 2, 0xff, 3, 0xe5, 1, 0xff, 1, 0xfe, 1, 0x67, 22, 0x00
-    .byte   18, 0x00, 1, 0x60, 1, 0xe2, 3, 0xff, 1, 0xd6, 1, 0x4c, 23, 0x00
-    .byte   19, 0x00, 1, 0x01, 1, 0x2a, 1, 0x3e, 1, 0x22, 25, 0x00
-    .byte   48, 0x00
-    .byte   48, 0x00
-
-cursor_white:
-    .byte   0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-    .byte   0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-    .byte   0x03, 0xc0, 0x00, 0x00, 0x00, 0x00
-    .byte   0x0f, 0xf8, 0x00, 0x00, 0x00, 0x00
-    .byte   0x1c, 0x3e, 0x00, 0x00, 0x00, 0x00
-    .byte   0x18, 0x0f, 0x80, 0x00, 0x00, 0x00
-    .byte   0x31, 0xc1, 0xf0, 0x00, 0x00, 0x00
-    .byte   0x32, 0x78, 0x7c, 0x00, 0x00, 0x00
-    .byte   0x32, 0x0e, 0x1f, 0x00, 0x00, 0x00
-    .byte   0x33, 0x03, 0x83, 0xe0, 0x00, 0x00
-    .byte   0x19, 0x00, 0xf0, 0xf8, 0x00, 0x00
-    .byte   0x19, 0x00, 0x1c, 0x1f, 0x00, 0x00
-    .byte   0x1d, 0x80, 0x07, 0x07, 0xc0, 0x00
-    .byte   0x0c, 0x80, 0x01, 0xe1, 0xf0, 0x00
-    .byte   0x0c, 0xc0, 0x00, 0x38, 0x3e, 0x00
-    .byte   0x06, 0x40, 0x00, 0x0f, 0x0f, 0x80
-    .byte   0x06, 0x60, 0x00, 0x01, 0xc1, 0xe0
-    .byte   0x03, 0x20, 0x00, 0x00, 0x70, 0x70
-    .byte   0x03, 0x20, 0x00, 0x00, 0x1e, 0x18
-    .byte   0x03, 0xb0, 0x00, 0x00, 0x03, 0x9c
-    .byte   0x01, 0x90, 0x00, 0x00, 0x00, 0xcc
-    .byte   0x01, 0x98, 0x00, 0x00, 0x00, 0x4c
-    .byte   0x00, 0xc8, 0x00, 0x00, 0x00, 0xcc
-    .byte   0x00, 0xcc, 0x00, 0x00, 0x0f, 0x98
-    .byte   0x00, 0x64, 0x00, 0x00, 0xf8, 0x38
-    .byte   0x00, 0x64, 0x00, 0x07, 0x80, 0xf0
-    .byte   0x00, 0x66, 0x00, 0x1c, 0x07, 0xe0
-    .byte   0x00, 0x32, 0x00, 0x30, 0x7f, 0x00
-    .byte   0x00, 0x33, 0x00, 0x27, 0xf0, 0x00
-    .byte   0x00, 0x19, 0x00, 0x6f, 0x80, 0x00
-    .byte   0x00, 0x19, 0x00, 0x4c, 0x00, 0x00
-    .byte   0x00, 0x1d, 0x80, 0x4c, 0x00, 0x00
-    .byte   0x00, 0x0c, 0x80, 0xcc, 0x00, 0x00
-    .byte   0x00, 0x0c, 0xc0, 0x98, 0x00, 0x00
-    .byte   0x00, 0x06, 0x40, 0x98, 0x00, 0x00
-    .byte   0x00, 0x06, 0x60, 0x98, 0x00, 0x00
-    .byte   0x00, 0x03, 0x21, 0x90, 0x00, 0x00
-    .byte   0x00, 0x03, 0x21, 0x30, 0x00, 0x00
-    .byte   0x00, 0x03, 0x31, 0x30, 0x00, 0x00
-    .byte   0x00, 0x01, 0x91, 0x30, 0x00, 0x00
-    .byte   0x00, 0x01, 0x9b, 0x60, 0x00, 0x00
-    .byte   0x00, 0x00, 0xce, 0x60, 0x00, 0x00
-    .byte   0x00, 0x00, 0xc0, 0xe0, 0x00, 0x00
-    .byte   0x00, 0x00, 0x71, 0xc0, 0x00, 0x00
-    .byte   0x00, 0x00, 0x3f, 0x80, 0x00, 0x00
-    .byte   0x00, 0x00, 0x1e, 0x00, 0x00, 0x00
-    .byte   0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-    .byte   0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    .byte  48, 0, 48, 0, 6, 0, 129, 14, 129, 60, 129, 62, 129, 18, 38, 0
+    .byte  4, 0, 129, 9, 129, 147, 129, 249, 130, 255, 129, 252, 129, 180, 129, 72
+    .byte  129, 1, 35, 0, 3, 0, 129, 9, 129, 203, 129, 255, 4, 229, 130, 255
+    .byte  129, 219, 129, 113, 129, 16, 33, 0, 3, 0, 129, 148, 129, 255, 7, 229
+    .byte  130, 255, 129, 245, 129, 154, 129, 47, 31, 0, 2, 0, 129, 14, 129, 249
+    .byte  3, 229, 131, 255, 5, 229, 130, 255, 129, 195, 129, 88, 129, 5, 28, 0
+    .byte  2, 0, 129, 60, 129, 255, 2, 229, 129, 255, 2, 229, 132, 255, 4, 229
+    .byte  130, 255, 129, 231, 129, 129, 129, 26, 26, 0, 2, 0, 129, 62, 129, 255
+    .byte  2, 229, 129, 255, 5, 229, 131, 255, 4, 229, 130, 255, 129, 251, 129, 170
+    .byte  129, 62, 24, 0, 2, 0, 129, 19, 129, 252, 2, 229, 130, 255, 6, 229
+    .byte  131, 255, 5, 229, 130, 255, 129, 210, 129, 103, 129, 11, 21, 0, 3, 0
+    .byte  129, 179, 129, 255, 2, 229, 129, 255, 8, 229, 132, 255, 4, 229, 130, 255
+    .byte  129, 240, 129, 144, 129, 38, 19, 0, 3, 0, 129, 71, 129, 255, 2, 229
+    .byte  129, 255, 11, 229, 131, 255, 5, 229, 129, 255, 129, 254, 129, 185, 129, 78
+    .byte  129, 2, 16, 0, 3, 0, 129, 1, 129, 219, 129, 255, 1, 229, 130, 255
+    .byte  12, 229, 131, 255, 5, 229, 130, 255, 129, 223, 129, 119, 129, 19, 14, 0
+    .byte  4, 0, 129, 112, 129, 255, 2, 229, 129, 255, 14, 229, 132, 255, 4, 229
+    .byte  130, 255, 129, 247, 129, 160, 129, 52, 12, 0, 4, 0, 129, 16, 129, 245
+    .byte  2, 229, 130, 255, 16, 229, 131, 255, 5, 229, 130, 255, 129, 201, 129, 93
+    .byte  129, 7, 9, 0, 5, 0, 129, 153, 129, 255, 2, 229, 129, 255, 18, 229
+    .byte  132, 255, 4, 229, 130, 255, 129, 234, 129, 134, 129, 30, 7, 0, 5, 0
+    .byte  129, 46, 129, 255, 2, 229, 130, 255, 20, 229, 131, 255, 5, 229, 129, 255
+    .byte  129, 252, 129, 175, 129, 55, 5, 0, 6, 0, 129, 195, 129, 255, 2, 229
+    .byte  129, 255, 22, 229, 131, 255, 5, 229, 129, 255, 129, 254, 129, 128, 4, 0
+    .byte  6, 0, 129, 87, 129, 255, 2, 229, 129, 255, 24, 229, 132, 255, 4, 229
+    .byte  129, 255, 129, 95, 3, 0, 6, 0, 129, 5, 129, 230, 129, 255, 1, 229
+    .byte  130, 255, 26, 229, 131, 255, 2, 229, 129, 255, 129, 225, 129, 1, 2, 0
+    .byte  7, 0, 129, 128, 129, 255, 2, 229, 129, 255, 28, 229, 130, 255, 2, 229
+    .byte  129, 255, 129, 41, 2, 0, 7, 0, 129, 26, 129, 251, 2, 229, 130, 255
+    .byte  28, 229, 129, 255, 2, 229, 129, 255, 129, 61, 2, 0, 8, 0, 129, 169
+    .byte  129, 255, 2, 229, 129, 255, 27, 229, 130, 255, 2, 229, 129, 255, 129, 34
+    .byte  2, 0, 8, 0, 129, 62, 129, 255, 2, 229, 130, 255, 22, 229, 133, 255
+    .byte  2, 229, 129, 255, 129, 213, 3, 0, 9, 0, 129, 210, 129, 255, 2, 229
+    .byte  129, 255, 18, 229, 133, 255, 5, 229, 129, 255, 129, 254, 129, 76, 3, 0
+    .byte  9, 0, 129, 103, 129, 255, 2, 229, 129, 255, 15, 229, 132, 255, 7, 229
+    .byte  130, 255, 129, 249, 129, 103, 4, 0, 9, 0, 129, 11, 129, 240, 2, 229
+    .byte  130, 255, 12, 229, 131, 255, 7, 229, 130, 255, 129, 254, 129, 209, 129, 136
+    .byte  129, 34, 5, 0, 10, 0, 129, 144, 129, 255, 2, 229, 129, 255, 11, 229
+    .byte  130, 255, 5, 229, 131, 255, 129, 225, 129, 157, 129, 89, 129, 22, 8, 0
+    .byte  10, 0, 129, 38, 129, 254, 2, 229, 130, 255, 10, 229, 129, 255, 2, 229
+    .byte  131, 255, 129, 238, 129, 172, 129, 105, 129, 37, 12, 0, 11, 0, 129, 185
+    .byte  129, 255, 2, 229, 129, 255, 9, 229, 130, 255, 1, 229, 129, 255, 129, 238
+    .byte  129, 122, 129, 52, 129, 2, 15, 0, 11, 0, 129, 78, 129, 255, 2, 229
+    .byte  129, 255, 9, 229, 129, 255, 2, 229, 129, 255, 129, 121, 18, 0, 11, 0
+    .byte  129, 2, 129, 224, 129, 255, 1, 229, 130, 255, 8, 229, 129, 255, 2, 229
+    .byte  129, 255, 129, 52, 18, 0, 12, 0, 129, 119, 129, 255, 2, 229, 129, 255
+    .byte  7, 229, 130, 255, 2, 229, 129, 237, 129, 2, 18, 0, 12, 0, 129, 20
+    .byte  129, 247, 2, 229, 130, 255, 6, 229, 129, 255, 2, 229, 129, 255, 129, 172
+    .byte  19, 0, 13, 0, 129, 160, 129, 255, 2, 229, 129, 255, 6, 229, 129, 255
+    .byte  2, 229, 129, 255, 129, 104, 19, 0, 13, 0, 129, 53, 129, 255, 2, 229
+    .byte  130, 255, 5, 229, 129, 255, 2, 229, 129, 255, 129, 36, 19, 0, 14, 0
+    .byte  129, 201, 129, 255, 2, 229, 129, 255, 4, 229, 130, 255, 2, 229, 129, 224
+    .byte  20, 0, 14, 0, 129, 94, 129, 255, 2, 229, 129, 255, 4, 229, 129, 255
+    .byte  2, 229, 129, 255, 129, 157, 20, 0, 14, 0, 129, 7, 129, 235, 2, 229
+    .byte  130, 255, 3, 229, 129, 255, 2, 229, 129, 255, 129, 89, 20, 0, 15, 0
+    .byte  129, 135, 129, 255, 2, 229, 129, 255, 3, 229, 129, 255, 2, 229, 129, 254
+    .byte  129, 22, 20, 0, 15, 0, 129, 31, 129, 252, 2, 229, 130, 255, 1, 229
+    .byte  130, 255, 1, 229, 129, 255, 129, 209, 21, 0, 16, 0, 129, 176, 129, 255
+    .byte  2, 229, 131, 255, 2, 229, 129, 255, 129, 135, 21, 0, 16, 0, 129, 56
+    .byte  129, 254, 6, 229, 129, 255, 129, 249, 129, 34, 21, 0, 17, 0, 129, 129
+    .byte  130, 255, 3, 229, 129, 255, 129, 254, 129, 103, 22, 0, 18, 0, 129, 96
+    .byte  129, 226, 131, 255, 129, 214, 129, 76, 23, 0, 19, 0, 129, 1, 129, 42
+    .byte  129, 62, 129, 34, 25, 0, 48, 0, 48, 0
 
 .balign 8
 panic_names:
@@ -7141,6 +7514,8 @@ vg_xs_list:
 .balign 8
 vg_cov_xmin:
     .space  4
+vg_cov_xmax:
+    .space  4
 
 .balign 8
 vg_cov_buffer:
@@ -7202,10 +7577,12 @@ cursor_state:
 cursor_backing:
     .space  CURSOR_BACKING_SIZE
 
+.section .render, "aw", %nobits
 .balign 64
 fb_render:
     .space  FB_SIZE
 
+.section .framebuffer, "aw", %nobits
 .balign BLOCK_SIZE
 fb_output:
     .space  OUT_SIZE

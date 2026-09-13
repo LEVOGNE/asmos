@@ -1,4 +1,5 @@
 import sys, re, math, os
+import xml.etree.ElementTree as ET
 
 class Pfad:
     def __init__(self):
@@ -13,7 +14,7 @@ class Pfad:
         self.x=x; self.y=y; self.startx=x; self.starty=y
 
     def line(self,x,y):
-        if self.akt is None: self.move(x,y); return
+        if self.akt is None: self.move(self.x,self.y)
         self.akt.append(('L',x,y)); self.x=x; self.y=y
 
     def quad(self,cx,cy,x,y):
@@ -21,6 +22,7 @@ class Pfad:
         self.akt.append(('Q',cx,cy,x,y)); self.x=x; self.y=y
 
     def cubic(self,c1x,c1y,c2x,c2y,x,y):
+        if self.akt is None: self.move(self.x,self.y)
         x0,y0=self.x,self.y
         n=2 if self.laenge(x0,y0,c1x,c1y,c2x,c2y,x,y)<8 else 3
         for i in range(n):
@@ -39,6 +41,8 @@ class Pfad:
 
     def arc(self,rx,ry,rot,gross,sweep,x,y):
         x1,y1=self.x,self.y
+        if x1==x and y1==y: return
+        if self.akt is None: self.move(self.x,self.y)
         if rx==0 or ry==0: self.line(x,y); return
         rot=math.radians(rot)
         dx2=(x1-x)/2.0; dy2=(y1-y)/2.0
@@ -98,8 +102,15 @@ class SvgLeser:
     ZAHL=re.compile(r'[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?')
     def __init__(self,text):
         self.text=text
+        self.root=ET.fromstring(text)
+        for element in self.root.iter():
+            tag=element.tag.rsplit('}',1)[-1]
+            if tag not in {'svg','g','path','title','desc','metadata'}:
+                raise ValueError(f"SVG-Element nicht unterstuetzt: {tag}")
+            if 'transform' in element.attrib or 'style' in element.attrib:
+                raise ValueError("SVG transform/style wird noch nicht unterstuetzt")
     def pfade(self):
-        return re.findall(r'<path[^>]*\sd="([^"]*)"', self.text)
+        return [e.get('d','') for e in self.root.iter() if e.tag.rsplit('}',1)[-1]=='path']
     def strichbreite(self):
         m=re.search(r'stroke-width="([\d.]+)"', self.text)
         return float(m.group(1)) if m else 2.0
@@ -111,18 +122,28 @@ class SvgLeser:
 
 class Zerleger:
     def __init__(self,d):
-        self.tok=re.findall(r'[MmLlHhVvCcSsQqTtAaZz]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?', d)
+        muster=r'[MmLlHhVvCcSsQqTtAaZz]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?'
+        if re.sub(muster,'',d).strip(' ,\t\r\n'):
+            raise ValueError("Ungueltiger SVG-Pfad")
+        self.tok=re.findall(muster,d)
+        if self.tok and self.tok[0] not in ('M','m'):
+            raise ValueError("SVG-Pfad muss mit M beginnen")
         self.i=0
     def zahl(self):
-        v=float(self.tok[self.i]); self.i+=1; return v
+        if self.i>=len(self.tok): raise ValueError("Unvollstaendiger SVG-Befehl")
+        v=float(self.tok[self.i]); self.i+=1
+        if not math.isfinite(v): raise ValueError("Nicht endliche Koordinate")
+        return v
     def lauf(self,p):
         befehl=None
         letzter_c=None; letzter_q=None
         while self.i<len(self.tok):
             t=self.tok[self.i]
             if re.match(r'^[A-Za-z]$',t): befehl=t; self.i+=1
-            elif befehl is None: self.i+=1; continue
+            elif befehl is None: raise ValueError("Zahlen ohne SVG-Befehl")
             rel=befehl.islower(); b=befehl.upper()
+            if b not in ('C','S'): letzter_c=None
+            if b not in ('Q','T'): letzter_q=None
             bx,by=(p.x,p.y) if rel else (0,0)
             if b=='M':
                 x=self.zahl()+bx; y=self.zahl()+by; p.move(x,y)
@@ -151,10 +172,11 @@ class Zerleger:
                 p.quad(cx,cy,x,y); letzter_q=(cx,cy)
             elif b=='A':
                 rx=self.zahl(); ry=self.zahl(); rot=self.zahl()
-                gross=int(self.zahl()); sweep=int(self.zahl())
+                gross=self.zahl(); sweep=self.zahl()
+                if gross not in (0,1) or sweep not in (0,1): raise ValueError("Ungueltige Bogenflags")
                 x=self.zahl()+bx; y=self.zahl()+by
                 p.arc(rx,ry,rot,gross,sweep,x,y)
-            elif b=='Z': p.close()
+            elif b=='Z': p.close(); befehl=None
             else: self.i+=1
         p.abschluss()
 
@@ -165,7 +187,9 @@ class Icon:
         self.name=os.path.basename(pfad).replace('.svg','').replace('-','_')
         text=open(pfad).read()
         leser=SvgLeser(text)
-        self.breite=leser.viewbox()[2]
+        if leser.viewbox()!=(0,0,24,24):
+            raise ValueError("Der Konverter erwartet viewBox 0 0 24 24")
+        self.breite=24
         self.strich=leser.strichbreite()
         self.konturen=[]
         for d in leser.pfade():
@@ -179,11 +203,17 @@ class Icon:
         return sum(1 for k,_ in self.konturen for b in k if b[0]=='Q')
 
     def binaer(self,skala=8):
-        def k(v): return max(0,min(255,int(round((v + ICON_BIAS_UNITS) * skala))))
+        if skala!=8: raise ValueError("Das Kernel-Format verlangt Achtelneinheiten")
+        def k(v):
+            wert=int(round((v + ICON_BIAS_UNITS) * skala))
+            if not 0<=wert<=255: raise ValueError("Koordinate passt nicht in das Kernel-Format")
+            return wert
+        if len(self.konturen)>255: raise ValueError("Zu viele Konturen")
         aus=bytearray()
         aus.append(len(self.konturen))
         aus.append(int(round(self.strich*skala)))
         for befehle,geschlossen in self.konturen:
+            if not 1<=len(befehle)<=127: raise ValueError("Kontur braucht 1 bis 127 Befehle")
             aus.append(len(befehle) | (0x80 if geschlossen else 0))
             for b in befehle:
                 if b[0]=='M': aus+= bytes([1,k(b[1]),k(b[2])])

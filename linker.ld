@@ -25,13 +25,22 @@ SECTIONS
         *(.bss*)
         *(COMMON)
         . = ALIGN(16);
-        __bss_end = .;
     }
 
     . = ALIGN(16);
     . += 0x4000;
     __stack_top = .;
 
+    .render (NOLOAD) : ALIGN(64) {
+        *(.render)
+    }
+
+    .framebuffer (NOLOAD) : ALIGN(0x200000) {
+        *(.framebuffer)
+        . = ALIGN(0x200000);
+    }
+
+    __bss_end = .;
     __image_end = .;
 
     /DISCARD/ : {

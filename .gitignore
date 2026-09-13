@@ -4,6 +4,7 @@
 *.elf
 *.bin
 *.img
+*.ttf
 *.map
 *.lst
 *.dtb

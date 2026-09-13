@@ -1288,3 +1288,48 @@ Belegt mit einem Abbild, dessen Byte an Offset 0x0D auf 255 gesetzt wurde:
 ### Noch offen aus derselben Liste
 
 Ein Zeitüberschreitung beim Blockgerät setzt nur den Basiszeiger auf null und beendet keinen laufenden Auftrag. `power_device_off` bestätigt den abgeschlossenen Rücksetzvorgang nicht. `fat_find` führt einen Lesefehler auf denselben Rückgabepfad wie „nicht gefunden" und filtert Verzeichnis- und Datenträgereinträge nicht.
+
+---
+
+## Durchsicht nach der externen Überarbeitung
+
+Der Kernel wurde extern überarbeitet, rund 1.125 eingefügte und 661 entfernte Zeilen. Ich habe den Stand gegen alle Prüfungen laufen lassen, die in diesem Projekt aufgebaut wurden.
+
+### Was Bestand hat
+
+| Prüfung | Ergebnis |
+|---|---|
+| Drei Startkonfigurationen | laufen |
+| Beschädigte Schriften: Tabellenzahl, Tabellenoffset, verbogener Glyphzeiger | alle drei weiterhin abgefangen |
+| Verbogene Dateisystem-Geometrie | `FAT INVALID` |
+| Gerät mit alter Schnittstellenversion | übersprungen |
+| Datenfluss über 662 Marken, Stackbilanz | ohne Befund |
+| Abbild | 24.576 statt 24.800 Byte |
+
+Der Stack liegt jetzt nachweislich **vor** den Bildpuffern, also ausserhalb des nicht zwischengespeicherten Bereichs. Das Wurzelverzeichnis wird über die ersten sechzehn Einträge hinaus gelesen: Eine Schrift hinter dreissig anderen Dateien wird gefunden.
+
+### Zur Geschwindigkeit: weniger als der Bericht nahelegt
+
+Fair gemessen, also bei voller Helligkeit und nicht während des Aufblendens:
+
+| Schritt | vorher | jetzt |
+|---|---:|---:|
+| Vollbild zeichnen | 11,65 ms | 9,50 ms |
+| Ausgabe umwandeln | 12,54 ms | 13,86 ms |
+| zusammen | 24,19 ms | 23,36 ms |
+
+Der Rasterizer ist also spürbar schneller, die Ausgabe etwas langsamer, in Summe drei Prozent besser. Der Gewinn dürfte bei textlastigen Bereichen deutlich grösser ausfallen als in diesem Testbild.
+
+### Der dringendste Fund hat nichts mit dem Kernel zu tun
+
+**Die Quellschrift war von der Festplatte verschwunden.** Der Pfad in `FONT_SRC` zeigte auf ein Verzeichnis, das es nicht mehr gibt. Die einzige verbliebene Kopie lag **im Datenträgerabbild**, das `make distclean` löscht. Da die Schrift aus Lizenzgründen nicht im Repository liegt, wäre sie damit unwiederbringlich weg gewesen.
+
+Gesichert unter `~/Desktop/asmos-assets/`, 50.516 Byte, Prüfsumme beginnt mit `1009de51b079e174`, Dateikopf `00010000`, also gültiges TrueType. `FONT_SRC` zeigt jetzt dorthin, `make disk` erzeugt wieder einen Datenträger mit Schrift. In `.gitignore` steht zusätzlich `*.ttf`, damit die Datei nicht versehentlich ins öffentliche Repository gerät.
+
+### Beim Start werden 71,5 MiB genullt
+
+Gemessen: 12,3 ms beschleunigt, 45,9 ms emuliert. Davon entfallen **98 Prozent auf die beiden Bildpuffer**, die unmittelbar danach vollständig überschrieben werden. Das ist kein Fehler, aber vermeidbare Arbeit. Für den Ausgabepuffer ist das Nullen sinnvoll, weil die Anzeige ihn liest, bevor der Kernel das erste Bild zeichnet; für den internen Puffer nicht.
+
+### Eigener Fehlalarm, zweimal
+
+Ich meldete zuerst, die Warnung bei verbogenem Glyphzeiger fehle. Mein Test hatte die Schrift wegen eines Pfadfehlers gar nicht eingespielt. Und beim Verzeichnistest kopierte ich versehentlich eine Lizenzdatei als Schrift, weil die Quelle fehlte, und hielt das Ergebnis für einen Fehler im Kernel. Beide Male lag es am Testaufbau.
