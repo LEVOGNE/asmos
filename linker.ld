@@ -31,16 +31,18 @@ SECTIONS
     . += 0x4000;
     __stack_top = .;
 
+    __bss_end = .;
+
     .render (NOLOAD) : ALIGN(64) {
         *(.render)
     }
 
     .framebuffer (NOLOAD) : ALIGN(0x200000) {
+        __fb_out_start = .;
         *(.framebuffer)
         . = ALIGN(0x200000);
+        __fb_out_end = .;
     }
-
-    __bss_end = .;
     __image_end = .;
 
     /DISCARD/ : {

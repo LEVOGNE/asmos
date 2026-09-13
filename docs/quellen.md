@@ -1333,3 +1333,26 @@ Gemessen: 12,3 ms beschleunigt, 45,9 ms emuliert. Davon entfallen **98 Prozent a
 ### Eigener Fehlalarm, zweimal
 
 Ich meldete zuerst, die Warnung bei verbogenem Glyphzeiger fehle. Mein Test hatte die Schrift wegen eines Pfadfehlers gar nicht eingespielt. Und beim Verzeichnistest kopierte ich versehentlich eine Lizenzdatei als Schrift, weil die Quelle fehlte, und hielt das Ergebnis für einen Fehler im Kernel. Beide Male lag es am Testaufbau.
+
+---
+
+## Startnullung auf das Nötige begrenzt (13.09.2026)
+
+`boot_clear_bss` nullte bis hierher alles von `__bss_start` bis `__bss_end`, und `__bss_end` lag hinter beiden Bildpuffern. Gemessen wurden **71,50 MiB**, davon 98 Prozent Bildpuffer.
+
+Der Ausgabepuffer muss genullt werden, denn `ramfb` liest ihn, bevor der Kernel das erste Bild zeichnet; ohne Nullung zeigt der Bildschirm beim Start Speichermüll. Der interne Puffer muss es nicht: `win_draw_all` füllt über `fb_fill_rect` die gesamte Fläche, bevor irgendetwas davon gelesen wird.
+
+**Umsetzung.** In `linker.ld` wurde `__bss_end` vor die Abschnitte `.render` und `.framebuffer` gezogen, der Ausgabepuffer bekam die eigenen Marken `__fb_out_start` und `__fb_out_end`. In `kernel.S` nullt `boot_clear_bss_done` nur noch diesen Bereich eigens.
+
+**Stolperstelle beim Bau.** Das Makro `ladr` erzeugt kurze Adressierung mit ±1 MB Reichweite. Für `__fb_out_start` und `__fb_out_end`, die 47 MiB hinter dem Code liegen, meldet der Linker `relocation truncated to fit`. Hier ist `ladr_far` mit `adrp`/`add` nötig. Der Baufehler ist ein Glücksfall: Der Linker fängt genau den Fall ab, der sonst still auf eine falsche Adresse gezeigt hätte.
+
+**Messung.** Zähler `cntvct_el0` vor und nach der Nullung, Frequenz aus `cntfrq_el0`:
+
+| Betriebsart | genullt vorher | genullt jetzt | Zeit vorher | Zeit jetzt | gespart |
+|---|---:|---:|---:|---:|---:|
+| beschleunigt (`accel=hvf`) | 71,50 MiB | 24,19 MiB | 12,3 ms | 9,0 ms | 27 % |
+| emuliert (`cortex-a72`) | 71,50 MiB | 24,19 MiB | 45,9 ms | 8,9 ms | 81 % |
+
+Im emulierten Betrieb ist der Gewinn deutlich grösser, weil dort jeder Speicherzugriff durch die Übersetzungsschicht läuft und die reine Datenmenge stärker durchschlägt.
+
+**Gegenprobe.** `make shot` liefert ein Bild, das byteweise identisch mit dem vorherigen Stand ist, obwohl der interne Puffer beim Start jetzt uninitialisiert bleibt. Das belegt, dass er tatsächlich vollständig überschrieben wird. `make check` erreicht `BOOT OK` ohne `PANIC`. Das Abbild bleibt unverändert 24.576 Byte gross, die Messinstrumentierung wurde nach der Messung wieder entfernt.

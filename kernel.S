@@ -769,6 +769,16 @@ boot_clear_bss_loop:
     b       boot_clear_bss_loop
 
 boot_clear_bss_done:
+    ladr_far x0, __fb_out_start
+    ladr_far x1, __fb_out_end
+
+boot_clear_out_loop:
+    cmp     x0, x1
+    b.hs    boot_clear_out_done
+    stp     xzr, xzr, [x0], #16
+    b       boot_clear_out_loop
+
+boot_clear_out_done:
     ret
 
 .section .text
