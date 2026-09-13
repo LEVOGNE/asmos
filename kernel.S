@@ -183,14 +183,14 @@
 .equ EXT_FLAGS_NO_MIRROR,   0x80
 .equ EXT_FLAGS_ACTIVE,      0x0f
 .equ FAT_MIN_CLUSTER,       2
-.equ TTF_MAX_SIZE,          (64 * 1024)
+.equ FONT_MAX_SIZE,          (64 * 1024)
 .equ TTF_NUM_TABLES,        4
-.equ TTF_TABLE_DIR,         12
-.equ TTF_TABLE_ENTRY,       16
-.equ TTF_TAG_OFF,           0
-.equ TTF_TAG_CHECKSUM,      4
-.equ TTF_TAG_OFFSET,        8
-.equ TTF_TAG_LENGTH,        12
+.equ FONT_TABLE_DIR,         12
+.equ FONT_TABLE_ENTRY,       16
+.equ FONT_TAG_OFF,           0
+.equ FONT_TAG_CHECKSUM,      4
+.equ FONT_TAG_OFFSET,        8
+.equ FONT_TAG_LENGTH,        12
 
 .equ HEAD_UNITS_PER_EM,     18
 .equ HEAD_INDEX_TO_LOC,     50
@@ -231,21 +231,21 @@
 .equ GLYPH_NPOINTS,         4
 .equ GLYPH_STATE_SIZE,      8
 
-.equ EDGE_XTOP,             0
-.equ EDGE_YTOP,             4
-.equ EDGE_XBOT,             8
-.equ EDGE_YBOT,             12
-.equ EDGE_DIR,              16
-.equ EDGE_SIZE,             20
-.equ EDGE_MAX,              2048
+.equ VG_EDGE_XTOP,             0
+.equ VG_EDGE_YTOP,             4
+.equ VG_EDGE_XBOT,             8
+.equ VG_EDGE_YBOT,             12
+.equ VG_EDGE_DIR,              16
+.equ VG_EDGE_SIZE,             20
+.equ VG_EDGE_MAX,              2048
 .equ FIX_SHIFT,             16
 .equ FIX_ONE,               0x10000
 .equ BEZIER_MIN,            2
 .equ BEZIER_MAX,            16
 .equ BEZIER_PX_PER_STEP,    3
-.equ XS_MAX,                64
-.equ XS_SIZE,               8
-.equ COV_MAX,               512
+.equ VG_XS_MAX,                64
+.equ VG_XS_SIZE,               8
+.equ VG_COV_MAX,               FB_WIDTH
 .equ SUBSAMPLES,            4
 .equ SUB_STEP,              (FIX_ONE / SUBSAMPLES)
 .equ SUB_HALF,              (SUB_STEP / 2)
@@ -436,18 +436,31 @@
 .equ COLOR_GREEN,           0xffff0000ffff0000
 .equ COLOR_BLUE,            0xffffffff00000000
 
+.equ ANIM_SHIFT,            32
+.equ ANIM_HALF,             0x80000000
+.equ ANIM_EASE_LINEAR,      0
+.equ ANIM_EASE_QUAD_OUT,    1
+.equ ANIM_EASE_CUBIC_OUT,   2
+.equ ANIM_EASE_SMOOTH,      3
+.equ ANIM_EASE_COUNT,       4
+
+.equ ICON_SIZE,             32
+.equ ICON_UNITS,            24
+.equ ICON_SUBDIV,           8
+.equ ICON_BIAS,             32
+.equ ICON_SCALE,            ((ICON_SIZE << FIX_SHIFT) / (ICON_UNITS * ICON_SUBDIV))
+.equ ICON_CMD_MOVE,         1
+.equ ICON_CMD_LINE,         2
+.equ ICON_CMD_QUAD,         3
+.equ VG_DOT_N,              8
+.equ VG_QUAD_MIN,           2
+.equ VG_QUAD_MAX,           10
+.equ VG_QUAD_PX,            4
+
 .equ POWER_R,               32
 .equ POWER_MARGIN,          28
 .equ POWER_CX,              (FB_WIDTH - POWER_MARGIN - POWER_R)
 .equ POWER_CY,              (POWER_MARGIN + POWER_R)
-.equ POWER_RING_OUT,        17
-.equ POWER_RING_IN,         12
-.equ POWER_BAR_HALF,        5
-.equ POWER_BAR_TOP,         23
-.equ POWER_BAR_BOT,         8
-.equ POWER_STEM_HALF,       3
-.equ POWER_STEM_TOP,        21
-.equ POWER_STEM_BOT,        3
 .equ COLOR_POWER,           0xffff20202020d8d8
 .equ COLOR_POWER_SYMBOL,    0xffffffffffffffff
 .equ PSCI_SYSTEM_OFF,       0x84000008
@@ -460,7 +473,7 @@
 .equ PMM_SELFTEST,          0
 .equ FS_SELFTEST,           1
 .equ FS_SELFTEST_BIG,       0
-.equ TTF_SELFTEST,          1
+.equ FONT_SELFTEST,          1
 .equ TTF_TEST_SIZE,         90
 .equ TTF_TEST_X,            250
 .equ TTF_TEST_Y,            420
@@ -583,7 +596,7 @@ boot_el1_entry:
     bl      virtio_input_init
     bl      blk_init
     bl      fat_init
-    bl      ttf_init
+    bl      font_init
     bl      win_demo
 .if WIN_SELFTEST
     bl      win_selftest
@@ -805,10 +818,22 @@ fb_present:
     str     x23, [sp, #48]
     mov     w19, w0
     mov     w20, w1
-    mov     w21, w2
-    mov     w22, w3
-    cbz     w21, fb_present_done
-    cbz     w22, fb_present_done
+    add     w21, w0, w2
+    add     w22, w1, w3
+    cmp     w19, wzr
+    csel    w19, wzr, w19, lt
+    cmp     w20, wzr
+    csel    w20, wzr, w20, lt
+    mov     w0, #FB_WIDTH
+    cmp     w21, w0
+    csel    w21, w0, w21, gt
+    mov     w0, #FB_HEIGHT
+    cmp     w22, w0
+    csel    w22, w0, w22, gt
+    subs    w21, w21, w19
+    b.le    fb_present_done
+    subs    w22, w22, w20
+    b.le    fb_present_done
 
 fb_present_row:
     cbz     w22, fb_present_done
@@ -1325,6 +1350,405 @@ win_move:
     ldp     x29, x30, [sp], #48
     ret
 
+vg_sqrt:
+    cbz     x0, vg_sqrt_done
+    mov     x2, x0
+    clz     x1, x0
+    mov     x3, #64
+    sub     x1, x3, x1
+    add     x1, x1, #1
+    lsr     x1, x1, #1
+    mov     x3, #1
+    lsl     x1, x3, x1
+
+vg_sqrt_loop:
+    udiv    x3, x2, x1
+    add     x3, x3, x1
+    lsr     x3, x3, #1
+    cmp     x3, x1
+    b.hs    vg_sqrt_ready
+    mov     x1, x3
+    b       vg_sqrt_loop
+
+vg_sqrt_ready:
+    mov     x0, x1
+
+vg_sqrt_done:
+    ret
+
+vg_seg:
+    stp     x29, x30, [sp, #-96]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    stp     x27, x28, [sp, #80]
+    mov     w19, w0
+    mov     w20, w1
+    mov     w21, w2
+    mov     w22, w3
+    sub     w23, w21, w19
+    sub     w24, w22, w20
+    sxtw    x0, w23
+    mul     x0, x0, x0
+    sxtw    x1, w24
+    madd    x0, x1, x1, x0
+    bl      vg_sqrt
+    cbz     x0, vg_seg_done
+    mov     x25, x0
+    ladr    x0, vg_half
+    ldr     w26, [x0]
+    sxtw    x0, w24
+    neg     x0, x0
+    mov     x1, x26
+    mul     x0, x0, x1
+    sdiv    x27, x0, x25
+    sxtw    x0, w23
+    mul     x0, x0, x1
+    sdiv    x28, x0, x25
+    add     w0, w19, w27
+    add     w1, w20, w28
+    add     w2, w21, w27
+    add     w3, w22, w28
+    bl      vg_edge_add
+    sub     w0, w21, w27
+    sub     w1, w22, w28
+    sub     w2, w19, w27
+    sub     w3, w20, w28
+    bl      vg_edge_add
+    add     w0, w21, w27
+    add     w1, w22, w28
+    sub     w2, w21, w27
+    sub     w3, w22, w28
+    bl      vg_edge_add
+    sub     w0, w19, w27
+    sub     w1, w20, w28
+    add     w2, w19, w27
+    add     w3, w20, w28
+    bl      vg_edge_add
+
+vg_seg_done:
+    ldp     x27, x28, [sp, #80]
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #96
+    ret
+
+vg_dot:
+    stp     x29, x30, [sp, #-96]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    str     x27, [sp, #80]
+    mov     w19, w0
+    mov     w20, w1
+    ladr    x0, vg_half
+    ldr     w21, [x0]
+    ladr    x22, vg_dot_tab
+    ldr     w9, [x22]
+    ldr     w10, [x22, #4]
+    smull   x9, w9, w21
+    asr     x9, x9, #FIX_SHIFT
+    smull   x10, w10, w21
+    asr     x10, x10, #FIX_SHIFT
+    add     w23, w19, w9
+    add     w24, w20, w10
+    mov     w25, w23
+    mov     w26, w24
+    mov     w27, #1
+
+vg_dot_loop:
+    cmp     w27, #VG_DOT_N
+    b.hs    vg_dot_close
+    add     x9, x22, x27, lsl #3
+    ldr     w10, [x9]
+    ldr     w11, [x9, #4]
+    smull   x10, w10, w21
+    asr     x10, x10, #FIX_SHIFT
+    smull   x11, w11, w21
+    asr     x11, x11, #FIX_SHIFT
+    add     w10, w19, w10
+    add     w11, w20, w11
+    stp     x10, x11, [sp, #-16]!
+    mov     w0, w25
+    mov     w1, w26
+    mov     w2, w10
+    mov     w3, w11
+    bl      vg_edge_add
+    ldp     x10, x11, [sp], #16
+    mov     w25, w10
+    mov     w26, w11
+    add     w27, w27, #1
+    b       vg_dot_loop
+
+vg_dot_close:
+    mov     w0, w25
+    mov     w1, w26
+    mov     w2, w23
+    mov     w3, w24
+    bl      vg_edge_add
+    ldr     x27, [sp, #80]
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #96
+    ret
+
+icon_draw:
+    stp     x29, x30, [sp, #-112]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    stp     x27, x28, [sp, #80]
+    str     x3, [sp, #96]
+    mov     x19, x0
+    mov     w25, w1
+    mov     w26, w2
+    mov     x20, #ICON_SCALE
+    bl      vg_edge_reset
+    ladr    x0, vg_emit
+    ladr    x1, vg_seg
+    str     x1, [x0]
+    ldrb    w21, [x19], #1
+    ldrb    w0, [x19], #1
+    mul     x0, x0, x20
+    lsr     x0, x0, #1
+    ladr    x1, vg_half
+    str     w0, [x1]
+    lsl     x25, x25, #FIX_SHIFT
+    lsl     x26, x26, #FIX_SHIFT
+    mov     w22, #0
+
+icon_contour:
+    cmp     w22, w21
+    b.hs    icon_fill
+    ldrb    w23, [x19], #1
+    and     w23, w23, #0x7f
+    mov     w24, #0
+
+icon_cmd:
+    cmp     w24, w23
+    b.hs    icon_contour_next
+    ldrb    w27, [x19], #1
+    cmp     w27, #ICON_CMD_QUAD
+    b.eq    icon_cmd_quad
+    ldrb    w0, [x19], #1
+    ldrb    w1, [x19], #1
+    bl      icon_point
+    cmp     w27, #ICON_CMD_MOVE
+    b.eq    icon_cmd_move
+    stp     x0, x1, [sp, #-16]!
+    mov     w2, w0
+    mov     w3, w1
+    ladr    x4, vg_cur_x
+    ldr     w0, [x4]
+    ladr    x4, vg_cur_y
+    ldr     w1, [x4]
+    bl      vg_seg
+    ldp     x0, x1, [sp], #16
+
+icon_cmd_move:
+    bl      icon_set_cur
+    bl      vg_dot
+    add     w24, w24, #1
+    b       icon_cmd
+
+icon_cmd_quad:
+    ldrb    w0, [x19], #1
+    ldrb    w1, [x19], #1
+    bl      icon_point
+    stp     x0, x1, [sp, #-16]!
+    ldrb    w0, [x19], #1
+    ldrb    w1, [x19], #1
+    bl      icon_point
+    ldp     x2, x3, [sp], #16
+    stp     x0, x1, [sp, #-16]!
+    ladr    x4, vg_cur_x
+    ldr     w4, [x4]
+    ladr    x5, vg_cur_y
+    ldr     w5, [x5]
+    mov     w6, w0
+    mov     w7, w1
+    mov     w0, w4
+    mov     w1, w5
+    mov     w4, w6
+    mov     w5, w7
+    bl      vg_quad
+    ldp     x0, x1, [sp], #16
+    bl      icon_set_cur
+    bl      vg_dot
+    add     w24, w24, #1
+    b       icon_cmd
+
+icon_contour_next:
+    add     w22, w22, #1
+    b       icon_contour
+
+icon_fill:
+    ldr     x0, [sp, #96]
+    bl      vg_fill
+    ldp     x27, x28, [sp, #80]
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #112
+    ret
+
+icon_point:
+    sub     w0, w0, #ICON_BIAS
+    sxtw    x0, w0
+    mul     x0, x0, x20
+    add     x0, x0, x25
+    sub     w1, w1, #ICON_BIAS
+    sxtw    x1, w1
+    mul     x1, x1, x20
+    add     x1, x1, x26
+    ret
+
+icon_set_cur:
+    ladr    x2, vg_cur_x
+    str     w0, [x2]
+    ladr    x2, vg_cur_y
+    str     w1, [x2]
+    ret
+
+
+anim_one:
+    mov     x0, #1
+    lsl     x0, x0, #ANIM_SHIFT
+    ret
+
+anim_qmul:
+    mul     x2, x0, x1
+    smulh   x3, x0, x1
+    mov     x4, #ANIM_HALF
+    adds    x2, x2, x4
+    adc     x3, x3, xzr
+    lsr     x2, x2, #ANIM_SHIFT
+    orr     x0, x2, x3, lsl #ANIM_SHIFT
+    ret
+
+anim_lerp:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     x19, x0
+    sub     x0, x1, x0
+    mov     x1, x2
+    bl      anim_qmul
+    add     x0, x19, x0
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+anim_progress:
+    subs    x0, x0, x1
+    b.mi    anim_progress_null
+    cbz     x2, anim_progress_full
+    cmp     x0, x2
+    b.hs    anim_progress_full
+
+anim_progress_fit:
+    lsr     x3, x0, #31
+    cbz     x3, anim_progress_div
+    lsr     x0, x0, #1
+    lsr     x2, x2, #1
+    b       anim_progress_fit
+
+anim_progress_div:
+    cbz     x2, anim_progress_full
+    lsl     x0, x0, #ANIM_SHIFT
+    udiv    x0, x0, x2
+    ret
+
+anim_progress_full:
+    mov     x0, #1
+    lsl     x0, x0, #ANIM_SHIFT
+    ret
+
+anim_progress_null:
+    mov     x0, #0
+    ret
+
+anim_ease:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     x19, x0
+    mov     w20, w1
+    cmp     w20, #ANIM_EASE_QUAD_OUT
+    b.eq    anim_ease_quad
+    cmp     w20, #ANIM_EASE_CUBIC_OUT
+    b.eq    anim_ease_cubic
+    cmp     w20, #ANIM_EASE_SMOOTH
+    b.eq    anim_ease_smooth
+    mov     x0, x19
+    b       anim_ease_done
+
+anim_ease_quad:
+    bl      anim_one
+    sub     x21, x0, x19
+    mov     x0, x21
+    mov     x1, x21
+    bl      anim_qmul
+    mov     x1, x0
+    bl      anim_one
+    sub     x0, x0, x1
+    b       anim_ease_done
+
+anim_ease_cubic:
+    bl      anim_one
+    sub     x21, x0, x19
+    mov     x0, x21
+    mov     x1, x21
+    bl      anim_qmul
+    mov     x1, x21
+    bl      anim_qmul
+    mov     x1, x0
+    bl      anim_one
+    sub     x0, x0, x1
+    b       anim_ease_done
+
+anim_ease_smooth:
+    bl      anim_one
+    mov     x21, x0
+    add     x21, x21, x0
+    add     x21, x21, x0
+    lsl     x0, x19, #1
+    sub     x21, x21, x0
+    mov     x0, x19
+    mov     x1, x19
+    bl      anim_qmul
+    mov     x1, x21
+    bl      anim_qmul
+
+anim_ease_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+anim_to_raster:
+    asr     x1, x0, #63
+    eor     x2, x0, x1
+    sub     x2, x2, x1
+    lsr     x3, x2, #47
+    cbnz    x3, anim_to_raster_clamp
+    asr     x0, x0, #16
+    ret
+
+anim_to_raster_clamp:
+    mov     x0, #0x7fffffff
+    cmp     x1, #0
+    csinv   x0, x0, xzr, eq
+    ret
+
+
 power_wipe:
     cbz     x1, power_wipe_done
     add     x1, x0, x1
@@ -1370,8 +1794,8 @@ power_off:
     ladr    x0, fb_output
     ldr     x1, =OUT_SIZE
     bl      power_wipe
-    ladr    x0, ttf_buffer
-    mov     x1, #TTF_MAX_SIZE
+    ladr    x0, font_buffer
+    mov     x1, #FONT_MAX_SIZE
     bl      power_wipe
     ladr    x0, blk_buffer
     mov     x1, #BLK_SECTOR_SIZE
@@ -1498,28 +1922,11 @@ power_draw:
     mov     w2, #POWER_R
     ldr     x3, =COLOR_POWER
     bl      power_disc
-    mov     w0, #POWER_CX
-    mov     w1, #POWER_CY
-    mov     w2, #POWER_RING_OUT
+    ladr    x0, icon_power
+    mov     w1, #(POWER_CX - ICON_SIZE / 2)
+    mov     w2, #(POWER_CY - ICON_SIZE / 2)
     ldr     x3, =COLOR_POWER_SYMBOL
-    bl      power_disc
-    mov     w0, #POWER_CX
-    mov     w1, #POWER_CY
-    mov     w2, #POWER_RING_IN
-    ldr     x3, =COLOR_POWER
-    bl      power_disc
-    mov     w0, #(POWER_CX - POWER_BAR_HALF)
-    mov     w1, #(POWER_CY - POWER_BAR_TOP)
-    mov     w2, #(POWER_BAR_HALF * 2)
-    mov     w3, #(POWER_BAR_TOP - POWER_BAR_BOT)
-    ldr     x4, =COLOR_POWER
-    bl      fb_fill_rect
-    mov     w0, #(POWER_CX - POWER_STEM_HALF)
-    mov     w1, #(POWER_CY - POWER_STEM_TOP)
-    mov     w2, #(POWER_STEM_HALF * 2)
-    mov     w3, #(POWER_STEM_TOP - POWER_STEM_BOT)
-    ldr     x4, =COLOR_POWER_SYMBOL
-    bl      fb_fill_rect
+    bl      icon_draw
     ldp     x29, x30, [sp], #16
     ret
 
@@ -1609,7 +2016,7 @@ win_draw_one_title:
     ldr     x2, [x19, #WIN_TITLE]
     mov     w3, #WIN_TITLE_SIZE
     ldr     x4, =COLOR_WIN_TEXT
-    bl      ttf_text
+    bl      font_text
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
@@ -2949,6 +3356,8 @@ mouse_apply:
     stp     x29, x30, [sp, #-16]!
     cmp     w0, #EV_REL
     b.eq    mouse_apply_rel
+    cmp     w0, #EV_ABS
+    b.eq    mouse_apply_abs
     cmp     w0, #EV_KEY
     b.eq    mouse_apply_key
     cmp     w0, #EV_SYN
@@ -2977,6 +3386,41 @@ mouse_apply_rel_x:
     bl      mouse_clamp
     ladr    x3, mouse_x
     str     w0, [x3]
+    b       mouse_apply_done
+
+mouse_apply_abs:
+    ladr    x3, mouse_abs_max_x
+    cmp     w1, #ABS_X
+    b.eq    mouse_apply_abs_x
+    cmp     w1, #ABS_Y
+    b.ne    mouse_apply_done
+    ldr     w3, [x3, #4]
+    cbz     w3, mouse_apply_done
+    mov     w0, #FB_HEIGHT
+    umull   x0, w2, w0
+    udiv    x0, x0, x3
+    mov     w1, #(FB_HEIGHT - 1)
+    bl      mouse_clamp
+    ladr    x3, mouse_x
+    str     w0, [x3, #4]
+    ladr    x3, mouse_dirty
+    mov     w0, #1
+    strb    w0, [x3]
+    b       mouse_apply_done
+
+mouse_apply_abs_x:
+    ldr     w3, [x3]
+    cbz     w3, mouse_apply_done
+    mov     w0, #FB_WIDTH
+    umull   x0, w2, w0
+    udiv    x0, x0, x3
+    mov     w1, #(FB_WIDTH - 1)
+    bl      mouse_clamp
+    ladr    x3, mouse_x
+    str     w0, [x3]
+    ladr    x3, mouse_dirty
+    mov     w0, #1
+    strb    w0, [x3]
     b       mouse_apply_done
 
 mouse_apply_key:
@@ -3059,13 +3503,13 @@ virtio_input_fill_loop:
     dsb     sy
     ret
 
-ttf_be16:
+font_be16:
     ldrb    w1, [x0]
     ldrb    w2, [x0, #1]
     orr     w0, w2, w1, lsl #8
     ret
 
-ttf_be32:
+font_be32:
     ldrb    w1, [x0]
     ldrb    w2, [x0, #1]
     orr     w1, w2, w1, lsl #8
@@ -3075,107 +3519,107 @@ ttf_be32:
     orr     w0, w2, w1, lsl #8
     ret
 
-ttf_be16s:
+font_be16s:
     stp     x29, x30, [sp, #-16]!
-    bl      ttf_be16
+    bl      font_be16
     sxth    w0, w0
     ldp     x29, x30, [sp], #16
     ret
 
-ttf_find_table:
+font_find_table:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
     mov     x19, x0
-    ladr    x20, ttf_buffer
+    ladr    x20, font_buffer
     add     x0, x20, #4
-    bl      ttf_be16
+    bl      font_be16
     mov     w21, w0
     ladr    x0, font_state
     ldr     w1, [x0, #FONT_FILESIZE]
-    mov     w2, #TTF_TABLE_ENTRY
+    mov     w2, #FONT_TABLE_ENTRY
     madd    w2, w21, w2, wzr
-    add     w2, w2, #TTF_TABLE_DIR
+    add     w2, w2, #FONT_TABLE_DIR
     cmp     w2, w1
-    b.hi    ttf_find_none
+    b.hi    font_find_none
     mov     w22, #0
 
-ttf_find_loop:
+font_find_loop:
     cmp     w22, w21
-    b.hs    ttf_find_none
-    mov     x0, #TTF_TABLE_ENTRY
+    b.hs    font_find_none
+    mov     x0, #FONT_TABLE_ENTRY
     madd    x0, x22, x0, x20
-    add     x0, x0, #TTF_TABLE_DIR
+    add     x0, x0, #FONT_TABLE_DIR
     mov     x1, x19
     mov     w2, #4
     bl      mem_equal
-    cbnz    w0, ttf_find_hit
+    cbnz    w0, font_find_hit
     add     w22, w22, #1
-    b       ttf_find_loop
+    b       font_find_loop
 
-ttf_find_hit:
-    mov     x0, #TTF_TABLE_ENTRY
+font_find_hit:
+    mov     x0, #FONT_TABLE_ENTRY
     madd    x0, x22, x0, x20
-    add     x0, x0, #TTF_TABLE_DIR
-    add     x0, x0, #TTF_TAG_OFFSET
-    bl      ttf_be32
+    add     x0, x0, #FONT_TABLE_DIR
+    add     x0, x0, #FONT_TAG_OFFSET
+    bl      font_be32
     ladr    x1, font_state
     ldr     w2, [x1, #FONT_FILESIZE]
     cmp     w0, w2
-    b.hs    ttf_find_none
+    b.hs    font_find_none
     add     x0, x20, x0
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
     ret
 
-ttf_find_none:
+font_find_none:
     mov     x0, #0
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
     ret
 
-ttf_find_cmap4:
+font_find_cmap4:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
     mov     x19, x0
     add     x0, x19, #CMAP_NTABLES
-    bl      ttf_be16
+    bl      font_be16
     mov     w20, w0
     mov     w21, #0
 
-ttf_find_cmap4_loop:
+font_find_cmap4_loop:
     cmp     w21, w20
-    b.hs    ttf_find_cmap4_none
+    b.hs    font_find_cmap4_none
     mov     x0, #CMAP_RECORD_SIZE
     madd    x0, x21, x0, x19
     add     x0, x0, #(CMAP_RECORDS + CMAP_REC_OFFSET)
-    bl      ttf_be32
+    bl      font_be32
     add     x22, x19, x0
     mov     x0, x22
-    bl      ttf_be16
+    bl      font_be16
     cmp     w0, #4
-    b.eq    ttf_find_cmap4_hit
+    b.eq    font_find_cmap4_hit
     add     w21, w21, #1
-    b       ttf_find_cmap4_loop
+    b       font_find_cmap4_loop
 
-ttf_find_cmap4_hit:
+font_find_cmap4_hit:
     mov     x0, x22
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
     ret
 
-ttf_find_cmap4_none:
+font_find_cmap4_none:
     mov     x0, #0
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
     ret
 
-ttf_glyph_index:
+font_glyph_index:
     stp     x29, x30, [sp, #-96]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
@@ -3185,55 +3629,55 @@ ttf_glyph_index:
     mov     w19, w0
     ladr    x0, font_state
     ldr     x20, [x0, #FONT_CMAP4]
-    cbz     x20, ttf_glyph_index_none
+    cbz     x20, font_glyph_index_none
     add     x0, x20, #CMAP4_SEGX2
-    bl      ttf_be16
+    bl      font_be16
     mov     w21, w0
     add     x22, x20, #CMAP4_ENDCODE
     add     x23, x22, x21
     add     x23, x23, #2
     mov     w24, #0
 
-ttf_glyph_loop:
+font_glyph_loop:
     lsr     w0, w21, #1
     cmp     w24, w0
-    b.hs    ttf_glyph_index_none
+    b.hs    font_glyph_index_none
     add     x0, x22, x24, lsl #1
-    bl      ttf_be16
+    bl      font_be16
     cmp     w19, w0
-    b.ls    ttf_glyph_found
+    b.ls    font_glyph_found
     add     w24, w24, #1
-    b       ttf_glyph_loop
+    b       font_glyph_loop
 
-ttf_glyph_found:
+font_glyph_found:
     add     x0, x23, x24, lsl #1
-    bl      ttf_be16
+    bl      font_be16
     cmp     w19, w0
-    b.lo    ttf_glyph_index_none
+    b.lo    font_glyph_index_none
     mov     w25, w0
     add     x0, x23, x21
     add     x0, x0, x24, lsl #1
-    bl      ttf_be16
+    bl      font_be16
     mov     w26, w0
     add     x0, x23, x21, lsl #1
     add     x0, x0, x24, lsl #1
     mov     x27, x0
-    bl      ttf_be16
-    cbz     w0, ttf_glyph_direct
+    bl      font_be16
+    cbz     w0, font_glyph_direct
     add     x1, x27, x0
     sub     w2, w19, w25
     add     x0, x1, x2, lsl #1
-    bl      ttf_be16
-    cbz     w0, ttf_glyph_index_none
+    bl      font_be16
+    cbz     w0, font_glyph_index_none
     add     w0, w0, w26
     and     w0, w0, #0xffff
-    b       ttf_glyph_index_end
+    b       font_glyph_index_end
 
-ttf_glyph_direct:
+font_glyph_direct:
     add     w0, w19, w26
     and     w0, w0, #0xffff
 
-ttf_glyph_index_end:
+font_glyph_index_end:
     ldr     x27, [sp, #80]
     ldp     x25, x26, [sp, #64]
     ldp     x23, x24, [sp, #48]
@@ -3242,7 +3686,7 @@ ttf_glyph_index_end:
     ldp     x29, x30, [sp], #96
     ret
 
-ttf_glyph_index_none:
+font_glyph_index_none:
     mov     w0, #0
     ldr     x27, [sp, #80]
     ldp     x25, x26, [sp, #64]
@@ -3252,56 +3696,56 @@ ttf_glyph_index_none:
     ldp     x29, x30, [sp], #96
     ret
 
-ttf_advance:
+font_advance:
     stp     x29, x30, [sp, #-16]!
     ladr    x1, font_state
     ldr     w2, [x1, #FONT_NUMH]
-    cbz     w2, ttf_advance_none
+    cbz     w2, font_advance_none
     sub     w3, w2, #1
     cmp     w0, w3
     csel    w0, w3, w0, hi
     ldr     x1, [x1, #FONT_HMTX]
-    cbz     x1, ttf_advance_none
+    cbz     x1, font_advance_none
     add     x0, x1, x0, lsl #2
-    bl      ttf_be16
+    bl      font_be16
     ldp     x29, x30, [sp], #16
     ret
 
-ttf_advance_none:
+font_advance_none:
     mov     w0, #0
     ldp     x29, x30, [sp], #16
     ret
 
-ttf_glyph_offset:
+font_glyph_offset:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
     mov     w19, w0
     ladr    x0, font_state
     ldr     w3, [x0, #FONT_NGLYPHS]
     cmp     w19, w3
-    b.hi    ttf_glyph_offset_bad
+    b.hi    font_glyph_offset_bad
     ldr     w1, [x0, #FONT_LOCFMT]
     ldr     x2, [x0, #FONT_LOCA]
-    cbnz    w1, ttf_glyph_offset_long
+    cbnz    w1, font_glyph_offset_long
     add     x0, x2, x19, lsl #1
-    bl      ttf_be16
+    bl      font_be16
     lsl     w0, w0, #1
-    b       ttf_glyph_offset_done
+    b       font_glyph_offset_done
 
-ttf_glyph_offset_long:
+font_glyph_offset_long:
     add     x0, x2, x19, lsl #2
-    bl      ttf_be32
-    b       ttf_glyph_offset_done
+    bl      font_be32
+    b       font_glyph_offset_done
 
-ttf_glyph_offset_bad:
+font_glyph_offset_bad:
     mov     w0, #0
 
-ttf_glyph_offset_done:
+font_glyph_offset_done:
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
 
-ttf_load_glyph:
+font_load_glyph:
     stp     x29, x30, [sp, #-112]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
@@ -3309,161 +3753,161 @@ ttf_load_glyph:
     stp     x25, x26, [sp, #64]
     stp     x27, x28, [sp, #80]
     mov     w19, w0
-    bl      ttf_glyph_offset
+    bl      font_glyph_offset
     mov     w20, w0
     add     w0, w19, #1
-    bl      ttf_glyph_offset
+    bl      font_glyph_offset
     subs    w21, w0, w20
-    b.ls    ttf_load_glyph_empty
+    b.ls    font_load_glyph_empty
     ladr    x0, font_state
     ldr     x22, [x0, #FONT_GLYF]
     add     x22, x22, x20
     ldr     w1, [x0, #FONT_FILESIZE]
-    ladr    x0, ttf_buffer
+    ladr    x0, font_buffer
     add     x0, x0, x1
     add     x1, x22, x21
     cmp     x1, x0
-    b.hi    ttf_load_glyph_outside
+    b.hi    font_load_glyph_outside
     mov     x0, x22
-    bl      ttf_be16s
-    tbnz    w0, #31, ttf_load_glyph_composite
-    cbz     w0, ttf_load_glyph_empty
+    bl      font_be16s
+    tbnz    w0, #31, font_load_glyph_composite
+    cbz     w0, font_load_glyph_empty
     mov     w23, w0
     cmp     w23, #GLYPH_MAX_CONTOURS
-    b.hi    ttf_load_glyph_composite
+    b.hi    font_load_glyph_composite
     ladr    x24, glyph_state
     str     w23, [x24, #GLYPH_NCONTOURS]
     add     x25, x22, #GLYF_ENDPTS
     mov     w26, #0
 
-ttf_load_ends:
+font_load_ends:
     cmp     w26, w23
-    b.hs    ttf_load_ends_done
+    b.hs    font_load_ends_done
     add     x0, x25, x26, lsl #1
-    bl      ttf_be16
+    bl      font_be16
     ladr    x1, glyph_ends
     strh    w0, [x1, x26, lsl #1]
     add     w26, w26, #1
-    b       ttf_load_ends
+    b       font_load_ends
 
-ttf_load_ends_done:
+font_load_ends_done:
     sub     w0, w23, #1
     ladr    x1, glyph_ends
     ldrh    w27, [x1, w0, uxtw #1]
     add     w27, w27, #1
     cmp     w27, #GLYPH_MAX_POINTS
-    b.hi    ttf_load_glyph_composite
+    b.hi    font_load_glyph_composite
     str     w27, [x24, #GLYPH_NPOINTS]
     add     x25, x25, x23, lsl #1
     mov     x0, x25
-    bl      ttf_be16
+    bl      font_be16
     add     x25, x25, #2
     add     x25, x25, x0
     ladr    x28, glyph_flags
     mov     w26, #0
 
-ttf_load_flags:
+font_load_flags:
     cmp     w26, w27
-    b.hs    ttf_load_flags_done
+    b.hs    font_load_flags_done
     ldrb    w0, [x25], #1
     strb    w0, [x28, w26, uxtw]
     add     w26, w26, #1
     tst     w0, #PT_REPEAT
-    b.eq    ttf_load_flags
+    b.eq    font_load_flags
     ldrb    w1, [x25], #1
 
-ttf_load_flags_repeat:
-    cbz     w1, ttf_load_flags
+font_load_flags_repeat:
+    cbz     w1, font_load_flags
     cmp     w26, w27
-    b.hs    ttf_load_flags_done
+    b.hs    font_load_flags_done
     strb    w0, [x28, w26, uxtw]
     add     w26, w26, #1
     sub     w1, w1, #1
-    b       ttf_load_flags_repeat
+    b       font_load_flags_repeat
 
-ttf_load_flags_done:
+font_load_flags_done:
     mov     w26, #0
     mov     w20, #0
 
-ttf_load_x:
+font_load_x:
     cmp     w26, w27
-    b.hs    ttf_load_x_done
+    b.hs    font_load_x_done
     ldrb    w0, [x28, w26, uxtw]
     tst     w0, #PT_X_SHORT
-    b.eq    ttf_load_x_long
+    b.eq    font_load_x_long
     ldrb    w2, [x25], #1
     tst     w0, #PT_X_SAME
-    b.ne    ttf_load_x_add
+    b.ne    font_load_x_add
     neg     w2, w2
 
-ttf_load_x_add:
+font_load_x_add:
     add     w20, w20, w2
-    b       ttf_load_x_store
+    b       font_load_x_store
 
-ttf_load_x_long:
+font_load_x_long:
     tst     w0, #PT_X_SAME
-    b.ne    ttf_load_x_store
+    b.ne    font_load_x_store
     mov     x0, x25
-    bl      ttf_be16s
+    bl      font_be16s
     add     x25, x25, #2
     add     w20, w20, w0
 
-ttf_load_x_store:
+font_load_x_store:
     ladr    x1, glyph_x
     strh    w20, [x1, w26, uxtw #1]
     add     w26, w26, #1
-    b       ttf_load_x
+    b       font_load_x
 
-ttf_load_x_done:
+font_load_x_done:
     mov     w26, #0
     mov     w20, #0
 
-ttf_load_y:
+font_load_y:
     cmp     w26, w27
-    b.hs    ttf_load_y_done
+    b.hs    font_load_y_done
     ldrb    w0, [x28, w26, uxtw]
     tst     w0, #PT_Y_SHORT
-    b.eq    ttf_load_y_long
+    b.eq    font_load_y_long
     ldrb    w2, [x25], #1
     tst     w0, #PT_Y_SAME
-    b.ne    ttf_load_y_add
+    b.ne    font_load_y_add
     neg     w2, w2
 
-ttf_load_y_add:
+font_load_y_add:
     add     w20, w20, w2
-    b       ttf_load_y_store
+    b       font_load_y_store
 
-ttf_load_y_long:
+font_load_y_long:
     tst     w0, #PT_Y_SAME
-    b.ne    ttf_load_y_store
+    b.ne    font_load_y_store
     mov     x0, x25
-    bl      ttf_be16s
+    bl      font_be16s
     add     x25, x25, #2
     add     w20, w20, w0
 
-ttf_load_y_store:
+font_load_y_store:
     ladr    x1, glyph_y
     strh    w20, [x1, w26, uxtw #1]
     add     w26, w26, #1
-    b       ttf_load_y
+    b       font_load_y
 
-ttf_load_y_done:
+font_load_y_done:
     mov     w0, #1
-    b       ttf_load_glyph_end
+    b       font_load_glyph_end
 
-ttf_load_glyph_composite:
-    bl      ttf_limit_report
+font_load_glyph_composite:
+    bl      font_limit_report
 
-ttf_load_glyph_outside:
-    bl      ttf_limit_report
+font_load_glyph_outside:
+    bl      font_limit_report
 
-ttf_load_glyph_empty:
+font_load_glyph_empty:
     ladr    x0, glyph_state
     str     wzr, [x0, #GLYPH_NCONTOURS]
     str     wzr, [x0, #GLYPH_NPOINTS]
     mov     w0, #0
 
-ttf_load_glyph_end:
+font_load_glyph_end:
     ldp     x27, x28, [sp, #80]
     ldp     x25, x26, [sp, #64]
     ldp     x23, x24, [sp, #48]
@@ -3472,37 +3916,40 @@ ttf_load_glyph_end:
     ldp     x29, x30, [sp], #112
     ret
 
-edge_reset:
-    ladr    x0, edge_count
+vg_edge_reset:
+    ladr    x0, vg_edge_count
     str     wzr, [x0]
+    ladr    x0, vg_emit
+    ladr    x1, vg_edge_add
+    str     x1, [x0]
     ret
 
-edge_add:
-    ladr    x4, edge_count
+vg_edge_add:
+    ladr    x4, vg_edge_count
     ldr     w5, [x4]
-    cmp     w5, #EDGE_MAX
+    cmp     w5, #VG_EDGE_MAX
     b.hs    edge_add_overflow
     cmp     w1, w3
     b.eq    edge_add_done
-    ladr    x6, edge_list
-    mov     x7, #EDGE_SIZE
+    ladr    x6, vg_edge_list
+    mov     x7, #VG_EDGE_SIZE
     madd    x6, x5, x7, x6
-    b.lo    edge_add_down
-    str     w2, [x6, #EDGE_XTOP]
-    str     w3, [x6, #EDGE_YTOP]
-    str     w0, [x6, #EDGE_XBOT]
-    str     w1, [x6, #EDGE_YBOT]
+    b.lt    edge_add_down
+    str     w2, [x6, #VG_EDGE_XTOP]
+    str     w3, [x6, #VG_EDGE_YTOP]
+    str     w0, [x6, #VG_EDGE_XBOT]
+    str     w1, [x6, #VG_EDGE_YBOT]
     mov     w7, #-1
-    str     w7, [x6, #EDGE_DIR]
+    str     w7, [x6, #VG_EDGE_DIR]
     b       edge_add_store
 
 edge_add_down:
-    str     w0, [x6, #EDGE_XTOP]
-    str     w1, [x6, #EDGE_YTOP]
-    str     w2, [x6, #EDGE_XBOT]
-    str     w3, [x6, #EDGE_YBOT]
+    str     w0, [x6, #VG_EDGE_XTOP]
+    str     w1, [x6, #VG_EDGE_YTOP]
+    str     w2, [x6, #VG_EDGE_XBOT]
+    str     w3, [x6, #VG_EDGE_YBOT]
     mov     w7, #1
-    str     w7, [x6, #EDGE_DIR]
+    str     w7, [x6, #VG_EDGE_DIR]
 
 edge_add_store:
     add     w5, w5, #1
@@ -3513,30 +3960,30 @@ edge_add_done:
 
 edge_add_overflow:
     stp     x29, x30, [sp, #-16]!
-    bl      ttf_limit_report
+    bl      font_limit_report
     ldp     x29, x30, [sp], #16
     ret
 
-ttf_limit_report:
-    ladr    x4, ttf_limit_flag
+font_limit_report:
+    ladr    x4, font_limit_flag
     ldrb    w5, [x4]
-    cbnz    w5, ttf_limit_report_done
+    cbnz    w5, font_limit_report_done
     mov     w5, #1
     strb    w5, [x4]
     stp     x29, x30, [sp, #-16]!
-    ladr    x0, ttf_limit_msg
+    ladr    x0, font_limit_msg
     bl      uart_puts
     ldp     x29, x30, [sp], #16
 
-ttf_limit_report_done:
+font_limit_report_done:
     ret
 
-ttf_point:
+font_point:
     ladr    x1, glyph_x
     ldrsh   w1, [x1, w0, uxtw #1]
     ladr    x2, glyph_y
     ldrsh   w2, [x2, w0, uxtw #1]
-    ladr    x3, ttf_scale
+    ladr    x3, vg_scale
     ldr     w4, [x3]
     ldr     w5, [x3, #4]
     ldr     w6, [x3, #8]
@@ -3548,13 +3995,13 @@ ttf_point:
     mov     w1, w2
     ret
 
-ttf_point_flag:
+font_point_flag:
     ladr    x1, glyph_flags
     ldrb    w0, [x1, w0, uxtw]
     and     w0, w0, #PT_ON_CURVE
     ret
 
-ttf_bezier:
+vg_quad:
     stp     x29, x30, [sp, #-112]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
@@ -3591,9 +4038,9 @@ ttf_bezier:
     mov     w26, w19
     mov     w27, w20
 
-ttf_bezier_loop:
+vg_quad_loop:
     cmp     w25, w28
-    b.hi    ttf_bezier_done
+    b.hi    vg_quad_done
     mov     w0, w28
     sub     w1, w0, w25
     mul     w2, w1, w1
@@ -3618,15 +4065,17 @@ ttf_bezier_loop:
     mov     w1, w27
     mov     w2, w5
     mov     w3, w7
-    stp     x5, x7, [sp, #88]
-    bl      edge_add
-    ldp     x5, x7, [sp, #88]
+    stp     x5, x7, [sp, #96]
+    ladr    x9, vg_emit
+    ldr     x9, [x9]
+    blr     x9
+    ldp     x5, x7, [sp, #96]
     mov     w26, w5
     mov     w27, w7
     add     w25, w25, #1
-    b       ttf_bezier_loop
+    b       vg_quad_loop
 
-ttf_bezier_done:
+vg_quad_done:
     ldp     x27, x28, [sp, #80]
     ldp     x25, x26, [sp, #64]
     ldp     x23, x24, [sp, #48]
@@ -3635,65 +4084,65 @@ ttf_bezier_done:
     ldp     x29, x30, [sp], #112
     ret
 
-ttf_build_edges:
+font_build_edges:
     stp     x29, x30, [sp, #-128]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
     stp     x23, x24, [sp, #48]
     stp     x25, x26, [sp, #64]
     stp     x27, x28, [sp, #80]
-    bl      edge_reset
+    bl      vg_edge_reset
     ladr    x0, glyph_state
     ldr     w19, [x0, #GLYPH_NCONTOURS]
-    cbz     w19, ttf_build_end
+    cbz     w19, font_build_end
     mov     w20, #0
     mov     w21, #0
 
-ttf_build_contour:
+font_build_contour:
     cmp     w20, w19
-    b.hs    ttf_build_end
+    b.hs    font_build_end
     ladr    x0, glyph_ends
     ldrh    w22, [x0, w20, uxtw #1]
     mov     w0, w21
-    bl      ttf_point
+    bl      font_point
     mov     w23, w0
     mov     w24, w1
     mov     w25, w23
     mov     w26, w24
     add     w27, w21, #1
 
-ttf_build_point:
+font_build_point:
     cmp     w27, w22
-    b.hi    ttf_build_close
+    b.hi    font_build_close
     mov     w0, w27
-    bl      ttf_point_flag
-    cbz     w0, ttf_build_curve
+    bl      font_point_flag
+    cbz     w0, font_build_curve
     mov     w0, w27
-    bl      ttf_point
+    bl      font_point
     mov     w2, w0
     mov     w3, w1
     mov     w0, w23
     mov     w1, w24
-    bl      edge_add
+    bl      vg_edge_add
     mov     w0, w27
-    bl      ttf_point
+    bl      font_point
     mov     w23, w0
     mov     w24, w1
     add     w27, w27, #1
-    b       ttf_build_point
+    b       font_build_point
 
-ttf_build_curve:
+font_build_curve:
     mov     w0, w27
-    bl      ttf_point
+    bl      font_point
     mov     w28, w0
     str     w1, [sp, #96]
     add     w0, w27, #1
     cmp     w0, w22
-    b.hi    ttf_build_curve_wrap
-    bl      ttf_point_flag
-    cbnz    w0, ttf_build_curve_next
+    b.hi    font_build_curve_wrap
+    bl      font_point_flag
+    cbnz    w0, font_build_curve_next
     add     w0, w27, #1
-    bl      ttf_point
+    bl      font_point
     ldr     w9, [sp, #96]
     add     w0, w0, w28
     asr     w0, w0, #1
@@ -3702,22 +4151,22 @@ ttf_build_curve:
     mov     w2, w0
     mov     w3, w1
     add     w27, w27, #1
-    b       ttf_build_curve_emit
+    b       font_build_curve_emit
 
-ttf_build_curve_next:
+font_build_curve_next:
     add     w0, w27, #1
-    bl      ttf_point
+    bl      font_point
     mov     w2, w0
     mov     w3, w1
     add     w27, w27, #2
-    b       ttf_build_curve_emit
+    b       font_build_curve_emit
 
-ttf_build_curve_wrap:
+font_build_curve_wrap:
     mov     w2, w25
     mov     w3, w26
     add     w27, w27, #1
 
-ttf_build_curve_emit:
+font_build_curve_emit:
     ldr     w9, [sp, #96]
     mov     w4, w2
     mov     w5, w3
@@ -3726,23 +4175,23 @@ ttf_build_curve_emit:
     mov     w2, w28
     mov     w3, w9
     stp     x4, x5, [sp, #104]
-    bl      ttf_bezier
+    bl      vg_quad
     ldp     x4, x5, [sp, #104]
     mov     w23, w4
     mov     w24, w5
-    b       ttf_build_point
+    b       font_build_point
 
-ttf_build_close:
+font_build_close:
     mov     w0, w23
     mov     w1, w24
     mov     w2, w25
     mov     w3, w26
-    bl      edge_add
+    bl      vg_edge_add
     add     w21, w22, #1
     add     w20, w20, #1
-    b       ttf_build_contour
+    b       font_build_contour
 
-ttf_build_end:
+font_build_end:
     ldp     x27, x28, [sp, #80]
     ldp     x25, x26, [sp, #64]
     ldp     x23, x24, [sp, #48]
@@ -3804,9 +4253,9 @@ fb_blend_pixel:
     str     x6, [x0]
     ret
 
-cov_span:
-    ladr    x9, cov_buffer
-    ladr    x10, cov_xmin
+vg_cov_span:
+    ladr    x9, vg_cov_buffer
+    ladr    x10, vg_cov_xmin
     ldr     w10, [x10]
     asr     w2, w0, #FIX_SHIFT
     asr     w3, w1, #FIX_SHIFT
@@ -3815,7 +4264,7 @@ cov_span:
     cmp     w2, w3
     b.ne    cov_span_multi
     sub     w5, w1, w0
-    cmp     w4, #COV_MAX
+    cmp     w4, #VG_COV_MAX
     b.hs    cov_span_done
     ldr     w6, [x9, w4, uxtw #2]
     add     w6, w6, w5
@@ -3824,20 +4273,20 @@ cov_span:
 
 cov_span_multi:
     sub     w6, w3, w10
-    cmp     w6, #COV_MAX
+    cmp     w6, #VG_COV_MAX
     b.lo    cov_span_multi_ok
     stp     x29, x30, [sp, #-16]!
-    bl      ttf_limit_report
+    bl      font_limit_report
     ldp     x29, x30, [sp], #16
-    ladr    x9, cov_buffer
-    ladr    x10, cov_xmin
+    ladr    x9, vg_cov_buffer
+    ladr    x10, vg_cov_xmin
     ldr     w10, [x10]
 
 cov_span_multi_ok:
     and     w5, w0, #0xffff
     mov     w6, #FIX_ONE
     sub     w5, w6, w5
-    cmp     w4, #COV_MAX
+    cmp     w4, #VG_COV_MAX
     b.hs    cov_span_tail
     ldr     w7, [x9, w4, uxtw #2]
     add     w7, w7, w5
@@ -3849,7 +4298,7 @@ cov_span_mid:
     b.hs    cov_span_tail
     sub     w4, w2, w10
     tbnz    w4, #31, cov_span_mid
-    cmp     w4, #COV_MAX
+    cmp     w4, #VG_COV_MAX
     b.hs    cov_span_tail
     ldr     w7, [x9, w4, uxtw #2]
     mov     w8, #FIX_ONE
@@ -3860,7 +4309,7 @@ cov_span_mid:
 cov_span_tail:
     sub     w4, w3, w10
     tbnz    w4, #31, cov_span_done
-    cmp     w4, #COV_MAX
+    cmp     w4, #VG_COV_MAX
     b.hs    cov_span_done
     and     w5, w1, #0xffff
     ldr     w7, [x9, w4, uxtw #2]
@@ -3870,7 +4319,7 @@ cov_span_tail:
 cov_span_done:
     ret
 
-ttf_fill:
+vg_fill:
     stp     x29, x30, [sp, #-144]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
@@ -3878,68 +4327,74 @@ ttf_fill:
     stp     x25, x26, [sp, #64]
     stp     x27, x28, [sp, #80]
     mov     x19, x0
-    ladr    x0, edge_count
+    ladr    x0, vg_edge_count
     ldr     w20, [x0]
-    cbz     w20, ttf_fill_end
+    cbz     w20, font_fill_end
     mov     w21, #0x7fffffff
     mov     w22, #0x80000000
     mov     w9, #0x7fffffff
-    ladr    x23, edge_list
+    ladr    x23, vg_edge_list
     mov     w24, #0
 
-ttf_fill_bounds:
+font_fill_bounds:
     cmp     w24, w20
-    b.hs    ttf_fill_rows
-    mov     x0, #EDGE_SIZE
+    b.hs    font_fill_rows
+    mov     x0, #VG_EDGE_SIZE
     madd    x0, x24, x0, x23
-    ldr     w1, [x0, #EDGE_YTOP]
+    ldr     w1, [x0, #VG_EDGE_YTOP]
     cmp     w1, w21
     csel    w21, w1, w21, lt
-    ldr     w1, [x0, #EDGE_YBOT]
+    ldr     w1, [x0, #VG_EDGE_YBOT]
     cmp     w1, w22
     csel    w22, w1, w22, gt
-    ldr     w1, [x0, #EDGE_XTOP]
+    ldr     w1, [x0, #VG_EDGE_XTOP]
     cmp     w1, w9
     csel    w9, w1, w9, lt
-    ldr     w1, [x0, #EDGE_XBOT]
+    ldr     w1, [x0, #VG_EDGE_XBOT]
     cmp     w1, w9
     csel    w9, w1, w9, lt
     add     w24, w24, #1
-    b       ttf_fill_bounds
+    b       font_fill_bounds
 
-ttf_fill_rows:
+font_fill_rows:
     asr     w9, w9, #FIX_SHIFT
     sub     w9, w9, #1
-    ladr    x0, cov_xmin
+    ladr    x0, vg_cov_xmin
     str     w9, [x0]
     asr     w25, w21, #FIX_SHIFT
     asr     w26, w22, #FIX_SHIFT
     add     w26, w26, #1
-    cmp     w25, wzr
-    csel    w25, wzr, w25, lt
-    mov     w0, #FB_HEIGHT
-    cmp     w26, w0
-    csel    w26, w0, w26, gt
+    ladr    x0, fb_clip
+    ldr     w1, [x0, #CLIP_Y]
+    cmp     w25, w1
+    csel    w25, w1, w25, lt
+    cmp     w26, w1
+    csel    w26, w1, w26, lt
+    ldr     w1, [x0, #CLIP_Y2]
+    cmp     w25, w1
+    csel    w25, w1, w25, gt
+    cmp     w26, w1
+    csel    w26, w1, w26, gt
 
-ttf_fill_row:
+font_fill_row:
     cmp     w25, w26
-    b.hs    ttf_fill_end
-    ladr    x0, cov_buffer
+    b.ge    font_fill_end
+    ladr    x0, vg_cov_buffer
     mov     w1, #0
 
-ttf_fill_clear:
-    cmp     w1, #COV_MAX
-    b.hs    ttf_fill_subs
+font_fill_clear:
+    cmp     w1, #VG_COV_MAX
+    b.hs    font_fill_subs
     str     wzr, [x0, w1, uxtw #2]
     add     w1, w1, #1
-    b       ttf_fill_clear
+    b       font_fill_clear
 
-ttf_fill_subs:
+font_fill_subs:
     mov     w10, #0
 
-ttf_fill_sub:
+font_fill_sub:
     cmp     w10, #SUBSAMPLES
-    b.hs    ttf_fill_emit
+    b.hs    font_fill_emit
     lsl     w27, w25, #FIX_SHIFT
     mov     w0, #SUB_STEP
     madd    w27, w10, w0, w27
@@ -3947,138 +4402,138 @@ ttf_fill_sub:
     mov     w28, #0
     mov     w24, #0
 
-ttf_fill_scan:
+font_fill_scan:
     cmp     w24, w20
-    b.hs    ttf_fill_sort
-    mov     x0, #EDGE_SIZE
+    b.hs    font_fill_sort
+    mov     x0, #VG_EDGE_SIZE
     madd    x0, x24, x0, x23
-    ldr     w1, [x0, #EDGE_YTOP]
+    ldr     w1, [x0, #VG_EDGE_YTOP]
     cmp     w27, w1
-    b.lt    ttf_fill_scan_next
-    ldr     w2, [x0, #EDGE_YBOT]
+    b.lt    font_fill_scan_next
+    ldr     w2, [x0, #VG_EDGE_YBOT]
     cmp     w27, w2
-    b.ge    ttf_fill_scan_next
-    ldr     w3, [x0, #EDGE_XTOP]
-    ldr     w4, [x0, #EDGE_XBOT]
+    b.ge    font_fill_scan_next
+    ldr     w3, [x0, #VG_EDGE_XTOP]
+    ldr     w4, [x0, #VG_EDGE_XBOT]
     sub     w5, w27, w1
     sub     w6, w2, w1
     sub     w7, w4, w3
     smull   x5, w5, w7
     sdiv    x5, x5, x6
     add     w5, w3, w5
-    ldr     w6, [x0, #EDGE_DIR]
-    cmp     w28, #XS_MAX
-    b.lo    ttf_fill_scan_store
+    ldr     w6, [x0, #VG_EDGE_DIR]
+    cmp     w28, #VG_XS_MAX
+    b.lo    font_fill_scan_store
     stp     x0, x1, [sp, #128]
-    bl      ttf_limit_report
+    bl      font_limit_report
     ldp     x0, x1, [sp, #128]
-    b       ttf_fill_scan_next
+    b       font_fill_scan_next
 
-ttf_fill_scan_store:
-    ladr    x7, xs_list
-    mov     x8, #XS_SIZE
+font_fill_scan_store:
+    ladr    x7, vg_xs_list
+    mov     x8, #VG_XS_SIZE
     madd    x7, x28, x8, x7
     str     w5, [x7]
     str     w6, [x7, #4]
     add     w28, w28, #1
 
-ttf_fill_scan_next:
+font_fill_scan_next:
     add     w24, w24, #1
-    b       ttf_fill_scan
+    b       font_fill_scan
 
-ttf_fill_sort:
+font_fill_sort:
     cmp     w28, #2
-    b.lo    ttf_fill_span
+    b.lo    font_fill_span
     mov     w24, #1
 
-ttf_fill_sort_outer:
+font_fill_sort_outer:
     cmp     w24, w28
-    b.hs    ttf_fill_span
-    ladr    x7, xs_list
-    mov     x8, #XS_SIZE
+    b.hs    font_fill_span
+    ladr    x7, vg_xs_list
+    mov     x8, #VG_XS_SIZE
     madd    x0, x24, x8, x7
     ldr     w1, [x0]
     ldr     w2, [x0, #4]
     sub     w3, w24, #1
 
-ttf_fill_sort_inner:
-    tbnz    w3, #31, ttf_fill_sort_place
+font_fill_sort_inner:
+    tbnz    w3, #31, font_fill_sort_place
     madd    x0, x3, x8, x7
     ldr     w4, [x0]
     cmp     w4, w1
-    b.le    ttf_fill_sort_place
+    b.le    font_fill_sort_place
     ldr     w5, [x0, #4]
-    add     x6, x0, #XS_SIZE
+    add     x6, x0, #VG_XS_SIZE
     str     w4, [x6]
     str     w5, [x6, #4]
     sub     w3, w3, #1
-    b       ttf_fill_sort_inner
+    b       font_fill_sort_inner
 
-ttf_fill_sort_place:
+font_fill_sort_place:
     add     w3, w3, #1
     madd    x0, x3, x8, x7
     str     w1, [x0]
     str     w2, [x0, #4]
     add     w24, w24, #1
-    b       ttf_fill_sort_outer
+    b       font_fill_sort_outer
 
-ttf_fill_span:
+font_fill_span:
     mov     w24, #0
     mov     w3, #0
     mov     w4, #0
 
-ttf_fill_span_loop:
+font_fill_span_loop:
     cmp     w24, w28
-    b.hs    ttf_fill_sub_next
-    ladr    x7, xs_list
-    mov     x8, #XS_SIZE
+    b.hs    font_fill_sub_next
+    ladr    x7, vg_xs_list
+    mov     x8, #VG_XS_SIZE
     madd    x0, x24, x8, x7
     ldr     w1, [x0]
     ldr     w2, [x0, #4]
     mov     w5, w3
     add     w3, w3, w2
-    cbnz    w5, ttf_fill_span_maybe_end
+    cbnz    w5, font_fill_span_maybe_end
     mov     w4, w1
-    b       ttf_fill_span_next
+    b       font_fill_span_next
 
-ttf_fill_span_maybe_end:
-    cbnz    w3, ttf_fill_span_next
+font_fill_span_maybe_end:
+    cbnz    w3, font_fill_span_next
     mov     w0, w4
     stp     x3, x24, [sp, #96]
     stp     x10, x28, [sp, #112]
-    bl      cov_span
+    bl      vg_cov_span
     ldp     x3, x24, [sp, #96]
     ldp     x10, x28, [sp, #112]
     mov     w3, #0
 
-ttf_fill_span_next:
+font_fill_span_next:
     add     w24, w24, #1
-    b       ttf_fill_span_loop
+    b       font_fill_span_loop
 
-ttf_fill_sub_next:
+font_fill_sub_next:
     add     w10, w10, #1
-    b       ttf_fill_sub
+    b       font_fill_sub
 
-ttf_fill_emit:
-    ladr    x0, cov_xmin
+font_fill_emit:
+    ladr    x0, vg_cov_xmin
     ldr     w11, [x0]
     mov     w12, #0
 
-ttf_fill_emit_loop:
-    cmp     w12, #COV_MAX
-    b.hs    ttf_fill_next
-    ladr    x0, cov_buffer
+font_fill_emit_loop:
+    cmp     w12, #VG_COV_MAX
+    b.hs    font_fill_next
+    ladr    x0, vg_cov_buffer
     ldr     w13, [x0, w12, uxtw #2]
-    cbz     w13, ttf_fill_emit_next
+    cbz     w13, font_fill_emit_next
     lsr     w13, w13, #2
     mov     w0, #ALPHA_MAX
     cmp     w13, w0
     csel    w13, w0, w13, hi
     add     w14, w11, w12
-    tbnz    w14, #31, ttf_fill_emit_next
+    tbnz    w14, #31, font_fill_emit_next
     mov     w0, #FB_WIDTH
     cmp     w14, w0
-    b.hs    ttf_fill_emit_next
+    b.hs    font_fill_emit_next
     mov     w0, w14
     mov     w1, w25
     stp     x11, x12, [sp, #96]
@@ -4091,15 +4546,15 @@ ttf_fill_emit_loop:
     ldp     x11, x12, [sp, #96]
     ldp     x13, x25, [sp, #112]
 
-ttf_fill_emit_next:
+font_fill_emit_next:
     add     w12, w12, #1
-    b       ttf_fill_emit_loop
+    b       font_fill_emit_loop
 
-ttf_fill_next:
+font_fill_next:
     add     w25, w25, #1
-    b       ttf_fill_row
+    b       font_fill_row
 
-ttf_fill_end:
+font_fill_end:
     ldp     x27, x28, [sp, #80]
     ldp     x25, x26, [sp, #64]
     ldp     x23, x24, [sp, #48]
@@ -4108,21 +4563,21 @@ ttf_fill_end:
     ldp     x29, x30, [sp], #144
     ret
 
-ttf_set_size:
+font_set_size:
     stp     x29, x30, [sp, #-16]!
     ladr    x1, font_state
     ldr     w1, [x1, #FONT_UNITS]
-    cbz     w1, ttf_set_size_done
+    cbz     w1, font_set_size_done
     lsl     w0, w0, #FIX_SHIFT
     udiv    w0, w0, w1
-    ladr    x1, ttf_scale
+    ladr    x1, vg_scale
     str     w0, [x1]
 
-ttf_set_size_done:
+font_set_size_done:
     ldp     x29, x30, [sp], #16
     ret
 
-ttf_text:
+font_text:
     stp     x29, x30, [sp, #-80]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
@@ -4134,36 +4589,36 @@ ttf_text:
     mov     w22, w3
     mov     x23, x4
     mov     w0, w22
-    bl      ttf_set_size
-    ladr    x0, ttf_scale
+    bl      font_set_size
+    ladr    x0, vg_scale
     ldr     w24, [x0]
-    cbz     w24, ttf_text_done
+    cbz     w24, font_text_done
     lsl     w19, w19, #FIX_SHIFT
     lsl     w20, w20, #FIX_SHIFT
 
-ttf_text_loop:
+font_text_loop:
     ldrb    w0, [x21], #1
-    cbz     w0, ttf_text_done
-    bl      ttf_glyph_index
+    cbz     w0, font_text_done
+    bl      font_glyph_index
     mov     w25, w0
-    ladr    x0, ttf_scale
+    ladr    x0, vg_scale
     str     w19, [x0, #4]
     str     w20, [x0, #8]
     mov     w0, w25
-    bl      ttf_load_glyph
-    cbz     w0, ttf_text_advance
-    bl      ttf_build_edges
+    bl      font_load_glyph
+    cbz     w0, font_text_advance
+    bl      font_build_edges
     mov     x0, x23
-    bl      ttf_fill
+    bl      vg_fill
 
-ttf_text_advance:
+font_text_advance:
     mov     w0, w25
-    bl      ttf_advance
+    bl      font_advance
     mul     w0, w0, w24
     add     w19, w19, w0
-    b       ttf_text_loop
+    b       font_text_loop
 
-ttf_text_done:
+font_text_done:
     ldr     x25, [sp, #64]
     ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
@@ -4171,75 +4626,75 @@ ttf_text_done:
     ldp     x29, x30, [sp], #80
     ret
 
-ttf_init:
+font_init:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
-    ladr    x0, ttf_name
-    ladr    x1, ttf_buffer
-    mov     w2, #TTF_MAX_SIZE
+    ladr    x0, font_name
+    ladr    x1, font_buffer
+    mov     w2, #FONT_MAX_SIZE
     bl      fat_load
-    cbz     w0, ttf_init_fail
+    cbz     w0, font_init_fail
     ladr    x19, font_state
     str     w0, [x19, #FONT_FILESIZE]
-    ladr    x0, ttf_tag_head
-    bl      ttf_find_table
-    cbz     x0, ttf_init_fail
+    ladr    x0, font_tag_head
+    bl      font_find_table
+    cbz     x0, font_init_fail
     str     x0, [x19, #FONT_HEAD]
-    ladr    x0, ttf_tag_maxp
-    bl      ttf_find_table
-    cbz     x0, ttf_init_fail
+    ladr    x0, font_tag_maxp
+    bl      font_find_table
+    cbz     x0, font_init_fail
     str     x0, [x19, #FONT_MAXP]
-    ladr    x0, ttf_tag_loca
-    bl      ttf_find_table
-    cbz     x0, ttf_init_fail
+    ladr    x0, font_tag_loca
+    bl      font_find_table
+    cbz     x0, font_init_fail
     str     x0, [x19, #FONT_LOCA]
-    ladr    x0, ttf_tag_glyf
-    bl      ttf_find_table
-    cbz     x0, ttf_init_fail
+    ladr    x0, font_tag_glyf
+    bl      font_find_table
+    cbz     x0, font_init_fail
     str     x0, [x19, #FONT_GLYF]
-    ladr    x0, ttf_tag_cmap
-    bl      ttf_find_table
-    cbz     x0, ttf_init_fail
+    ladr    x0, font_tag_cmap
+    bl      font_find_table
+    cbz     x0, font_init_fail
     str     x0, [x19, #FONT_CMAP]
-    ladr    x0, ttf_tag_hmtx
-    bl      ttf_find_table
+    ladr    x0, font_tag_hmtx
+    bl      font_find_table
     str     x0, [x19, #FONT_HMTX]
-    ladr    x0, ttf_tag_hhea
-    bl      ttf_find_table
+    ladr    x0, font_tag_hhea
+    bl      font_find_table
     str     x0, [x19, #FONT_HHEA]
     ldr     x0, [x19, #FONT_HEAD]
     add     x0, x0, #HEAD_UNITS_PER_EM
-    bl      ttf_be16
-    cbz     w0, ttf_init_fail
+    bl      font_be16
+    cbz     w0, font_init_fail
     str     w0, [x19, #FONT_UNITS]
     ldr     x0, [x19, #FONT_HEAD]
     add     x0, x0, #HEAD_INDEX_TO_LOC
-    bl      ttf_be16
+    bl      font_be16
     str     w0, [x19, #FONT_LOCFMT]
     ldr     x0, [x19, #FONT_MAXP]
     add     x0, x0, #MAXP_NUM_GLYPHS
-    bl      ttf_be16
+    bl      font_be16
     str     w0, [x19, #FONT_NGLYPHS]
     ldr     x0, [x19, #FONT_HHEA]
-    cbz     x0, ttf_init_nohhea
+    cbz     x0, font_init_nohhea
     add     x0, x0, #HHEA_NUM_HMETRICS
-    bl      ttf_be16
+    bl      font_be16
     str     w0, [x19, #FONT_NUMH]
-    b       ttf_init_cmap
+    b       font_init_cmap
 
-ttf_init_nohhea:
+font_init_nohhea:
     str     wzr, [x19, #FONT_NUMH]
 
-ttf_init_cmap:
+font_init_cmap:
     ldr     x0, [x19, #FONT_CMAP]
-    bl      ttf_find_cmap4
-    cbz     x0, ttf_init_fail
+    bl      font_find_cmap4
+    cbz     x0, font_init_fail
     str     x0, [x19, #FONT_CMAP4]
-    ladr    x0, ttf_ok_msg
+    ladr    x0, font_ok_msg
     bl      uart_puts
     ldr     w0, [x19, #FONT_UNITS]
     bl      uart_putdec
-    ladr    x0, ttf_glyphs_msg
+    ladr    x0, font_glyphs_msg
     bl      uart_puts
     ldr     w0, [x19, #FONT_NGLYPHS]
     bl      uart_putdec
@@ -4250,8 +4705,8 @@ ttf_init_cmap:
     ldp     x29, x30, [sp], #32
     ret
 
-ttf_init_fail:
-    ladr    x0, ttf_fail_msg
+font_init_fail:
+    ladr    x0, font_fail_msg
     bl      uart_puts
     mov     w0, #0
     ldr     x19, [sp, #16]
@@ -4941,29 +5396,29 @@ pmm_used_label:
     .asciz  "\r\nPMM used="
 timer_error:
     .asciz  "TIMER UNAVAILABLE\r\n"
-ttf_fail_msg:
+font_fail_msg:
     .asciz  "TTF UNAVAILABLE\r\n"
-ttf_glyphs_msg:
+font_glyphs_msg:
     .asciz  " glyphs="
 
     vec_entry 13, panic_entry
-ttf_limit_msg:
+font_limit_msg:
     .asciz  "TTF GRENZE ERREICHT, Glyph unvollstaendig\r\n"
-ttf_ok_msg:
+font_ok_msg:
     .asciz  "TTF units="
-ttf_tag_cmap:
+font_tag_cmap:
     .asciz  "cmap"
-ttf_tag_glyf:
+font_tag_glyf:
     .asciz  "glyf"
-ttf_tag_head:
+font_tag_head:
     .asciz  "head"
-ttf_tag_hhea:
+font_tag_hhea:
     .asciz  "hhea"
-ttf_tag_hmtx:
+font_tag_hmtx:
     .asciz  "hmtx"
-ttf_tag_loca:
+font_tag_loca:
     .asciz  "loca"
-ttf_tag_maxp:
+font_tag_maxp:
     .asciz  "maxp"
 uart_newline:
     .asciz  "\r\n"
@@ -5031,7 +5486,7 @@ win_full_msg:
 
 
 
-ttf_name:
+font_name:
     .ascii  "FONT    TTF"
     .byte   0
 
@@ -5262,6 +5717,63 @@ panic_names:
     .quad   panic_name_14
     .quad   panic_name_15
 
+.balign 4
+icon_power:
+    .byte   2, 16, 5, 1, 88, 80, 3, 57, 109, 70, 149, 3
+    .byte   86, 187, 128, 189, 3, 170, 187, 186, 149, 3, 199, 109
+    .byte   168, 80, 2, 1, 128, 64, 2, 128, 128
+icon_home:
+    .byte   3, 16, 5, 1, 72, 128, 2, 56, 128, 2, 128, 56
+    .byte   2, 200, 128, 2, 184, 128, 6, 1, 72, 128, 2, 72
+    .byte   184, 3, 73, 199, 88, 200, 2, 168, 200, 3, 183, 199
+    .byte   184, 184, 2, 184, 128, 6, 1, 104, 200, 2, 104, 152
+    .byte   3, 105, 137, 120, 136, 2, 136, 136, 3, 151, 137, 152
+    .byte   152, 2, 152, 200
+
+icon_folder:
+    .byte   1, 16, 11, 1, 72, 64, 2, 104, 64, 2, 128, 88
+    .byte   2, 184, 88, 3, 199, 89, 200, 104, 2, 200, 168, 3
+    .byte   199, 183, 184, 184, 2, 72, 184, 3, 57, 183, 56, 168
+    .byte   2, 56, 80, 3, 57, 65, 72, 64
+
+icon_settings:
+    .byte   2, 16, 33, 1, 115, 67, 3, 118, 56, 128, 56, 3
+    .byte   138, 56, 141, 67, 3, 143, 73, 150, 76, 3, 156, 79
+    .byte   162, 75, 3, 172, 70, 179, 77, 3, 186, 84, 181, 94
+    .byte   3, 177, 100, 180, 106, 3, 183, 113, 189, 115, 3, 200
+    .byte   118, 200, 128, 3, 200, 138, 189, 141, 3, 183, 143, 180
+    .byte   150, 3, 177, 156, 181, 162, 3, 186, 172, 179, 179, 3
+    .byte   172, 186, 162, 181, 3, 156, 177, 150, 180, 3, 143, 183
+    .byte   141, 189, 3, 138, 200, 128, 200, 3, 118, 200, 115, 189
+    .byte   3, 113, 183, 106, 180, 3, 100, 177, 94, 181, 3, 84
+    .byte   186, 77, 179, 3, 70, 172, 75, 162, 3, 79, 156, 76
+    .byte   150, 3, 73, 143, 67, 141, 3, 56, 138, 56, 128, 3
+    .byte   56, 118, 67, 115, 3, 73, 113, 76, 106, 3, 79, 100
+    .byte   75, 94, 3, 70, 84, 77, 77, 3, 84, 70, 94, 75
+    .byte   3, 100, 79, 106, 76, 3, 113, 73, 115, 67, 5, 1
+    .byte   104, 128, 3, 106, 150, 128, 152, 3, 150, 150, 152, 128
+    .byte   3, 150, 106, 128, 104, 3, 106, 106, 104, 128
+
+icon_trash:
+    .byte   5, 16, 2, 1, 64, 88, 2, 192, 88, 2, 1, 112
+    .byte   120, 2, 112, 168, 2, 1, 144, 120, 2, 144, 168, 6
+    .byte   1, 72, 88, 2, 80, 184, 3, 81, 199, 96, 200, 2
+    .byte   160, 200, 3, 175, 199, 176, 184, 2, 184, 88, 6, 1
+    .byte   104, 88, 2, 104, 64, 3, 105, 57, 112, 56, 2, 144
+    .byte   56, 3, 151, 57, 152, 64, 2, 152, 88
+
+.balign 8
+vg_dot_tab:
+    .word   65536, 0
+    .word   46341, -46341
+    .word   0, -65536
+    .word   -46341, -46341
+    .word   -65536, 0
+    .word   -46341, 46341
+    .word   0, 65536
+    .word   46341, 46341
+
+
 .section .bss
 
 .balign 8
@@ -5345,6 +5857,25 @@ pmm_pages:
     .space  8
 
 .balign 8
+vg_emit:
+    .space  8
+
+.balign 4
+vg_half:
+    .space  4
+
+.balign 4
+vg_cur_x:
+    .space  4
+
+.balign 4
+vg_cur_y:
+    .space  4
+
+
+
+
+.balign 8
 pmm_bitmap:
     .space  PMM_BITMAP_SIZE
 
@@ -5411,8 +5942,8 @@ font_state:
     .space  FONT_STATE_SIZE
 
 .balign 8
-ttf_buffer:
-    .space  TTF_MAX_SIZE
+font_buffer:
+    .space  FONT_MAX_SIZE
 
 .balign 8
 glyph_state:
@@ -5427,34 +5958,34 @@ glyph_y:
     .space  (GLYPH_MAX_POINTS * 2)
 
 .balign 8
-ttf_scale:
+vg_scale:
     .space  4
-ttf_origin_x:
+vg_org_x:
     .space  4
-ttf_origin_y:
+vg_org_y:
     .space  4
 
 .balign 8
-edge_count:
+vg_edge_count:
     .space  4
-ttf_limit_flag:
+font_limit_flag:
     .space  1
 
 .balign 8
-edge_list:
-    .space  (EDGE_SIZE * EDGE_MAX)
+vg_edge_list:
+    .space  (VG_EDGE_SIZE * VG_EDGE_MAX)
 
 .balign 8
-xs_list:
-    .space  (XS_SIZE * XS_MAX)
+vg_xs_list:
+    .space  (VG_XS_SIZE * VG_XS_MAX)
 
 .balign 8
-cov_xmin:
+vg_cov_xmin:
     .space  4
 
 .balign 8
-cov_buffer:
-    .space  (COV_MAX * 4)
+vg_cov_buffer:
+    .space  (VG_COV_MAX * 4)
 
 .balign 512
 fat_buffer:

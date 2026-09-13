@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-20.080%20Byte-brightgreen?style=flat-square" alt="20080 Byte">
+<img src="https://img.shields.io/badge/Kernel-20.544%20Byte-brightgreen?style=flat-square" alt="20544 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>20.080&nbsp;Byte</b> groß.<br>
+Das fertige System ist <b>20.544&nbsp;Byte</b> groß.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -127,11 +127,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 5.260 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 5.854 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken 534 Sprungmarken. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang:
+In `kernel.S` stecken 586 Sprungmarken. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -140,13 +140,14 @@ In `kernel.S` stecken 534 Sprungmarken. Jede gehört zu einem Zuständigkeitsber
 | `vec_` `panic_` `irq_` | 33 | Fehlerbehandlung und Unterbrechungen |
 | `timer_` | 6 | Zeitgeber |
 | `fwcfg_` | 13 | Konfigurationsschnittstelle des Emulators |
-| `fb_` `cursor_` | 51 | Bildschirm, Zeichnen, Mauszeiger |
-| `virtio_` `mouse_` `click_` | 56 | Gerätetreiber, Maus, Klickerkennung |
+| `fb_` `cursor_` | 51 | Bildschirm, Bildpunkte, Mauszeiger |
+| `virtio_` `mouse_` `click_` | 58 | Gerätetreiber, Maus, Klickerkennung |
 | `mem_` `pmm_` `mmu_` `fdt_` | 66 | Speicherverwaltung und Hardware-Erkennung |
-| `ttf_` `edge_` `cov_` | 126 | TrueType auswerten, Kurven zerlegen, Flächen füllen, Kanten glätten |
+| `vg_` `icon_` | 43 | **Vektor-Engine**: Pfade, Kurven, Füllung, Strich, Kantenglättung, Icons |
+| `font_` `glyph_` | 109 | TrueType auswerten und über die Vektor-Engine zeichnen |
 | `blk_` `fat_` | 72 | Datenträger und Dateisystem |
-| `console_` `string_` `win_` `dirty_` `out_` | 61 | Konsole, Fenster, Teilaktualisierung, Hilfsroutinen |
-| `gic_` und Datenbereiche | 13 | Unterbrechungssteuerung, Zustandsspeicher der Schrift und Glyphen |
+| `console_` `string_` `win_` `dirty_` `out_` `power_` | 83 | Konsole, Fenster, Teilaktualisierung, Herunterfahren |
+| `gic_` und Datenbereiche | 15 | Unterbrechungssteuerung, Zustandsspeicher |
 
 </details>
 
@@ -154,7 +155,7 @@ In `kernel.S` stecken 534 Sprungmarken. Jede gehört zu einem Zuständigkeitsber
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **20.080 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **20.544 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 106 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `disk.img` | 64 MB | Testdatenträger mit echtem FAT32 und drei Testdateien |
@@ -262,6 +263,12 @@ Zusätzlich fertig: TrueType-Renderer als Systemschrift, Zeiger mit Alphakanal a
 
 ---
 
+## Lizenzen
+
+Der Code ist vollständig selbst geschrieben. Die Icons sind abgeleitete Werke aus <b>Tabler Icons</b> (MIT-Lizenz, Copyright © 2020-2026 Paweł Kuna) und wurden mit <code>tools/iconc.py</code> in ein eigenes Vektorformat gewandelt. Die verwendete Schrift liegt nicht im Repository, weil ihre Lizenz nicht geklärt ist, nur der Code, der sie auswertet.
+
+---
+
 ## Fehler, aus denen das Projekt gelernt hat
 
 <details>
@@ -297,7 +304,7 @@ Zusätzlich fertig: TrueType-Renderer als Systemschrift, Zeiger mit Alphakanal a
 |---|---|
 | Eigener Quelltext | 132 KB in drei Dateien |
 | Zeilen Assembler | 5.260 |
-| **Fertiges Betriebssystem** | **20.080 Byte** |
+| **Fertiges Betriebssystem** | **20.544 Byte** |
 | Speicherbedarf im Betrieb | 71 MB, davon 70 MB Bildspeicher |
 | Dokumentation | 48 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |

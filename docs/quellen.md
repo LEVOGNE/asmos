@@ -785,3 +785,155 @@ Die Trefferfläche ist derselbe Kreis. Geprüft mit vier Punkten: Mittelpunkt un
 Die erste Fassung zeichnete statt eines gefüllten Kreises nur einen dünnen Bogen, und der Ring erschien als Rechteck. Ursache: Das Quadrat des senkrechten Abstands lag in `w2` und sollte die ganze Zeile überleben. `fb_pixel_addr` und `fb_blend_pixel` dürfen dieses Register aber zerstören. Nach dem ersten Bildpunkt jeder Zeile rechnete die Routine mit Müll, deshalb blieb genau der erste Punkt jeder Zeile stehen, also ein Bogen.
 
 **Das ist bereits die dritte Wiederholung derselben Fehlerklasse in diesem Projekt.** Behoben, indem der Abstand je Bildpunkt neu berechnet wird und die Schleifengrenzen einmalig in `x19` bis `x28` geklemmt werden. Die Bildpunktkoordinaten liegen über den Aufruf hinweg auf dem Stack, nicht in flüchtigen Registern.
+
+---
+
+## Vektorgrafik als Kernbestandteil, Icons als Daten
+
+### Der Renderer war bereits da
+
+Für Icons musste keine neue Engine entstehen. Der TrueType-Renderer **ist** eine Vektor-Engine, sie lag nur unter dem Namen `ttf_`. Nachgewiesen allgemein verwendbar: `ttf_bezier` nimmt sechs Koordinaten und kennt keine Schrift, `ttf_fill` braucht keinen Schriftzustand. Nur `ttf_build_edges` liest Glyphdaten.
+
+Deshalb wurde umbenannt statt neu gebaut: `vg_` für die Engine, `font_` für die TrueType-Auswertung, `icon_` für Icons. Die Umbenennung wurde gegen den Maschinencode geprüft, er ist bis auf vier Adressverschiebungen identisch. Diese vier stammen daher, dass `ttf_scale`, `ttf_origin_x` und `ttf_origin_y` aus dem Schriftblock in die Engine gehoben wurden, wo sie hingehören.
+
+Kurvenzerlegung und Flächenfüllung existieren damit **einmal**. Schrift und Icons unterscheiden sich nur darin, wohin die Zerlegung ihre Segmente schickt: die Schrift an `vg_edge_add` (Füllung), Icons an `vg_seg` (Strich). Das Ziel steht in `vg_emit` und wird von `vg_edge_reset` auf den Standard zurückgesetzt.
+
+### Warum die Icons nicht in den Kernel gehören
+
+Gemessen, nicht geschätzt: alle **5.130** Outline-Icons von Tabler umgewandelt, **0 Fehler**, zusammen **394 KB**, im Schnitt 79 Byte je Icon. Der gesamte Kernel ist 20 KB. Die vollständige Bibliothek wäre also das Zwanzigfache des Systems.
+
+Entscheidung analog zur Schrift: wenige Icons fest im Kernel, die vor dem Dateisystem gebraucht werden, der Rest als Datei auf dem Datenträger. Derzeit eingebettet: `power`, `home`, `folder`, `settings`, `trash`.
+
+### Das Datenformat
+
+Tabler-Icons sind **strichbasiert**, nicht gefüllt: `fill="none"`, `stroke-width="2"`, runde Enden und Ecken. Sie nutzen ausserdem elliptische Bögen, etwa `a7.75 7.75 0 1 0 10 0` im Power-Icon. Ein Befehlssatz aus nur MOVE, LINE und CLOSE reicht dafür nicht.
+
+Der Konverter `tools/iconc.py` läuft auf dem Entwicklungsrechner und wandelt Bögen und kubische Kurven in quadratische um, die der Kernel bereits beherrscht. Entscheidend: **Kurven bleiben Kurven.** Zerlegt man sie schon im Konverter in Geraden, ist die Auflösung fest eingebrannt und die Darstellung wird bei Vergrösserung eckig. Der Unterschied ist messbar, `settings` braucht 190 statt 406 Byte und bleibt dabei beliebig skalierbar.
+
+| Feld | Grösse | Bedeutung |
+|---|---|---|
+| Kopf | 2 Byte | Anzahl Konturen, Strichbreite in Achtelneinheiten |
+| Kontur | 1 Byte | Anzahl Befehle, höchstes Bit markiert geschlossen |
+| MOVE, LINE | 3 Byte | Befehl, x, y |
+| QUAD | 5 Byte | Befehl, Kontrollpunkt, Endpunkt |
+
+Koordinaten liegen in Achtelneinheiten mit einem Versatz von vier Einheiten in je einem Byte. Der Versatz ist nötig, weil vier Koordinaten im Gesamtbestand negativ sind, die kleinste bei -3,17.
+
+### Einheitliche Systemgrösse
+
+Icons werden systemweit in **32 Punkt** gezeichnet, passend zur 52 Punkt hohen Titelleiste und zur 34 Punkt grossen Titelschrift. Die Skalierung steht als Konstante fest und wird zur Assemblierzeit berechnet, `icon_draw` hat deshalb keinen Grössenparameter.
+
+Das löst zugleich einen geometrischen Grenzfall: Bei sehr grosser Darstellung, wo ein Kurvenradius etwa der Strichbreite entspricht, überschlägt sich die Innenkante des Strichs. Der Türbogen im Haus-Icon hat einen Radius von zwei Einheiten bei zwei Einheiten Strichbreite, bei 300 Punkt sichtbar als Zerfaserung. In der Systemgrösse tritt der Fall nicht auf.
+
+### Drei Fehler beim Bau, einer davon selbst verursacht
+
+| Befund | Wirkung | Ursache |
+|---|---|---|
+| Deckungspuffer auf 512 Bildpunkte begrenzt | Striche fehlten vollständig, wurden keilförmig, Kurven brachen mitten ab | Erbstück aus der Schrift, wo 512 reichte. Für systemweite Vektorgrafik muss der Puffer die Bildschirmbreite abdecken. Jetzt `FB_WIDTH` |
+| Kurvenschleife rief weiterhin die Füllroutine | Genau die Kurvensegmente fehlten, sichtbar als lose Knoten ohne Verbindung | Die erste Umleitung traf die falsche Textstelle |
+| Zwischensicherung in `vg_quad` überschrieb das gesicherte `x28` | Latent: der Aufrufer bekam ein zerstörtes Register zurück | Ablage bei Rahmenversatz 88, dort liegt bereits `x28`. Jetzt 96 |
+
+Der schwerste Schaden war eigenes Werk: Bei einer automatischen Textersetzung landete ein Testblock **innerhalb** von `icon_draw`, die Routine rief sich dadurch selbst auf und der Kernel hing bei jedem Icon. Aus der Sicherung wiederhergestellt.
+
+**Regel daraus: Vor einer skriptgesteuerten Einfügung prüfen, in welcher Routine der Einfügepunkt tatsächlich liegt.** Eine Textmarke wie `win_draw_all_done:` sagt nichts darüber, wo die nächste passende Endmarke liegt.
+
+### Lizenz der Icon-Daten
+
+Die eingebetteten Icons sind abgeleitete Werke aus **Tabler Icons**, MIT-Lizenz, Copyright (c) 2020-2026 Paweł Kuna. Die MIT-Lizenz verlangt, dass Copyright- und Lizenzhinweis in allen Kopien und wesentlichen Teilen enthalten bleiben. Der Hinweis steht deshalb in `README.md` und hier. Verändern und kommerzielle Nutzung sind erlaubt.
+
+---
+
+## Durchsicht einer externen Analyse, geprüfte und behobene Befunde
+
+Eine externe Durchsicht meldete mehrere Logikfehler. Ich habe jeden am Code nachgeprüft, bevor ich ihn behoben habe. Die folgenden sind bestätigt und erledigt.
+
+### Der Zeiger bewegte sich nicht: EV_ABS wurde nie verarbeitet
+
+Das Makefile startet ein `virtio-tablet-device`. Dieses meldet **absolute** Positionen als `EV_ABS`. `mouse_apply` behandelte nur `EV_REL`, `EV_KEY` und `EV_SYN`. Die Positionsereignisse fielen deshalb ersatzlos weg, während Klicks weiterhin ankamen, weil sie `EV_KEY` sind.
+
+Die Achsenmaxima wurden bereits beim Start korrekt ermittelt, gemessen `maxx=0x7fff maxy=0x7fff`, aber nirgends benutzt.
+
+Behoben durch Abbildung auf Bildschirmkoordinaten: `bildschirm = wert × Bildbreite / Achsenmaximum`, anschliessend begrenzt. Mit einem Einheitentest belegt, der `mouse_apply` direkt mit bekannten Werten aufruft:
+
+| Eingabe | Ergebnis | Erwartung |
+|---|---|---|
+| `ABS_X` 16384 | 1920 | Bildmitte |
+| `ABS_Y` 8192 | 400 | ein Viertel der Höhe |
+| `ABS_X` 32767 | 3839 | rechter Rand |
+
+**Zur Testbarkeit:** Der QEMU-Monitorbefehl `mouse_move` speist bei einem absoluten Gerät keine Ereignisse ein, weder mit noch ohne Fenster. Gemessen: nach `mouse_move` kommen null Ereignisse vom Typ 3 an, nach `mouse_button` dagegen `EV_KEY` und `EV_SYN`. Mit einem relativen `virtio-mouse-device` bewegt sich der Zeiger über denselben Monitorbefehl sofort. Der gesamte Pfad aus Unterbrechung, Warteschlange und Zeigerdarstellung war also immer in Ordnung. Der Endnachweis für die absolute Eingabe braucht eine echte Mausbewegung im Fenster.
+
+### Weitere bestätigte und behobene Befunde
+
+| Befund | Prüfung | Behebung |
+|---|---|---|
+| `vg_dot` benutzt `w27`, sicherte aber nur `x19` bis `x26` | Im Quelltext nachgezählt: drei Zugriffe auf `w27` bei einem Rahmen ohne dessen Sicherung | Rahmen auf 96 Byte, `x27` gesichert. Verstoss gegen AAPCS64, latent gefährlich, weil `icon_draw` denselben Registerbereich nutzt |
+| `fb_present` prüfte nur auf Breite oder Höhe gleich null | Kein Abschneiden gegen den Bildrand vorhanden | Rechteck wird jetzt beidseitig auf den Bildschirm begrenzt, leere Flächen brechen ab |
+| `vg_edge_add` ordnete Koordinaten mit dem vorzeichenlosen `b.lo` | Kanten über `y = 0` können dadurch verkehrt gespeichert werden | `b.lt`, also vorzeichenbehaftet |
+| `font_fill_row` verglich Zeilengrenzen vorzeichenlos, und die Endzeile wurde nur nach oben begrenzt | Eine Form oberhalb des Bildschirms, etwa `y = -20 … -10`, ergibt Startzeile 0 und Endzeile -9. Vorzeichenlos gelesen sind das 4.294.967.287 | Beide Grenzen beidseitig geklemmt, Vergleich mit `b.ge` |
+| Die Flächenfüllung beachtete den aktiven Zeichenbereich nicht | Nutzte `FB_HEIGHT` statt `fb_clip`, dadurch konnte eine Teilaktualisierung Bildpunkte ausserhalb ihres Rechtecks verändern | Grenzen kommen jetzt aus `fb_clip` |
+| Der Koordinatenversatz stimmte zwischen Konverter und Kernel nicht überein | `iconc.py` schrieb `Koordinate × 8`, der Kernel zog beim Lesen zusätzlich 32 ab. Alle Icons lagen dadurch um vier Designeinheiten versetzt, negative Koordinaten wurden beim Wandeln abgeschnitten | Der Konverter rechnet jetzt `(Koordinate + 4) × 8`. Gegenprobe über 800 Icons: keine einzige Koordinate fällt mehr aus dem Bytebereich. Sichtbar am Ausschaltknopf, dessen Symbol jetzt mittig sitzt |
+
+### Bestätigt, aber bewusst noch offen
+
+`win_repaint` übergibt an `fb_present` weiterhin das ungeklemmte Rechteck, und der Mauszeiger wird vor einer Neuzeichnung nicht entfernt. Beides wirkt erst mit interaktivem Fensterverschieben, das noch fehlt. Die Begrenzung in `fb_present` fängt den gefährlichen Teil inzwischen ab.
+
+Die Prüfung der Schriftdatei ist weiterhin unvollständig: Tabellenlängen, Untertabellen der Zeichenzuordnung und die einzelnen Lesezugriffe innerhalb einer Glyphe sind nicht gegen einen geprüften Bereich abgesichert. Der grobe Rahmen (Tabellenanfang, Glyphenende, Glyphenindex) ist es.
+
+### Berichtigung einer früheren Aussage
+
+In einem früheren Abschnitt steht, ein Fenster über dem Bildrand könne grundsätzlich nicht über den Puffer hinaus schreiben. Diese Aussage galt nur für `fb_fill_rect`. Für `fb_present` traf sie nicht zu, bis der Befund oben behoben wurde.
+
+---
+
+## Animationskern, Schritt 1: die Rechenbasis in 32.32
+
+Umgesetzt nach dem Zusatzplan in Teil F2 von `CLAUDE.md`. Sechs Routinen mit dem Präfix `anim_`, fest im Kernel.
+
+| Routine | Aufgabe |
+|---|---|
+| `anim_one` | Liefert 1,0 im Format 32.32, also 4.294.967.296 |
+| `anim_qmul` | Multipliziert zwei 32.32-Werte über ein 128-Bit-Zwischenergebnis |
+| `anim_lerp` | Interpoliert zwischen Start- und Zielwert |
+| `anim_progress` | Berechnet den Fortschritt aus Zeitstempeln |
+| `anim_ease` | Bildet den Fortschritt über einen Verlauf ab |
+| `anim_to_raster` | Rechnet 32.32 in das 16.16-Format des Renderers um |
+
+### Warum 128 Bit nötig sind
+
+Bei 32.32 ergibt `1,0 × 1,0` vor dem Zurückskalieren 2⁶⁴, also mehr als ein 64-Bit-Register fasst. Die Multiplikation nutzt deshalb `mul` für die untere und `smulh` für die obere Hälfte des Produkts und schiebt das 128-Bit-Ergebnis um 32 zurück. Gerundet wird durch Addition von 2³¹ auf das Doppelwort, mit Übertrag in die obere Hälfte. Das bleibt ein reiner 64-Bit-Kernel.
+
+### Ein Überlauf, der abgefangen ist
+
+Die naheliegende Formel für den Fortschritt lautet `(verstrichen << 32) / dauer`. Bei einem Zeitgeber von 62,5 MHz überläuft die Verschiebung ab **2.147.483.648 Takten, also 34,4 Sekunden Animationsdauer**. Für Oberflächenbewegungen von 220 ms weit entfernt, aber ein stiller Fehlschlag wäre gegen die Projektgesetze.
+
+`anim_progress` prüft deshalb zuerst auf abgelaufene und auf null Dauer und halbiert danach Zähler und Nenner gemeinsam, bis die Verschiebung sicher passt. Dadurch bleibt das Ergebnis auch bei sehr langen Dauern richtig, nur mit weniger Nachkommastellen.
+
+### Referenzvergleich
+
+Jede Routine wurde im laufenden Kernel mit bekannten Werten aufgerufen und gegen eine unabhängige Rechnung geprüft. Alle fünfzehn Fälle stimmen exakt:
+
+| Fall | Kernel | Referenz |
+|---|---:|---:|
+| `1,0 × 1,0` | 1,000000 | 1,000000 |
+| `0,5 × 0,5` | 0,250000 | 0,250000 |
+| `-1,0 × 0,5` | -0,500000 | -0,500000 |
+| Interpolation 0 nach 100 bei 0,5 | 50,000000 | 50,000000 |
+| Interpolation -200 nach 0 bei 0,25 | -150,000000 | -150,000000 |
+| Fortschritt 110 von 220 | 0,500000 | 0,500000 |
+| Fortschritt 300 von 220 | 1,000000 | 1,000000 |
+| Fortschritt bei Dauer null | 1,000000 | 1,000000 |
+| quadratisches Ausklingen bei 0,5 | 0,750000 | 0,750000 |
+| kubisches Ausklingen bei 0,5 | 0,875000 | 0,875000 |
+| sanfter Verlauf bei 0,5 | 0,500000 | 0,500000 |
+| sanfter Verlauf bei 1,0 | 1,000000 | 1,000000 |
+| Umrechnung 1,0 ins Rasterformat | 65536 | 65536 |
+| Umrechnung -1,5 ins Rasterformat | -98304 | -98304 |
+
+Damit sind die im Plan geforderten Punkte belegt: Symmetrie bei negativen Werten, exakte Endpunkte, Dauer null übernimmt sofort den Zielzustand.
+
+Beim Schreiben war die Formel für den sanften Verlauf zunächst falsch, `1 - 2t` statt `3 - 2t`. Aufgefallen beim erneuten Durchlesen vor dem Test, nicht erst durch den Referenzvergleich.
+
+### Noch nicht umgesetzt
+
+Schritt 2 und folgende aus dem Plan: Animationsliste mit Platzkennung und Generation, getrennte Zeitverwaltung für Cursorblinken und Animationsbilder, danach Verschiebung und Ausschnitt. Der Zeitgeber läuft weiterhin mit 2 Hz.
