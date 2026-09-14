@@ -1766,3 +1766,25 @@ Gemessen: `AES-GCM OK, 4 Testvektoren, Manipulation erkannt` unter TCG und hvf, 
 **Fehlersuche AES-GCM (14.09.2026):** Differentialtest mit 64 Fällen (Länge `(i·11) mod 80`, AAD `i mod 37`, Schlüssel, IV, AAD und Klartext aus festen Mustern) gegen `cryptography.AESGCM`: 0 Abweichungen beim Verschlüsseln. Entschlüsseln an Ort und Stelle (`in == out`): vor dem Fix 60 Fehler (alle Längen, die kein Vielfaches von 16 sind), nach dem Fix 0. Ursache in `aes_gcm_run_partial`: GHASH über den Geheimtext wurde nach dem XOR aus `x23` gelesen, also nach dem Überschreiben. Behoben: beim Entschlüsseln wird der Teilblock vor dem XOR gehasht, beim Verschlüsseln danach aus der Ausgabe. Der Selbsttest (`aes_check`) kopiert den Geheimtext jetzt nach `aes_buf` und entschlüsselt dort an Ort und Stelle. Bei ganzen Blöcken war der Weg schon richtig (`ld1` vor `st1`). Zwei Fehler im Testbau selbst (Registerkollision `w3`/`x3`, überlappende Ablage von Schlüssel und IV) wurden erkannt, weil auch Fall 0 mit leerer Nachricht abwich, was die NIST-Vektoren ausschlossen.
 
 Benannt, nicht angefasst: die Grenze von 2³²−2 Blöcken je Nonce wird nicht geprüft (TLS-Records sind höchstens 2¹⁴+256 Byte), `mem_wipe` nimmt die Länge 32-bittig.
+
+## TLS, Baustein 5: X25519 (14.09.2026)
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| Primzahl `p = 2²⁵⁵ − 19`, Darstellung vier 64-Bit-Glieder little-endian | `FE_FOLD` `38` = `2 · 19`, weil `2²⁵⁶ ≡ 38 (mod p)`; Überlauf über 256 Bit wird mit 38 multipliziert und unten addiert, zweimal, danach ist kein Übertrag mehr möglich | RFC 7748, Abschnitt 4.1; Rechnung im Text |
+| `fe_mul` | Schulbuchprodukt 4 × 4 Glieder (`mul`/`umulh`, 16 Paare), 512-Bit-Zwischenergebnis, obere vier Glieder × 38 in die unteren gefaltet | Standardverfahren, z. B. Bernstein, "Curve25519: new Diffie-Hellman speed records" (2006), Abschnitt 4 |
+| `fe_sub` | `a − b` mit Borgen, Borgen × 38 abziehen, zweimal; Maske aus `sbc xzr, xzr` | Rechnung wie oben mit negativem Vorzeichen |
+| `X25519_A24` `121665` | `(486662 − 2) / 4` | RFC 7748, Abschnitt 5, Schritt `z_2 = E · (AA + a24 · E)` |
+| Skalar-Klemmung | Byte 0 `&= 248`, Byte 31 `&= 127`, Byte 31 `\|= 64`; im Code auf 64-Bit-Glieder umgesetzt (`& −8`, `& 2⁶²−1`, `\| 2⁶²`) | RFC 7748, Abschnitt 5, "decodeScalar25519" |
+| u-Koordinate | oberstes Bit maskiert (`& 2⁶³−1` im vierten Glied) | RFC 7748, Abschnitt 5, "decodeUCoordinate" |
+| Montgomery-Leiter | Bit 254 bis 0, bedingter Tausch per `swap ^= k_t`, Formeln A, AA, B, BB, E, C, D, DA, CB, x₃, z₃, x₂, z₂ wortgleich aus dem RFC | RFC 7748, Abschnitt 5, Pseudocode |
+| `fe_cswap` | Maske `−bit`, `t = (a ⊕ b) ∧ Maske`, `a ⊕= t`, `b ⊕= t`, keine Verzweigung | RFC 7748, Abschnitt 5, "cswap … in constant time" |
+| `fe_invert` | `z^(p−2)` über die Kette 2, 9, 11, 2⁵−1, 2¹⁰−1, 2²⁰−1, 2⁴⁰−1, 2⁵⁰−1, 2¹⁰⁰−1, 2²⁰⁰−1, 2²⁵⁰−1, dann 5 Quadrierungen und × z¹¹ = z^(2²⁵⁵−21); 254 Quadrierungen, 11 Multiplikationen | Fermat, `z^(p−2) ≡ z⁻¹`; Kette wie in der Referenzimplementierung `ref10` (public domain), hier neu geschrieben |
+| `fe_tobytes` | zweimal bedingt `p` abziehen (`subs`/`sbcs`, Auswahl per `csel` bei fehlendem Borgen), weil der teilreduzierte Wert bis knapp 2²⁵⁶ ≈ 2p reichen kann | RFC 7748, Abschnitt 5 (Ergebnis "encodeUCoordinate" kanonisch) |
+| Testvektoren | RFC 7748, Abschnitt 5.2 (zwei Einzelrechnungen, Iterationstest nach 1 Durchlauf) und 6.1 (Alice, Bob, gemeinsames Geheimnis) | Werte im Erzeugungsskript mit `cryptography` (`X25519PrivateKey`) nachgerechnet und gegen die Anfangsbytes `c3da5537`, `95cbde94`, `8520f009`, `de9edb7d`, `4a5d9d5b`, `422c8e7a` geprüft |
+
+Konstante Laufzeit: keine Verzweigung hängt vom Skalar oder von Zwischenwerten ab (Schleifenzähler feste 255 Schritte, Tausch per Maske, Reduktion per `csel`). `mul` und `umulh` gelten auf Cortex-A72 und Apple Silicon als datenunabhängig in der Laufzeit; das ist eine Annahme über die Mikroarchitektur, kein Beleg aus dem ARM ARM, und für den Pi 5 (Cortex-A76) gesondert zu prüfen.
+
+Nicht enthalten: Prüfung auf Ergebnis 0 (RFC 7748, Abschnitt 6.1, "MAY check"), der 1.000er-Iterationstest (rund 400 Mio. Befehle, zu teuer für jeden Start), Beschleunigung über Radix 2⁵¹ oder Karatsuba.
+
+Gemessen: `X25519 OK, 6 Testvektoren` unter TCG und hvf, sechs Vereinbarungen 2,5 Mio. Befehle (`fe_mul` 1,89 Mio.), Start 479,3 Mio., Bild unverändert.

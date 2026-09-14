@@ -759,6 +759,31 @@
 .equ GCM_FRAME_OUT,         136
 .equ GCM_FRAME_SIZE,        144
 .equ AES_TEST_MAX,          64
+.equ FE_SIZE,               32
+.equ FE_FOLD,               38
+.equ X25519_A24,            121665
+.equ X25519_FRAME_K,        64
+.equ X25519_FRAME_X1,       96
+.equ X25519_FRAME_X2,       128
+.equ X25519_FRAME_Z2,       160
+.equ X25519_FRAME_X3,       192
+.equ X25519_FRAME_Z3,       224
+.equ X25519_FRAME_A,        256
+.equ X25519_FRAME_AA,       288
+.equ X25519_FRAME_B,        320
+.equ X25519_FRAME_BB,       352
+.equ X25519_FRAME_E,        384
+.equ X25519_FRAME_C,        416
+.equ X25519_FRAME_D,        448
+.equ X25519_FRAME_DA,       480
+.equ X25519_FRAME_CB,       512
+.equ X25519_FRAME_T,        544
+.equ X25519_FRAME_SIZE,     576
+.equ FE_INV_T0,             32
+.equ FE_INV_T1,             64
+.equ FE_INV_T2,             96
+.equ FE_INV_T3,             128
+.equ FE_INV_FRAME,          160
 .equ PMM_SELFTEST,          0
 .equ FS_SELFTEST,          0
 .equ FS_SELFTEST_BIG,       0
@@ -10261,6 +10286,7 @@ crypto_selftest:
     bl      sha_selftest
     bl      hmac_selftest
     bl      aes_selftest
+    bl      x25519_selftest
     ldp     x29, x30, [sp], #16
     ret
 
@@ -11102,6 +11128,468 @@ aes_selftest_missing:
     bl      uart_puts
 
 aes_selftest_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+
+.macro fe_row a, r0, r1, r2, r3, r4
+    mul     x20, \a, x7
+    mul     x21, \a, x8
+    mul     x22, \a, x9
+    mul     x23, \a, x10
+    adds    \r0, \r0, x20
+    adcs    \r1, \r1, x21
+    adcs    \r2, \r2, x22
+    adcs    \r3, \r3, x23
+    adc     \r4, xzr, xzr
+    umulh   x20, \a, x7
+    umulh   x21, \a, x8
+    umulh   x22, \a, x9
+    umulh   x23, \a, x10
+    adds    \r1, \r1, x20
+    adcs    \r2, \r2, x21
+    adcs    \r3, \r3, x22
+    adc     \r4, \r4, x23
+.endm
+
+.macro fe_call fn, d, a, b
+    add     x0, sp, #\d
+    add     x1, sp, #\a
+    add     x2, sp, #\b
+    bl      \fn
+.endm
+
+.macro fe_call2 fn, d, a
+    add     x0, sp, #\d
+    add     x1, sp, #\a
+    bl      \fn
+.endm
+
+fe_mul:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    str     x23, [sp, #48]
+    ldp     x3, x4, [x1]
+    ldp     x5, x6, [x1, #16]
+    ldp     x7, x8, [x2]
+    ldp     x9, x10, [x2, #16]
+    mov     x11, #0
+    mov     x12, #0
+    mov     x13, #0
+    mov     x14, #0
+    mov     x15, #0
+    mov     x16, #0
+    mov     x17, #0
+    mov     x19, #0
+    fe_row  x3, x11, x12, x13, x14, x15
+    fe_row  x4, x12, x13, x14, x15, x16
+    fe_row  x5, x13, x14, x15, x16, x17
+    fe_row  x6, x14, x15, x16, x17, x19
+    mov     x20, #FE_FOLD
+    mul     x21, x15, x20
+    umulh   x15, x15, x20
+    mul     x22, x16, x20
+    umulh   x16, x16, x20
+    mul     x23, x17, x20
+    umulh   x17, x17, x20
+    mul     x3, x19, x20
+    umulh   x19, x19, x20
+    adds    x11, x11, x21
+    adcs    x12, x12, x22
+    adcs    x13, x13, x23
+    adcs    x14, x14, x3
+    adc     x4, xzr, xzr
+    adds    x12, x12, x15
+    adcs    x13, x13, x16
+    adcs    x14, x14, x17
+    adc     x4, x4, x19
+    mul     x4, x4, x20
+    adds    x11, x11, x4
+    adcs    x12, x12, xzr
+    adcs    x13, x13, xzr
+    adcs    x14, x14, xzr
+    adc     x4, xzr, xzr
+    mul     x4, x4, x20
+    adds    x11, x11, x4
+    adcs    x12, x12, xzr
+    adcs    x13, x13, xzr
+    adc     x14, x14, xzr
+    stp     x11, x12, [x0]
+    stp     x13, x14, [x0, #16]
+    ldr     x23, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+    ret
+
+fe_sqr:
+    mov     x2, x1
+    b       fe_mul
+
+fe_sqr_n:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, w2
+    mov     x2, x1
+    bl      fe_mul
+    sub     w20, w20, #1
+
+fe_sqr_n_loop:
+    cbz     w20, fe_sqr_n_done
+    mov     x0, x19
+    mov     x1, x19
+    mov     x2, x19
+    bl      fe_mul
+    sub     w20, w20, #1
+    b       fe_sqr_n_loop
+
+fe_sqr_n_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+fe_add:
+    ldp     x3, x4, [x1]
+    ldp     x5, x6, [x1, #16]
+    ldp     x7, x8, [x2]
+    ldp     x9, x10, [x2, #16]
+    adds    x3, x3, x7
+    adcs    x4, x4, x8
+    adcs    x5, x5, x9
+    adcs    x6, x6, x10
+    adc     x7, xzr, xzr
+    mov     x8, #FE_FOLD
+    mul     x7, x7, x8
+    adds    x3, x3, x7
+    adcs    x4, x4, xzr
+    adcs    x5, x5, xzr
+    adcs    x6, x6, xzr
+    adc     x7, xzr, xzr
+    mul     x7, x7, x8
+    adds    x3, x3, x7
+    adcs    x4, x4, xzr
+    adcs    x5, x5, xzr
+    adc     x6, x6, xzr
+    stp     x3, x4, [x0]
+    stp     x5, x6, [x0, #16]
+    ret
+
+fe_sub:
+    ldp     x3, x4, [x1]
+    ldp     x5, x6, [x1, #16]
+    ldp     x7, x8, [x2]
+    ldp     x9, x10, [x2, #16]
+    subs    x3, x3, x7
+    sbcs    x4, x4, x8
+    sbcs    x5, x5, x9
+    sbcs    x6, x6, x10
+    sbc     x7, xzr, xzr
+    mov     x8, #FE_FOLD
+    and     x7, x7, x8
+    subs    x3, x3, x7
+    sbcs    x4, x4, xzr
+    sbcs    x5, x5, xzr
+    sbcs    x6, x6, xzr
+    sbc     x7, xzr, xzr
+    and     x7, x7, x8
+    subs    x3, x3, x7
+    sbcs    x4, x4, xzr
+    sbcs    x5, x5, xzr
+    sbc     x6, x6, xzr
+    stp     x3, x4, [x0]
+    stp     x5, x6, [x0, #16]
+    ret
+
+fe_mul_a24:
+    ldp     x3, x4, [x1]
+    ldp     x5, x6, [x1, #16]
+    ldr     x8, =X25519_A24
+    mul     x9, x3, x8
+    umulh   x10, x3, x8
+    mul     x11, x4, x8
+    umulh   x12, x4, x8
+    mul     x13, x5, x8
+    umulh   x14, x5, x8
+    mul     x15, x6, x8
+    umulh   x16, x6, x8
+    adds    x11, x11, x10
+    adcs    x13, x13, x12
+    adcs    x15, x15, x14
+    adc     x16, x16, xzr
+    mov     x8, #FE_FOLD
+    mul     x16, x16, x8
+    adds    x9, x9, x16
+    adcs    x11, x11, xzr
+    adcs    x13, x13, xzr
+    adcs    x15, x15, xzr
+    adc     x16, xzr, xzr
+    mul     x16, x16, x8
+    adds    x9, x9, x16
+    adcs    x11, x11, xzr
+    adcs    x13, x13, xzr
+    adc     x15, x15, xzr
+    stp     x9, x11, [x0]
+    stp     x13, x15, [x0, #16]
+    ret
+
+fe_cswap:
+    sub     x2, xzr, x2
+    ldp     x3, x4, [x0]
+    ldp     x5, x6, [x0, #16]
+    ldp     x7, x8, [x1]
+    ldp     x9, x10, [x1, #16]
+    eor     x11, x3, x7
+    and     x11, x11, x2
+    eor     x3, x3, x11
+    eor     x7, x7, x11
+    eor     x11, x4, x8
+    and     x11, x11, x2
+    eor     x4, x4, x11
+    eor     x8, x8, x11
+    eor     x11, x5, x9
+    and     x11, x11, x2
+    eor     x5, x5, x11
+    eor     x9, x9, x11
+    eor     x11, x6, x10
+    and     x11, x11, x2
+    eor     x6, x6, x11
+    eor     x10, x10, x11
+    stp     x3, x4, [x0]
+    stp     x5, x6, [x0, #16]
+    stp     x7, x8, [x1]
+    stp     x9, x10, [x1, #16]
+    ret
+
+fe_frombytes:
+    ldp     x3, x4, [x1]
+    ldp     x5, x6, [x1, #16]
+    and     x6, x6, #0x7fffffffffffffff
+    stp     x3, x4, [x0]
+    stp     x5, x6, [x0, #16]
+    ret
+
+fe_tobytes:
+    ldp     x3, x4, [x1]
+    ldp     x5, x6, [x1, #16]
+    mov     x7, #-19
+    mov     x8, #-1
+    mov     x9, #0x7fffffffffffffff
+    subs    x10, x3, x7
+    sbcs    x11, x4, x8
+    sbcs    x12, x5, x8
+    sbcs    x13, x6, x9
+    csel    x3, x3, x10, lo
+    csel    x4, x4, x11, lo
+    csel    x5, x5, x12, lo
+    csel    x6, x6, x13, lo
+    subs    x10, x3, x7
+    sbcs    x11, x4, x8
+    sbcs    x12, x5, x8
+    sbcs    x13, x6, x9
+    csel    x3, x3, x10, lo
+    csel    x4, x4, x11, lo
+    csel    x5, x5, x12, lo
+    csel    x6, x6, x13, lo
+    stp     x3, x4, [x0]
+    stp     x5, x6, [x0, #16]
+    ret
+
+fe_invert:
+    stp     x29, x30, [sp, #-FE_INV_FRAME]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x1
+    add     x0, sp, #FE_INV_T0
+    mov     x1, x20
+    bl      fe_sqr
+    fe_call2 fe_sqr, FE_INV_T1, FE_INV_T0
+    fe_call2 fe_sqr, FE_INV_T1, FE_INV_T1
+    add     x0, sp, #FE_INV_T1
+    mov     x1, x20
+    add     x2, sp, #FE_INV_T1
+    bl      fe_mul
+    fe_call fe_mul, FE_INV_T0, FE_INV_T0, FE_INV_T1
+    fe_call2 fe_sqr, FE_INV_T2, FE_INV_T0
+    fe_call fe_mul, FE_INV_T1, FE_INV_T1, FE_INV_T2
+    mov     w2, #5
+    fe_call2 fe_sqr_n, FE_INV_T2, FE_INV_T1
+    fe_call fe_mul, FE_INV_T1, FE_INV_T2, FE_INV_T1
+    mov     w2, #10
+    fe_call2 fe_sqr_n, FE_INV_T2, FE_INV_T1
+    fe_call fe_mul, FE_INV_T2, FE_INV_T2, FE_INV_T1
+    mov     w2, #20
+    fe_call2 fe_sqr_n, FE_INV_T3, FE_INV_T2
+    fe_call fe_mul, FE_INV_T2, FE_INV_T3, FE_INV_T2
+    mov     w2, #10
+    fe_call2 fe_sqr_n, FE_INV_T2, FE_INV_T2
+    fe_call fe_mul, FE_INV_T1, FE_INV_T2, FE_INV_T1
+    mov     w2, #50
+    fe_call2 fe_sqr_n, FE_INV_T2, FE_INV_T1
+    fe_call fe_mul, FE_INV_T2, FE_INV_T2, FE_INV_T1
+    mov     w2, #100
+    fe_call2 fe_sqr_n, FE_INV_T3, FE_INV_T2
+    fe_call fe_mul, FE_INV_T2, FE_INV_T3, FE_INV_T2
+    mov     w2, #50
+    fe_call2 fe_sqr_n, FE_INV_T2, FE_INV_T2
+    fe_call fe_mul, FE_INV_T1, FE_INV_T2, FE_INV_T1
+    mov     w2, #5
+    fe_call2 fe_sqr_n, FE_INV_T1, FE_INV_T1
+    mov     x0, x19
+    add     x1, sp, #FE_INV_T1
+    add     x2, sp, #FE_INV_T0
+    bl      fe_mul
+    add     x0, sp, #FE_INV_T0
+    mov     w1, #(FE_SIZE * 4)
+    bl      mem_wipe
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #FE_INV_FRAME
+    ret
+
+x25519_base:
+    stp     x29, x30, [sp, #-48]!
+    mov     x2, #9
+    stp     x2, xzr, [sp, #16]
+    stp     xzr, xzr, [sp, #32]
+    add     x2, sp, #16
+    bl      x25519
+    ldp     x29, x30, [sp], #48
+    ret
+
+x25519:
+    sub     sp, sp, #X25519_FRAME_SIZE
+    stp     x29, x30, [sp]
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     x19, x0
+    ldp     x3, x4, [x1]
+    ldp     x5, x6, [x1, #16]
+    and     x3, x3, #-8
+    and     x6, x6, #0x3fffffffffffffff
+    orr     x6, x6, #0x4000000000000000
+    stp     x3, x4, [sp, #X25519_FRAME_K]
+    stp     x5, x6, [sp, #(X25519_FRAME_K + 16)]
+    add     x0, sp, #X25519_FRAME_X1
+    mov     x1, x2
+    bl      fe_frombytes
+    ldp     x3, x4, [sp, #X25519_FRAME_X1]
+    ldp     x5, x6, [sp, #(X25519_FRAME_X1 + 16)]
+    stp     x3, x4, [sp, #X25519_FRAME_X3]
+    stp     x5, x6, [sp, #(X25519_FRAME_X3 + 16)]
+    mov     x3, #1
+    stp     x3, xzr, [sp, #X25519_FRAME_X2]
+    stp     xzr, xzr, [sp, #(X25519_FRAME_X2 + 16)]
+    stp     xzr, xzr, [sp, #X25519_FRAME_Z2]
+    stp     xzr, xzr, [sp, #(X25519_FRAME_Z2 + 16)]
+    stp     x3, xzr, [sp, #X25519_FRAME_Z3]
+    stp     xzr, xzr, [sp, #(X25519_FRAME_Z3 + 16)]
+    mov     x20, #254
+    mov     x21, #0
+
+x25519_ladder:
+    lsr     x5, x20, #6
+    add     x3, sp, #X25519_FRAME_K
+    ldr     x4, [x3, x5, lsl #3]
+    and     x6, x20, #63
+    lsr     x4, x4, x6
+    and     x22, x4, #1
+    eor     x23, x21, x22
+    mov     x21, x22
+    add     x0, sp, #X25519_FRAME_X2
+    add     x1, sp, #X25519_FRAME_X3
+    mov     x2, x23
+    bl      fe_cswap
+    add     x0, sp, #X25519_FRAME_Z2
+    add     x1, sp, #X25519_FRAME_Z3
+    mov     x2, x23
+    bl      fe_cswap
+    fe_call fe_add, X25519_FRAME_A, X25519_FRAME_X2, X25519_FRAME_Z2
+    fe_call2 fe_sqr, X25519_FRAME_AA, X25519_FRAME_A
+    fe_call fe_sub, X25519_FRAME_B, X25519_FRAME_X2, X25519_FRAME_Z2
+    fe_call2 fe_sqr, X25519_FRAME_BB, X25519_FRAME_B
+    fe_call fe_sub, X25519_FRAME_E, X25519_FRAME_AA, X25519_FRAME_BB
+    fe_call fe_add, X25519_FRAME_C, X25519_FRAME_X3, X25519_FRAME_Z3
+    fe_call fe_sub, X25519_FRAME_D, X25519_FRAME_X3, X25519_FRAME_Z3
+    fe_call fe_mul, X25519_FRAME_DA, X25519_FRAME_D, X25519_FRAME_A
+    fe_call fe_mul, X25519_FRAME_CB, X25519_FRAME_C, X25519_FRAME_B
+    fe_call fe_add, X25519_FRAME_T, X25519_FRAME_DA, X25519_FRAME_CB
+    fe_call2 fe_sqr, X25519_FRAME_X3, X25519_FRAME_T
+    fe_call fe_sub, X25519_FRAME_T, X25519_FRAME_DA, X25519_FRAME_CB
+    fe_call2 fe_sqr, X25519_FRAME_T, X25519_FRAME_T
+    fe_call fe_mul, X25519_FRAME_Z3, X25519_FRAME_X1, X25519_FRAME_T
+    fe_call fe_mul, X25519_FRAME_X2, X25519_FRAME_AA, X25519_FRAME_BB
+    fe_call2 fe_mul_a24, X25519_FRAME_T, X25519_FRAME_E
+    fe_call fe_add, X25519_FRAME_T, X25519_FRAME_AA, X25519_FRAME_T
+    fe_call fe_mul, X25519_FRAME_Z2, X25519_FRAME_E, X25519_FRAME_T
+    subs    x20, x20, #1
+    b.ge    x25519_ladder
+    add     x0, sp, #X25519_FRAME_X2
+    add     x1, sp, #X25519_FRAME_X3
+    mov     x2, x21
+    bl      fe_cswap
+    add     x0, sp, #X25519_FRAME_Z2
+    add     x1, sp, #X25519_FRAME_Z3
+    mov     x2, x21
+    bl      fe_cswap
+    fe_call2 fe_invert, X25519_FRAME_T, X25519_FRAME_Z2
+    fe_call fe_mul, X25519_FRAME_T, X25519_FRAME_X2, X25519_FRAME_T
+    mov     x0, x19
+    add     x1, sp, #X25519_FRAME_T
+    bl      fe_tobytes
+    add     x0, sp, #X25519_FRAME_K
+    mov     w1, #(X25519_FRAME_SIZE - X25519_FRAME_K)
+    bl      mem_wipe
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp]
+    add     sp, sp, #X25519_FRAME_SIZE
+    ret
+
+x25519_selftest:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     w19, #0
+    ladr    x20, x25519_cases
+
+x25519_selftest_loop:
+    cmp     w19, #6
+    b.hs    x25519_selftest_ok
+    ldp     x1, x2, [x20]
+    ladr    x0, sha_digest
+    cbz     x2, x25519_selftest_base
+    bl      x25519
+    b       x25519_selftest_compare
+
+x25519_selftest_base:
+    bl      x25519_base
+
+x25519_selftest_compare:
+    ladr    x0, sha_digest
+    ldr     x1, [x20, #16]
+    bl      sha_compare
+    cbnz    w0, x25519_selftest_fail
+    add     w19, w19, #1
+    add     x20, x20, #24
+    b       x25519_selftest_loop
+
+x25519_selftest_ok:
+    ladr    x0, x25519_ok_msg
+    bl      uart_puts
+    b       x25519_selftest_done
+
+x25519_selftest_fail:
+    ladr    x0, x25519_fail_msg
+    bl      uart_puts
+    add     w0, w19, #1
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+
+x25519_selftest_done:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
@@ -11990,6 +12478,66 @@ aes_case_4_ct:
     .byte   0x1b,0xa3,0x0b,0x39,0x6a,0x0a,0xac,0x97,0x3d,0x58,0xe0,0x91
 aes_case_4_tag:
     .byte   0x5b,0xc9,0x4f,0xbc,0x32,0x21,0xa5,0xdb,0x94,0xfa,0xe9,0x5a,0xe7,0x12,0x1a,0x47
+x25519_ok_msg:
+    .asciz  "X25519 OK, 6 Testvektoren\r\n"
+x25519_fail_msg:
+    .asciz  "X25519 FEHLER Test "
+.balign 8
+x25519_cases:
+    .quad   x25519_k_1, x25519_u_1, x25519_e_1
+    .quad   x25519_k_2, x25519_u_2, x25519_e_2
+    .quad   x25519_k_3, 0, x25519_e_3
+    .quad   x25519_k_4, 0, x25519_e_4
+    .quad   x25519_k_5, x25519_u_5, x25519_e_5
+    .quad   x25519_k_6, x25519_u_6, x25519_e_6
+x25519_k_1:
+    .byte   0xa5,0x46,0xe3,0x6b,0xf0,0x52,0x7c,0x9d,0x3b,0x16,0x15,0x4b,0x82,0x46,0x5e,0xdd
+    .byte   0x62,0x14,0x4c,0x0a,0xc1,0xfc,0x5a,0x18,0x50,0x6a,0x22,0x44,0xba,0x44,0x9a,0xc4
+x25519_u_1:
+    .byte   0xe6,0xdb,0x68,0x67,0x58,0x30,0x30,0xdb,0x35,0x94,0xc1,0xa4,0x24,0xb1,0x5f,0x7c
+    .byte   0x72,0x66,0x24,0xec,0x26,0xb3,0x35,0x3b,0x10,0xa9,0x03,0xa6,0xd0,0xab,0x1c,0x4c
+x25519_e_1:
+    .byte   0xc3,0xda,0x55,0x37,0x9d,0xe9,0xc6,0x90,0x8e,0x94,0xea,0x4d,0xf2,0x8d,0x08,0x4f
+    .byte   0x32,0xec,0xcf,0x03,0x49,0x1c,0x71,0xf7,0x54,0xb4,0x07,0x55,0x77,0xa2,0x85,0x52
+x25519_k_2:
+    .byte   0x4b,0x66,0xe9,0xd4,0xd1,0xb4,0x67,0x3c,0x5a,0xd2,0x26,0x91,0x95,0x7d,0x6a,0xf5
+    .byte   0xc1,0x1b,0x64,0x21,0xe0,0xea,0x01,0xd4,0x2c,0xa4,0x16,0x9e,0x79,0x18,0xba,0x0d
+x25519_u_2:
+    .byte   0xe5,0x21,0x0f,0x12,0x78,0x68,0x11,0xd3,0xf4,0xb7,0x95,0x9d,0x05,0x38,0xae,0x2c
+    .byte   0x31,0xdb,0xe7,0x10,0x6f,0xc0,0x3c,0x3e,0xfc,0x4c,0xd5,0x49,0xc7,0x15,0xa4,0x93
+x25519_e_2:
+    .byte   0x95,0xcb,0xde,0x94,0x76,0xe8,0x90,0x7d,0x7a,0xad,0xe4,0x5c,0xb4,0xb8,0x73,0xf8
+    .byte   0x8b,0x59,0x5a,0x68,0x79,0x9f,0xa1,0x52,0xe6,0xf8,0xf7,0x64,0x7a,0xac,0x79,0x57
+x25519_k_3:
+    .byte   0x77,0x07,0x6d,0x0a,0x73,0x18,0xa5,0x7d,0x3c,0x16,0xc1,0x72,0x51,0xb2,0x66,0x45
+    .byte   0xdf,0x4c,0x2f,0x87,0xeb,0xc0,0x99,0x2a,0xb1,0x77,0xfb,0xa5,0x1d,0xb9,0x2c,0x2a
+x25519_e_3:
+    .byte   0x85,0x20,0xf0,0x09,0x89,0x30,0xa7,0x54,0x74,0x8b,0x7d,0xdc,0xb4,0x3e,0xf7,0x5a
+    .byte   0x0d,0xbf,0x3a,0x0d,0x26,0x38,0x1a,0xf4,0xeb,0xa4,0xa9,0x8e,0xaa,0x9b,0x4e,0x6a
+x25519_k_4:
+    .byte   0x5d,0xab,0x08,0x7e,0x62,0x4a,0x8a,0x4b,0x79,0xe1,0x7f,0x8b,0x83,0x80,0x0e,0xe6
+    .byte   0x6f,0x3b,0xb1,0x29,0x26,0x18,0xb6,0xfd,0x1c,0x2f,0x8b,0x27,0xff,0x88,0xe0,0xeb
+x25519_e_4:
+    .byte   0xde,0x9e,0xdb,0x7d,0x7b,0x7d,0xc1,0xb4,0xd3,0x5b,0x61,0xc2,0xec,0xe4,0x35,0x37
+    .byte   0x3f,0x83,0x43,0xc8,0x5b,0x78,0x67,0x4d,0xad,0xfc,0x7e,0x14,0x6f,0x88,0x2b,0x4f
+x25519_k_5:
+    .byte   0x77,0x07,0x6d,0x0a,0x73,0x18,0xa5,0x7d,0x3c,0x16,0xc1,0x72,0x51,0xb2,0x66,0x45
+    .byte   0xdf,0x4c,0x2f,0x87,0xeb,0xc0,0x99,0x2a,0xb1,0x77,0xfb,0xa5,0x1d,0xb9,0x2c,0x2a
+x25519_u_5:
+    .byte   0xde,0x9e,0xdb,0x7d,0x7b,0x7d,0xc1,0xb4,0xd3,0x5b,0x61,0xc2,0xec,0xe4,0x35,0x37
+    .byte   0x3f,0x83,0x43,0xc8,0x5b,0x78,0x67,0x4d,0xad,0xfc,0x7e,0x14,0x6f,0x88,0x2b,0x4f
+x25519_e_5:
+    .byte   0x4a,0x5d,0x9d,0x5b,0xa4,0xce,0x2d,0xe1,0x72,0x8e,0x3b,0xf4,0x80,0x35,0x0f,0x25
+    .byte   0xe0,0x7e,0x21,0xc9,0x47,0xd1,0x9e,0x33,0x76,0xf0,0x9b,0x3c,0x1e,0x16,0x17,0x42
+x25519_k_6:
+    .byte   0x09,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+    .byte   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+x25519_u_6:
+    .byte   0x09,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+    .byte   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+x25519_e_6:
+    .byte   0x42,0x2c,0x8e,0x7a,0x62,0x27,0xd7,0xbc,0xa1,0x35,0x0b,0x3e,0x2b,0xb7,0x27,0x9f
+    .byte   0x78,0x97,0xb8,0x7b,0xb6,0x85,0x4b,0x78,0x3c,0x60,0xe8,0x03,0x11,0xae,0x30,0x79
 .section .bss
 
 .balign 8
