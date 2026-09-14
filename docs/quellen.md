@@ -1579,3 +1579,18 @@ Empfang läuft per Abfrage aus der Hauptschleife (`net_poll` in `console_drain`)
 Ablauf: `DHCPDISCOVER` (Quelle 0.0.0.0, Ziel 255.255.255.255, Broadcast-Flag), `DHCPOFFER` liefert `yiaddr` und Server-Kennung, `DHCPREQUEST` mit Option 50 und 54, weiterhin Quelle 0.0.0.0, `DHCPACK` setzt Adresse, Gateway, DNS und Maske. Erst danach ARP an das Gateway und Ping. Solange keine Adresse gebunden ist, nimmt der IP-Empfang jedes Ziel an, verarbeitet aber nur UDP-Port 68.
 
 Gemessen im QEMU-Nutzermodus: `DHCP ip 10.0.2.15 gw 10.0.2.2 dns 10.0.2.3 mask 255.255.255.0`, deckungsgleich mit der QEMU-Dokumentation.
+
+## Netzwerk, Stufe 5: DNS (14.09.2026)
+
+| Symbol im Code | Wert | Beleg |
+|---|---|---|
+| `UDP_PORT_DNS` | `53` | RFC 1035, Abschnitt 4.2.1 |
+| DNS-Kopf: ID 0, Flags 2, QDCOUNT 4, ANCOUNT 6, NSCOUNT 8, ARCOUNT 10 | 12 Byte | RFC 1035, Abschnitt 4.1.1 |
+| `DNS_FLAG_RD` `0x0100`, `DNS_FLAG_QR` `0x8000`, RCODE in den unteren 4 Bit | | RFC 1035, Abschnitt 4.1.1 |
+| Namensform: Längenbyte gefolgt von Zeichen je Label, abgeschlossen mit 0, Label höchstens 63 Zeichen | | RFC 1035, Abschnitt 3.1 und 2.3.4 |
+| Kompressionszeiger: zwei Byte, obere zwei Bit `11` | beim Überspringen von Namen in Antworten | RFC 1035, Abschnitt 4.1.4 |
+| Ressourceneintrag: Name, TYPE 2, CLASS 2, TTL 4, RDLENGTH 2, RDATA | `DNS_TYPE_A` 1, `DNS_CLASS_IN` 1, RDATA eines A-Eintrags ist 4 Byte | RFC 1035, Abschnitt 3.2.1 und 3.4.1 |
+| `UDP_PORT_DNS_LOCAL` `4321`, `DNS_ID_VALUE` `0x6173` | fester Quellport und feste Kennung, Antworten mit anderer Kennung werden verworfen. Für eine einzelne Testanfrage ausreichend; echte Zufallswerte gegen Cache-Poisoning (RFC 5452) sind offen |
+| `DNS_RETRY_TICKS` `90`, `DNS_RETRY_MAX` `3` | Wiederholung nach drei Sekunden, drei Versuche, dann `DNS KEINE ANTWORT` |
+
+Der Nutzermodus von QEMU leitet Anfragen an `10.0.2.3` an den Resolver des Hosts weiter. Gemessen: `DNS example.com = 104.20.23.154`. Der Wert hängt vom Resolver ab und ist kein Beleg für eine Adresse, nur dafür, dass Anfrage und Antwort korrekt gebaut und ausgewertet werden. Alle Längen werden gegen das Ende des empfangenen Pakets geprüft, bevor gelesen wird.

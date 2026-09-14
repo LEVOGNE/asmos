@@ -263,6 +263,25 @@
 .equ DHCP_STATE_BOUND,      3
 .equ DHCP_RETRY_TICKS,      60
 .equ DHCP_RETRY_MAX,        5
+.equ UDP_PORT_DNS,          53
+.equ UDP_PORT_DNS_LOCAL,    4321
+.equ DNS_ID,                0
+.equ DNS_FLAGS,             2
+.equ DNS_QDCOUNT,           4
+.equ DNS_ANCOUNT,           6
+.equ DNS_HDR_SIZE,          12
+.equ DNS_FLAG_RD,           0x0100
+.equ DNS_FLAG_QR,           0x8000
+.equ DNS_RCODE_MASK,        0x000f
+.equ DNS_TYPE_A,            1
+.equ DNS_CLASS_IN,          1
+.equ DNS_ID_VALUE,          0x6173
+.equ DNS_NAME_MAX,          64
+.equ DNS_RETRY_TICKS,       90
+.equ DNS_RETRY_MAX,         3
+.equ DNS_STATE_NONE,        0
+.equ DNS_STATE_SENT,        1
+.equ DNS_STATE_DONE,        2
 .equ NET_STATE_IDLE,        0
 .equ NET_STATE_ARP_SENT,    1
 .equ NET_STATE_ARP_OK,      2
@@ -7851,6 +7870,7 @@ net_poll:
     stp     x29, x30, [sp, #-32]!
     stp     x19, x20, [sp, #16]
     bl      dhcp_tick
+    bl      dns_tick
 
 net_poll_loop:
     ladr    x19, net_rx_used
@@ -8335,6 +8355,8 @@ net_ip_handle_proto:
     strb    w1, [x0]
     ladr    x0, net_ping_msg
     bl      uart_puts
+    ladr    x0, dns_test_name
+    bl      dns_query
     b       net_ip_handle_done
 
 net_ip_handle_udp:
@@ -8367,11 +8389,20 @@ net_udp_handle:
     mov     x0, x19
     mov     x1, #UDP_DST
     bl      mem_read16be
+    mov     w1, #UDP_PORT_DNS_LOCAL
+    cmp     w0, w1
+    b.eq    net_udp_handle_dns
     cmp     w0, #UDP_PORT_DHCP_CLIENT
     b.ne    net_udp_handle_done
     add     x0, x19, #UDP_HDR_SIZE
     sub     w1, w20, #UDP_HDR_SIZE
     bl      dhcp_handle
+    b       net_udp_handle_done
+
+net_udp_handle_dns:
+    add     x0, x19, #UDP_HDR_SIZE
+    sub     w1, w20, #UDP_HDR_SIZE
+    bl      dns_handle
 
 net_udp_handle_done:
     ldp     x19, x20, [sp, #16]
@@ -8696,6 +8727,261 @@ dhcp_handle_done:
     ldp     x29, x30, [sp], #64
 
 dhcp_handle_ret:
+    ret
+
+
+dns_query:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x21, x0
+    ladr    x0, dns_state
+    mov     w1, #DNS_STATE_SENT
+    strb    w1, [x0]
+    ladr    x0, dns_timer
+    str     wzr, [x0]
+    ladr    x22, net_tx_buf
+    add     x22, x22, #(NET_HDR_SIZE + ETH_HDR_SIZE + IP_HDR_SIZE + UDP_HDR_SIZE)
+    mov     x0, x21
+    add     x1, x22, #DNS_HDR_SIZE
+    bl      dns_encode_name
+    mov     x19, x0
+    mov     x1, #0
+    mov     w2, #DNS_TYPE_A
+    bl      mem_write16be
+    mov     x0, x19
+    mov     x1, #2
+    mov     w2, #DNS_CLASS_IN
+    bl      mem_write16be
+    add     x19, x19, #4
+    sub     x20, x19, x22
+    ladr    x0, net_gw_mac
+    ladr    x1, net_dns
+    ldr     w1, [x1]
+    mov     w2, #UDP_PORT_DNS_LOCAL
+    mov     w3, #UDP_PORT_DNS
+    mov     w4, w20
+    bl      net_udp_begin
+    mov     w20, w1
+    mov     x0, x22
+    mov     x1, #DNS_ID
+    mov     w2, #DNS_ID_VALUE
+    bl      mem_write16be
+    mov     x0, x22
+    mov     x1, #DNS_FLAGS
+    mov     w2, #DNS_FLAG_RD
+    bl      mem_write16be
+    mov     x0, x22
+    mov     x1, #DNS_QDCOUNT
+    mov     w2, #1
+    bl      mem_write16be
+    strh    wzr, [x22, #DNS_ANCOUNT]
+    str     wzr, [x22, #8]
+    mov     w0, w20
+    bl      net_send
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+dns_encode_name:
+    mov     x2, x1
+    add     x1, x1, #1
+    mov     w3, #0
+
+dns_encode_loop:
+    ldrb    w4, [x0], #1
+    cbz     w4, dns_encode_end
+    cmp     w4, #0x2e
+    b.eq    dns_encode_dot
+    strb    w4, [x1], #1
+    add     w3, w3, #1
+    cmp     w3, #63
+    b.lo    dns_encode_loop
+    b       dns_encode_end
+
+dns_encode_dot:
+    strb    w3, [x2]
+    mov     x2, x1
+    add     x1, x1, #1
+    mov     w3, #0
+    b       dns_encode_loop
+
+dns_encode_end:
+    strb    w3, [x2]
+    strb    wzr, [x1], #1
+    mov     x0, x1
+    ret
+
+dns_skip_name:
+    ldrb    w2, [x0]
+    cbz     w2, dns_skip_name_end
+    and     w3, w2, #0xc0
+    cmp     w3, #0xc0
+    b.eq    dns_skip_name_ptr
+    add     x0, x0, #1
+    add     x0, x0, x2
+    b       dns_skip_name
+
+dns_skip_name_ptr:
+    add     x0, x0, #2
+    ret
+
+dns_skip_name_end:
+    add     x0, x0, #1
+    ret
+
+dns_handle:
+    cmp     w1, #DNS_HDR_SIZE
+    b.lo    dns_handle_ret
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x0
+    add     x20, x19, x1
+    ladr    x0, dns_state
+    ldrb    w0, [x0]
+    cmp     w0, #DNS_STATE_SENT
+    b.ne    dns_handle_done
+    mov     x0, x19
+    mov     x1, #DNS_ID
+    bl      mem_read16be
+    mov     w1, #DNS_ID_VALUE
+    cmp     w0, w1
+    b.ne    dns_handle_done
+    mov     x0, x19
+    mov     x1, #DNS_FLAGS
+    bl      mem_read16be
+    tst     w0, #DNS_FLAG_QR
+    b.eq    dns_handle_done
+    ands    w21, w0, #DNS_RCODE_MASK
+    b.ne    dns_handle_rcode
+    mov     x0, x19
+    mov     x1, #DNS_QDCOUNT
+    bl      mem_read16be
+    mov     w21, w0
+    mov     x0, x19
+    mov     x1, #DNS_ANCOUNT
+    bl      mem_read16be
+    mov     w22, w0
+    add     x0, x19, #DNS_HDR_SIZE
+
+dns_handle_questions:
+    cbz     w21, dns_handle_answers
+    cmp     x0, x20
+    b.hs    dns_handle_noanswer
+    bl      dns_skip_name
+    add     x0, x0, #4
+    sub     w21, w21, #1
+    b       dns_handle_questions
+
+dns_handle_answers:
+    cbz     w22, dns_handle_noanswer
+    add     x1, x0, #12
+    cmp     x1, x20
+    b.hi    dns_handle_noanswer
+    bl      dns_skip_name
+    add     x1, x0, #10
+    cmp     x1, x20
+    b.hi    dns_handle_noanswer
+    mov     x19, x0
+    mov     x0, x19
+    mov     x1, #0
+    bl      mem_read16be
+    mov     w21, w0
+    mov     x0, x19
+    mov     x1, #8
+    bl      mem_read16be
+    add     x1, x19, #10
+    add     x1, x1, x0
+    cmp     x1, x20
+    b.hi    dns_handle_noanswer
+    cmp     w21, #DNS_TYPE_A
+    b.ne    dns_handle_answer_next
+    cmp     w0, #4
+    b.ne    dns_handle_answer_next
+    mov     x0, x19
+    mov     x1, #10
+    bl      mem_read32be
+    ladr    x1, dns_result
+    str     w0, [x1]
+    ladr    x1, dns_state
+    mov     w2, #DNS_STATE_DONE
+    strb    w2, [x1]
+    mov     x21, x0
+    ladr    x0, dns_msg
+    bl      uart_puts
+    ladr    x0, dns_test_name
+    bl      uart_puts
+    ladr    x0, dns_equals
+    bl      uart_puts
+    mov     w0, w21
+    bl      net_put_ip
+    ladr    x0, uart_newline
+    bl      uart_puts
+    b       dns_handle_done
+
+dns_handle_answer_next:
+    mov     x0, x1
+    sub     w22, w22, #1
+    b       dns_handle_answers
+
+dns_handle_rcode:
+    ladr    x0, dns_state
+    strb    wzr, [x0]
+    ladr    x0, dns_rcode_msg
+    bl      uart_puts
+    mov     x0, x21
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+    b       dns_handle_done
+
+dns_handle_noanswer:
+    ladr    x0, dns_state
+    strb    wzr, [x0]
+    ladr    x0, dns_noanswer_msg
+    bl      uart_puts
+
+dns_handle_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+
+dns_handle_ret:
+    ret
+
+dns_tick:
+    ladr    x0, dns_state
+    ldrb    w1, [x0]
+    cmp     w1, #DNS_STATE_SENT
+    b.ne    dns_tick_ret
+    ladr    x2, dns_timer
+    ldr     w3, [x2]
+    add     w3, w3, #1
+    str     w3, [x2]
+    cmp     w3, #DNS_RETRY_TICKS
+    b.lo    dns_tick_ret
+    stp     x29, x30, [sp, #-16]!
+    ladr    x2, dns_tries
+    ldrb    w3, [x2]
+    add     w3, w3, #1
+    strb    w3, [x2]
+    cmp     w3, #DNS_RETRY_MAX
+    b.hs    dns_tick_giveup
+    ladr    x0, dns_test_name
+    bl      dns_query
+    b       dns_tick_done
+
+dns_tick_giveup:
+    strb    wzr, [x0]
+    ladr    x0, dns_fail_msg
+    bl      uart_puts
+
+dns_tick_done:
+    ldp     x29, x30, [sp], #16
+
+dns_tick_ret:
     ret
 
 .section .text.vectors
@@ -9124,6 +9410,18 @@ dhcp_timeout_msg:
     .asciz  "DHCP KEINE ANTWORT, Netz ohne Adresse\r\n"
 net_dot:
     .asciz  "."
+dns_msg:
+    .asciz  "DNS "
+dns_equals:
+    .asciz  " = "
+dns_fail_msg:
+    .asciz  "DNS KEINE ANTWORT\r\n"
+dns_rcode_msg:
+    .asciz  "DNS FEHLER rcode="
+dns_noanswer_msg:
+    .asciz  "DNS OHNE A-RECORD\r\n"
+dns_test_name:
+    .asciz  "example.com"
 net_mac_broadcast:
     .byte   0xff, 0xff, 0xff, 0xff, 0xff, 0xff
 
@@ -9538,6 +9836,14 @@ dhcp_offer:
     .space  4
 dhcp_timer:
     .space  4
+dns_timer:
+    .space  4
+dns_result:
+    .space  4
+dns_state:
+    .space  1
+dns_tries:
+    .space  1
 
 .balign 16
 net_rx_desc:
