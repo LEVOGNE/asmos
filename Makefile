@@ -21,6 +21,7 @@ DEVICES := -m 256M -device ramfb -device virtio-tablet-device -global virtio-mmi
 DISPLAY_OPT := -display cocoa,zoom-interpolation=on
 
 CHECK_SECONDS := 3
+TRACE_SECONDS := 6
 CHECK_EXPECT  := BOOT OK
 CHECK_FORBID  := PANIC
 CHECK_LOG     := serial.log
@@ -136,11 +137,15 @@ dtb:
 	$(QEMU) -machine $(MACHINE),dumpdtb=virt.dtb -cpu $(CPU) -nographic
 	dtc -I dtb -O dts -o virt.dts virt.dtb
 
+trace: kernel.bin disk-required
+	python3 tools/trace.py all $(TRACE_SECONDS)
+
 clean:
 	rm -f kernel.o kernel.elf kernel.bin kernel.lst kernel.map $(CHECK_LOG) $(SHOT)
 	rm -f virt.dtb virt.dts
 
 distclean: clean
 	rm -f $(DISK)
+	rm -rf build
 
-.PHONY: all run fast serial debug check shot disk disk-required font-store font-rescue dtb clean distclean
+.PHONY: all run fast serial debug check shot disk disk-required font-store font-rescue dtb trace clean distclean

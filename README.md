@@ -97,6 +97,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 | `make check` | Startet drei Sekunden, schreibt alles mit, prüft und meldet OK oder FEHLER |
 | `make shot` | Macht ein Bildschirmfoto nach `screen.png` und beendet sich selbst |
 | `make debug` | Startet angehalten mit Debugger-Anschluss auf Port 1234 |
+| `make trace` | Misst sechs Sekunden unsichtbar: Instruktionen je Routine, Aufrufreihenfolge der Bildausgabe, Speicherzugriffe je Region. Baut beim ersten Mal drei QEMU-Plugins aus dem QEMU-Quellpaket nach `build/` |
 | `make disk` | Erzeugt den FAT32-Testdatenträger neu |
 | `make font-rescue` | Holt die Systemschrift aus einem vorhandenen `disk.img` zurück |
 | `make dtb` | Liest die Hardwarebeschreibung der Maschine aus |
@@ -129,6 +130,10 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 <tr>
 <td><b><code>tools/iconc.py</code></b></td>
 <td>Wandelt SVG-Icons in das eigene Vektorformat des Kernels. Läuft auf dem Entwicklungsrechner, nicht im System.</td>
+</tr>
+<tr>
+<td><b><code>tools/trace.py</code></b></td>
+<td>Messwerkzeug für <code>make trace</code>. Lässt QEMU mit Plugins unsichtbar laufen und ordnet jede Adresse über die Symbole aus <code>kernel.elf</code> einer Routine oder einem Puffer zu. Der Kernel selbst enthält dafür keine einzige Zeile.</td>
 </tr>
 <tr>
 <td><b><code>docs/quellen.md</code></b><br><sub>98 KB · 1409 Zeilen</sub></td>
