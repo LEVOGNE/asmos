@@ -407,7 +407,33 @@
 .equ TLS_AES_R,             688
 .equ TLS_AES_W,             880
 .equ TLS_FINKEY,            1072
-.equ TLS_CTX_SIZE,          1104
+.equ TLS_SERVER_Q,          1104
+.equ TLS_CTX_SIZE,          1168
+.equ TLS_CERT_SIZE,         8192
+.equ TLS_SIG_ECDSA_P256,    0x0403
+.equ MP_K,                  0
+.equ MP_M,                  8
+.equ MP_MINV,               16
+.equ MP_R2,                 24
+.equ MP_ONE,                32
+.equ MP_CTX_SIZE,           40
+.equ MP_WORD_MAX,           6
+.equ MP_BYTES_MAX,          48
+.equ EC_X,                  0
+.equ EC_Y,                  32
+.equ EC_Z,                  64
+.equ EC_POINT_SIZE,         96
+.equ ASN1_SEQUENCE,         0x30
+.equ ASN1_INTEGER,          0x02
+.equ ASN1_BIT_STRING,       0x03
+.equ ASN1_OID,              0x06
+.equ ASN1_CONTEXT_0,        0xa0
+.equ X509_TBS,              0
+.equ X509_TBS_LEN,          8
+.equ X509_KEY,              16
+.equ X509_SIG,              24
+.equ X509_SIG_LEN,          32
+.equ X509_INFO_SIZE,        40
 .equ NET_STATE_IDLE,        0
 .equ NET_STATE_ARP_SENT,    1
 .equ NET_STATE_ARP_OK,      2
@@ -10385,6 +10411,7 @@ crypto_selftest:
     bl      hmac_selftest
     bl      aes_selftest
     bl      x25519_selftest
+    bl      ecdsa_selftest
     ldp     x29, x30, [sp], #16
     ret
 
@@ -11946,12 +11973,9 @@ tls_build_client_hello:
     tls_put16 2
     tls_put16 TLS_GROUP_X25519
     tls_put16 TLS_EXT_SIG_ALGS
-    tls_put16 10
-    tls_put16 8
-    tls_put16 0x0403
-    tls_put16 0x0804
-    tls_put16 0x0401
-    tls_put16 0x0807
+    tls_put16 4
+    tls_put16 2
+    tls_put16 TLS_SIG_ECDSA_P256
     tls_put16 TLS_EXT_VERSIONS
     tls_put16 3
     tls_put8 2
@@ -12349,14 +12373,14 @@ tls_handshake_message:
     b.eq    tls_handshake_message_hello
     cmp     w22, #TLS_HS_FINISHED
     b.eq    tls_handshake_message_finished
+    cmp     w22, #TLS_HS_CERT_VERIFY
+    b.eq    tls_handshake_message_verify
     cmp     w22, #TLS_HS_CERTIFICATE
     b.ne    tls_handshake_message_hash
-    ladr    x0, tls_cert_msg
-    bl      uart_puts
-    mov     x0, x21
-    bl      uart_putdec
-    ladr    x0, tls_cert_tail
-    bl      uart_puts
+    add     x0, x20, #4
+    mov     w1, w21
+    bl      tls_certificate
+    cbnz    w0, tls_handshake_message_done
 
 tls_handshake_message_hash:
     cmp     w22, #TLS_HS_ENCRYPTED_EXT
@@ -12419,6 +12443,16 @@ tls_handshake_message_finished:
     bl      tls_transcript_update
     bl      tls_keys_finish
     b       tls_handshake_message_done
+
+tls_handshake_message_verify:
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_HANDSHAKE
+    b.ne    tls_handshake_message_bad
+    add     x0, x20, #4
+    mov     w1, w21
+    bl      tls_cert_verify
+    cbnz    w0, tls_handshake_message_done
+    b       tls_handshake_message_hash_do
 
 tls_handshake_message_badfin:
     ladr    x0, tls_badfin_msg
@@ -12819,6 +12853,1254 @@ gic_put_version:
     ladr    x0, uart_newline
     bl      uart_puts
     ldp     x29, x30, [sp], #16
+    ret
+
+
+mp_copy:
+    ldr     x3, [x2, #MP_K]
+
+mp_copy_loop:
+    ldr     x4, [x1], #8
+    str     x4, [x0], #8
+    sub     x3, x3, #1
+    cbnz    x3, mp_copy_loop
+    ret
+
+mp_zero:
+    ldr     x3, [x1, #MP_K]
+
+mp_zero_loop:
+    str     xzr, [x0], #8
+    sub     x3, x3, #1
+    cbnz    x3, mp_zero_loop
+    ret
+
+mp_is_zero:
+    ldr     x3, [x1, #MP_K]
+    mov     x2, #0
+
+mp_is_zero_loop:
+    ldr     x4, [x0], #8
+    orr     x2, x2, x4
+    sub     x3, x3, #1
+    cbnz    x3, mp_is_zero_loop
+    cmp     x2, #0
+    cset    w0, eq
+    ret
+
+mp_geq:
+    ldr     x3, [x2, #MP_K]
+    subs    xzr, xzr, xzr
+
+mp_geq_loop:
+    ldr     x4, [x0], #8
+    ldr     x5, [x1], #8
+    sbcs    xzr, x4, x5
+    sub     x3, x3, #1
+    cbnz    x3, mp_geq_loop
+    cset    w0, hs
+    ret
+
+mp_from_bytes:
+    ldr     x3, [x2, #MP_K]
+    lsl     x4, x3, #3
+    add     x1, x1, x4
+
+mp_from_bytes_loop:
+    ldr     x4, [x1, #-8]!
+    rev     x4, x4
+    str     x4, [x0], #8
+    sub     x3, x3, #1
+    cbnz    x3, mp_from_bytes_loop
+    ret
+
+mp_to_bytes:
+    ldr     x3, [x2, #MP_K]
+    lsl     x4, x3, #3
+    add     x0, x0, x4
+
+mp_to_bytes_loop:
+    ldr     x4, [x1], #8
+    rev     x4, x4
+    str     x4, [x0, #-8]!
+    sub     x3, x3, #1
+    cbnz    x3, mp_to_bytes_loop
+    ret
+
+mp_add_mod:
+    stp     x29, x30, [sp, #-112]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x3
+    ldr     x4, [x3, #MP_K]
+    ldr     x5, [x3, #MP_M]
+    add     x6, sp, #32
+    mov     x9, x4
+    adds    xzr, xzr, xzr
+
+mp_add_mod_sum:
+    ldr     x7, [x1], #8
+    ldr     x8, [x2], #8
+    adcs    x7, x7, x8
+    str     x7, [x6], #8
+    sub     x9, x9, #1
+    cbnz    x9, mp_add_mod_sum
+    adc     x10, xzr, xzr
+    add     x6, sp, #32
+    add     x7, sp, #80
+    mov     x9, x4
+    subs    xzr, xzr, xzr
+
+mp_add_mod_sub:
+    ldr     x8, [x6], #8
+    ldr     x11, [x5], #8
+    sbcs    x8, x8, x11
+    str     x8, [x7], #8
+    sub     x9, x9, #1
+    cbnz    x9, mp_add_mod_sub
+    cset    w11, lo
+    orr     x10, x10, x11, lsl #1
+    add     x1, sp, #80
+    add     x6, sp, #32
+    cmp     x10, #2
+    csel    x1, x6, x1, eq
+    mov     x0, x19
+    mov     x2, x20
+    bl      mp_copy
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #112
+    ret
+
+mp_sub_mod:
+    stp     x29, x30, [sp, #-112]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x3
+    ldr     x4, [x3, #MP_K]
+    ldr     x5, [x3, #MP_M]
+    add     x6, sp, #32
+    mov     x9, x4
+    cmp     xzr, xzr
+
+mp_sub_mod_diff:
+    ldr     x7, [x1], #8
+    ldr     x8, [x2], #8
+    sbcs    x7, x7, x8
+    str     x7, [x6], #8
+    sub     x9, x9, #1
+    cbnz    x9, mp_sub_mod_diff
+    cset    w10, lo
+    add     x6, sp, #32
+    add     x7, sp, #80
+    mov     x9, x4
+    adds    xzr, xzr, xzr
+
+mp_sub_mod_fix:
+    ldr     x8, [x6], #8
+    ldr     x11, [x5], #8
+    adcs    x8, x8, x11
+    str     x8, [x7], #8
+    sub     x9, x9, #1
+    cbnz    x9, mp_sub_mod_fix
+    add     x1, sp, #32
+    add     x6, sp, #80
+    cmp     x10, #0
+    csel    x1, x6, x1, ne
+    mov     x0, x19
+    mov     x2, x20
+    bl      mp_copy
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #112
+    ret
+
+mp_mont_mul:
+    stp     x29, x30, [sp, #-160]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    stp     x27, x28, [sp, #80]
+    mov     x26, x0
+    mov     x21, x1
+    mov     x22, x2
+    ldr     x25, [x3, #MP_K]
+    ldr     x23, [x3, #MP_M]
+    ldr     x24, [x3, #MP_MINV]
+    mov     x27, x3
+    add     x28, sp, #96
+    mov     x0, x28
+    add     x1, x25, #2
+
+mp_mont_mul_clear:
+    str     xzr, [x0], #8
+    sub     x1, x1, #1
+    cbnz    x1, mp_mont_mul_clear
+    mov     x19, #0
+
+mp_mont_mul_outer:
+    ldr     x9, [x22, x19, lsl #3]
+    mov     x10, #0
+    mov     x20, #0
+
+mp_mont_mul_inner1:
+    ldr     x11, [x21, x20, lsl #3]
+    ldr     x12, [x28, x20, lsl #3]
+    mul     x13, x11, x9
+    umulh   x14, x11, x9
+    adds    x13, x13, x12
+    adc     x14, x14, xzr
+    adds    x13, x13, x10
+    adc     x10, x14, xzr
+    str     x13, [x28, x20, lsl #3]
+    add     x20, x20, #1
+    cmp     x20, x25
+    b.lo    mp_mont_mul_inner1
+    ldr     x12, [x28, x25, lsl #3]
+    adds    x12, x12, x10
+    str     x12, [x28, x25, lsl #3]
+    adc     x12, xzr, xzr
+    add     x0, x25, #1
+    str     x12, [x28, x0, lsl #3]
+    ldr     x12, [x28]
+    mul     x9, x12, x24
+    ldr     x11, [x23]
+    mul     x13, x9, x11
+    umulh   x14, x9, x11
+    adds    x13, x13, x12
+    adc     x10, x14, xzr
+    mov     x20, #1
+
+mp_mont_mul_inner2:
+    ldr     x11, [x23, x20, lsl #3]
+    ldr     x12, [x28, x20, lsl #3]
+    mul     x13, x9, x11
+    umulh   x14, x9, x11
+    adds    x13, x13, x12
+    adc     x14, x14, xzr
+    adds    x13, x13, x10
+    adc     x10, x14, xzr
+    sub     x0, x20, #1
+    str     x13, [x28, x0, lsl #3]
+    add     x20, x20, #1
+    cmp     x20, x25
+    b.lo    mp_mont_mul_inner2
+    ldr     x12, [x28, x25, lsl #3]
+    adds    x12, x12, x10
+    sub     x0, x25, #1
+    str     x12, [x28, x0, lsl #3]
+    adc     x10, xzr, xzr
+    add     x0, x25, #1
+    ldr     x12, [x28, x0, lsl #3]
+    add     x12, x12, x10
+    str     x12, [x28, x25, lsl #3]
+    add     x19, x19, #1
+    cmp     x19, x25
+    b.lo    mp_mont_mul_outer
+    ldr     x10, [x28, x25, lsl #3]
+    mov     x0, x28
+    mov     x1, x23
+    mov     x2, x27
+    bl      mp_geq
+    orr     w10, w10, w0
+    cbz     w10, mp_mont_mul_store
+    mov     x20, x25
+    mov     x0, x28
+    mov     x1, x23
+    subs    xzr, xzr, xzr
+
+mp_mont_mul_reduce:
+    ldr     x11, [x0]
+    ldr     x12, [x1], #8
+    sbcs    x11, x11, x12
+    str     x11, [x0], #8
+    sub     x20, x20, #1
+    cbnz    x20, mp_mont_mul_reduce
+
+mp_mont_mul_store:
+    mov     x0, x26
+    mov     x1, x28
+    mov     x2, x27
+    bl      mp_copy
+    ldp     x27, x28, [sp, #80]
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #160
+    ret
+
+mp_to_mont:
+    ldr     x2, [x3, #MP_R2]
+    b       mp_mont_mul
+
+mp_from_mont:
+    ladr    x2, mp_plain_one
+    b       mp_mont_mul
+
+mp_inv_mod:
+    stp     x29, x30, [sp, #-176]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    ldr     x22, [x21, #MP_K]
+    ldr     x1, [x21, #MP_M]
+    add     x0, sp, #64
+    mov     x2, x21
+    bl      mp_copy
+    ldr     x3, [sp, #64]
+    sub     x3, x3, #2
+    str     x3, [sp, #64]
+    add     x0, sp, #112
+    ldr     x1, [x21, #MP_ONE]
+    mov     x2, x21
+    bl      mp_copy
+    lsl     x23, x22, #6
+    sub     x23, x23, #1
+
+mp_inv_mod_loop:
+    add     x0, sp, #112
+    add     x1, sp, #112
+    add     x2, sp, #112
+    mov     x3, x21
+    bl      mp_mont_mul
+    lsr     x4, x23, #6
+    add     x5, sp, #64
+    ldr     x4, [x5, x4, lsl #3]
+    and     x6, x23, #63
+    lsr     x4, x4, x6
+    tbz     x4, #0, mp_inv_mod_next
+    add     x0, sp, #112
+    add     x1, sp, #112
+    mov     x2, x20
+    mov     x3, x21
+    bl      mp_mont_mul
+
+mp_inv_mod_next:
+    subs    x23, x23, #1
+    b.ge    mp_inv_mod_loop
+    mov     x0, x19
+    add     x1, sp, #112
+    mov     x2, x21
+    bl      mp_copy
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #176
+    ret
+
+.macro ecm fn, d, a, b
+    add     x0, sp, #\d
+    add     x1, sp, #\a
+    add     x2, sp, #\b
+    ladr    x3, p256_ctx
+    bl      \fn
+.endm
+
+.macro ecm2 fn, d, a
+    add     x0, sp, #\d
+    add     x1, sp, #\a
+    ladr    x3, p256_ctx
+    bl      \fn
+.endm
+
+.macro ecm_copy d, a
+    add     x0, sp, #\d
+    add     x1, sp, #\a
+    ladr    x2, p256_ctx
+    bl      mp_copy
+.endm
+
+.equ ECD_X1,   32
+.equ ECD_Y1,   64
+.equ ECD_Z1,   96
+.equ ECD_DELTA, 128
+.equ ECD_GAMMA, 160
+.equ ECD_BETA,  192
+.equ ECD_ALPHA, 224
+.equ ECD_T1,    256
+.equ ECD_T2,    288
+.equ ECD_X3,    320
+.equ ECD_Y3,    352
+.equ ECD_Z3,    384
+.equ ECD_FRAME, 416
+
+ec_dbl:
+    sub     sp, sp, #ECD_FRAME
+    stp     x29, x30, [sp]
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x0, x1
+    add     x1, sp, #ECD_X1
+    mov     w2, #EC_POINT_SIZE
+    bl      mem_copy
+    ecm mp_mont_mul, ECD_DELTA, ECD_Z1, ECD_Z1
+    ecm mp_mont_mul, ECD_GAMMA, ECD_Y1, ECD_Y1
+    ecm mp_mont_mul, ECD_BETA, ECD_X1, ECD_GAMMA
+    ecm mp_sub_mod, ECD_T1, ECD_X1, ECD_DELTA
+    ecm mp_add_mod, ECD_T2, ECD_X1, ECD_DELTA
+    ecm mp_mont_mul, ECD_ALPHA, ECD_T1, ECD_T2
+    ecm mp_add_mod, ECD_T1, ECD_ALPHA, ECD_ALPHA
+    ecm mp_add_mod, ECD_ALPHA, ECD_T1, ECD_ALPHA
+    ecm mp_mont_mul, ECD_X3, ECD_ALPHA, ECD_ALPHA
+    ecm mp_add_mod, ECD_T1, ECD_BETA, ECD_BETA
+    ecm mp_add_mod, ECD_T1, ECD_T1, ECD_T1
+    ecm mp_add_mod, ECD_T2, ECD_T1, ECD_T1
+    ecm mp_sub_mod, ECD_X3, ECD_X3, ECD_T2
+    ecm mp_add_mod, ECD_Z3, ECD_Y1, ECD_Z1
+    ecm mp_mont_mul, ECD_Z3, ECD_Z3, ECD_Z3
+    ecm mp_sub_mod, ECD_Z3, ECD_Z3, ECD_GAMMA
+    ecm mp_sub_mod, ECD_Z3, ECD_Z3, ECD_DELTA
+    ecm mp_sub_mod, ECD_T1, ECD_T1, ECD_X3
+    ecm mp_mont_mul, ECD_Y3, ECD_ALPHA, ECD_T1
+    ecm mp_mont_mul, ECD_T2, ECD_GAMMA, ECD_GAMMA
+    ecm mp_add_mod, ECD_T2, ECD_T2, ECD_T2
+    ecm mp_add_mod, ECD_T2, ECD_T2, ECD_T2
+    ecm mp_add_mod, ECD_T2, ECD_T2, ECD_T2
+    ecm mp_sub_mod, ECD_Y3, ECD_Y3, ECD_T2
+    add     x0, sp, #ECD_X3
+    mov     x1, x19
+    mov     w2, #EC_POINT_SIZE
+    bl      mem_copy
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp]
+    add     sp, sp, #ECD_FRAME
+    ret
+
+.equ ECA_X1,   32
+.equ ECA_Y1,   64
+.equ ECA_Z1,   96
+.equ ECA_X2,   128
+.equ ECA_Y2,   160
+.equ ECA_Z2,   192
+.equ ECA_Z1Z1, 224
+.equ ECA_Z2Z2, 256
+.equ ECA_U1,   288
+.equ ECA_U2,   320
+.equ ECA_S1,   352
+.equ ECA_S2,   384
+.equ ECA_H,    416
+.equ ECA_I,    448
+.equ ECA_J,    480
+.equ ECA_R,    512
+.equ ECA_V,    544
+.equ ECA_T1,   576
+.equ ECA_X3,   608
+.equ ECA_Y3,   640
+.equ ECA_Z3,   672
+.equ ECA_FRAME, 704
+
+ec_add:
+    sub     sp, sp, #ECA_FRAME
+    stp     x29, x30, [sp]
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x2
+    mov     x0, x1
+    add     x1, sp, #ECA_X1
+    mov     w2, #EC_POINT_SIZE
+    bl      mem_copy
+    mov     x0, x20
+    add     x1, sp, #ECA_X2
+    mov     w2, #EC_POINT_SIZE
+    bl      mem_copy
+    add     x0, sp, #ECA_Z1
+    ladr    x1, p256_ctx
+    bl      mp_is_zero
+    cbnz    w0, ec_add_return_q
+    add     x0, sp, #ECA_Z2
+    ladr    x1, p256_ctx
+    bl      mp_is_zero
+    cbnz    w0, ec_add_return_p
+    ecm mp_mont_mul, ECA_Z1Z1, ECA_Z1, ECA_Z1
+    ecm mp_mont_mul, ECA_Z2Z2, ECA_Z2, ECA_Z2
+    ecm mp_mont_mul, ECA_U1, ECA_X1, ECA_Z2Z2
+    ecm mp_mont_mul, ECA_U2, ECA_X2, ECA_Z1Z1
+    ecm mp_mont_mul, ECA_S1, ECA_Y1, ECA_Z2
+    ecm mp_mont_mul, ECA_S1, ECA_S1, ECA_Z2Z2
+    ecm mp_mont_mul, ECA_S2, ECA_Y2, ECA_Z1
+    ecm mp_mont_mul, ECA_S2, ECA_S2, ECA_Z1Z1
+    ecm mp_sub_mod, ECA_H, ECA_U2, ECA_U1
+    ecm mp_sub_mod, ECA_R, ECA_S2, ECA_S1
+    add     x0, sp, #ECA_H
+    ladr    x1, p256_ctx
+    bl      mp_is_zero
+    cbz     w0, ec_add_general
+    add     x0, sp, #ECA_R
+    ladr    x1, p256_ctx
+    bl      mp_is_zero
+    cbz     w0, ec_add_infinity
+    mov     x0, x19
+    add     x1, sp, #ECA_X1
+    bl      ec_dbl
+    b       ec_add_done
+
+ec_add_infinity:
+    mov     x0, x19
+    mov     w1, #EC_POINT_SIZE
+    bl      mem_wipe
+    b       ec_add_done
+
+ec_add_return_q:
+    add     x0, sp, #ECA_X2
+    mov     x1, x19
+    mov     w2, #EC_POINT_SIZE
+    bl      mem_copy
+    b       ec_add_done
+
+ec_add_return_p:
+    add     x0, sp, #ECA_X1
+    mov     x1, x19
+    mov     w2, #EC_POINT_SIZE
+    bl      mem_copy
+    b       ec_add_done
+
+ec_add_general:
+    ecm mp_add_mod, ECA_R, ECA_R, ECA_R
+    ecm mp_add_mod, ECA_I, ECA_H, ECA_H
+    ecm mp_mont_mul, ECA_I, ECA_I, ECA_I
+    ecm mp_mont_mul, ECA_J, ECA_H, ECA_I
+    ecm mp_mont_mul, ECA_V, ECA_U1, ECA_I
+    ecm mp_mont_mul, ECA_X3, ECA_R, ECA_R
+    ecm mp_sub_mod, ECA_X3, ECA_X3, ECA_J
+    ecm mp_sub_mod, ECA_X3, ECA_X3, ECA_V
+    ecm mp_sub_mod, ECA_X3, ECA_X3, ECA_V
+    ecm mp_sub_mod, ECA_T1, ECA_V, ECA_X3
+    ecm mp_mont_mul, ECA_Y3, ECA_R, ECA_T1
+    ecm mp_mont_mul, ECA_T1, ECA_S1, ECA_J
+    ecm mp_add_mod, ECA_T1, ECA_T1, ECA_T1
+    ecm mp_sub_mod, ECA_Y3, ECA_Y3, ECA_T1
+    ecm mp_add_mod, ECA_Z3, ECA_Z1, ECA_Z2
+    ecm mp_mont_mul, ECA_Z3, ECA_Z3, ECA_Z3
+    ecm mp_sub_mod, ECA_Z3, ECA_Z3, ECA_Z1Z1
+    ecm mp_sub_mod, ECA_Z3, ECA_Z3, ECA_Z2Z2
+    ecm mp_mont_mul, ECA_Z3, ECA_Z3, ECA_H
+    add     x0, sp, #ECA_X3
+    mov     x1, x19
+    mov     w2, #EC_POINT_SIZE
+    bl      mem_copy
+
+ec_add_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp]
+    add     sp, sp, #ECA_FRAME
+    ret
+
+.equ ECM_R,     32
+.equ ECM_P,     128
+.equ ECM_BIT,   224
+.equ ECM_FRAME, 240
+
+ec_mul:
+    sub     sp, sp, #ECM_FRAME
+    stp     x29, x30, [sp]
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x0, x2
+    add     x1, sp, #ECM_P
+    mov     w2, #64
+    bl      mem_copy
+    add     x0, sp, #(ECM_P + EC_Z)
+    ladr    x1, p256_one
+    ladr    x2, p256_ctx
+    bl      mp_copy
+    add     x0, sp, #ECM_R
+    mov     w1, #EC_POINT_SIZE
+    bl      mem_wipe
+    add     x0, sp, #(ECM_R + EC_X)
+    ladr    x1, p256_one
+    ladr    x2, p256_ctx
+    bl      mp_copy
+    add     x0, sp, #(ECM_R + EC_Y)
+    ladr    x1, p256_one
+    ladr    x2, p256_ctx
+    bl      mp_copy
+    mov     x1, #255
+    str     x1, [sp, #ECM_BIT]
+
+ec_mul_loop:
+    add     x0, sp, #ECM_R
+    add     x1, sp, #ECM_R
+    bl      ec_dbl
+    ldr     x1, [sp, #ECM_BIT]
+    lsr     x4, x1, #6
+    ldr     x4, [x20, x4, lsl #3]
+    and     x6, x1, #63
+    lsr     x4, x4, x6
+    tbz     x4, #0, ec_mul_next
+    add     x0, sp, #ECM_R
+    add     x1, sp, #ECM_R
+    add     x2, sp, #ECM_P
+    bl      ec_add
+
+ec_mul_next:
+    ldr     x1, [sp, #ECM_BIT]
+    subs    x1, x1, #1
+    str     x1, [sp, #ECM_BIT]
+    b.ge    ec_mul_loop
+    add     x0, sp, #ECM_R
+    mov     x1, x19
+    mov     w2, #EC_POINT_SIZE
+    bl      mem_copy
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp]
+    add     sp, sp, #ECM_FRAME
+    ret
+
+.equ ECV_QX,    48
+.equ ECV_QY,    80
+.equ ECV_R,     112
+.equ ECV_S,     144
+.equ ECV_H,     176
+.equ ECV_W,     208
+.equ ECV_U1,    240
+.equ ECV_U2,    272
+.equ ECV_P1,    304
+.equ ECV_P2,    400
+.equ ECV_T1,    496
+.equ ECV_T2,    528
+.equ ECV_FRAME, 560
+
+ecdsa_verify:
+    sub     sp, sp, #ECV_FRAME
+    stp     x29, x30, [sp]
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    mov     x22, x3
+    add     x0, sp, #ECV_R
+    mov     x1, x21
+    ladr    x2, p256_n_ctx
+    bl      mp_from_bytes
+    add     x0, sp, #ECV_S
+    mov     x1, x22
+    ladr    x2, p256_n_ctx
+    bl      mp_from_bytes
+    add     x0, sp, #ECV_H
+    mov     x1, x20
+    ladr    x2, p256_n_ctx
+    bl      mp_from_bytes
+    add     x0, sp, #ECV_R
+    ladr    x1, p256_n_ctx
+    bl      mp_is_zero
+    cbnz    w0, ecdsa_verify_fail
+    add     x0, sp, #ECV_S
+    ladr    x1, p256_n_ctx
+    bl      mp_is_zero
+    cbnz    w0, ecdsa_verify_fail
+    add     x0, sp, #ECV_R
+    ladr    x1, p256_n
+    ladr    x2, p256_n_ctx
+    bl      mp_geq
+    cbnz    w0, ecdsa_verify_fail
+    add     x0, sp, #ECV_S
+    ladr    x1, p256_n
+    ladr    x2, p256_n_ctx
+    bl      mp_geq
+    cbnz    w0, ecdsa_verify_fail
+    add     x0, sp, #ECV_W
+    add     x1, sp, #ECV_S
+    ladr    x3, p256_n_ctx
+    bl      mp_to_mont
+    add     x0, sp, #ECV_W
+    add     x1, sp, #ECV_W
+    ladr    x2, p256_n_ctx
+    bl      mp_inv_mod
+    add     x0, sp, #ECV_U1
+    add     x1, sp, #ECV_H
+    ladr    x3, p256_n_ctx
+    bl      mp_to_mont
+    add     x0, sp, #ECV_U1
+    add     x1, sp, #ECV_U1
+    add     x2, sp, #ECV_W
+    ladr    x3, p256_n_ctx
+    bl      mp_mont_mul
+    add     x0, sp, #ECV_U1
+    add     x1, sp, #ECV_U1
+    ladr    x3, p256_n_ctx
+    bl      mp_from_mont
+    add     x0, sp, #ECV_U2
+    add     x1, sp, #ECV_R
+    ladr    x3, p256_n_ctx
+    bl      mp_to_mont
+    add     x0, sp, #ECV_U2
+    add     x1, sp, #ECV_U2
+    add     x2, sp, #ECV_W
+    ladr    x3, p256_n_ctx
+    bl      mp_mont_mul
+    add     x0, sp, #ECV_U2
+    add     x1, sp, #ECV_U2
+    ladr    x3, p256_n_ctx
+    bl      mp_from_mont
+    add     x0, sp, #ECV_QX
+    mov     x1, x19
+    ladr    x2, p256_ctx
+    bl      mp_from_bytes
+    add     x0, sp, #ECV_QY
+    add     x1, x19, #32
+    ladr    x2, p256_ctx
+    bl      mp_from_bytes
+    add     x0, sp, #ECV_QX
+    ladr    x1, p256_p
+    ladr    x2, p256_ctx
+    bl      mp_geq
+    cbnz    w0, ecdsa_verify_fail
+    add     x0, sp, #ECV_QY
+    ladr    x1, p256_p
+    ladr    x2, p256_ctx
+    bl      mp_geq
+    cbnz    w0, ecdsa_verify_fail
+    ecm2 mp_to_mont, ECV_QX, ECV_QX
+    ecm2 mp_to_mont, ECV_QY, ECV_QY
+    ecm mp_mont_mul, ECV_T1, ECV_QX, ECV_QX
+    ecm mp_mont_mul, ECV_T1, ECV_T1, ECV_QX
+    ecm mp_sub_mod, ECV_T1, ECV_T1, ECV_QX
+    ecm mp_sub_mod, ECV_T1, ECV_T1, ECV_QX
+    ecm mp_sub_mod, ECV_T1, ECV_T1, ECV_QX
+    add     x0, sp, #ECV_T1
+    add     x1, sp, #ECV_T1
+    ladr    x2, p256_b_mont
+    ladr    x3, p256_ctx
+    bl      mp_add_mod
+    ecm mp_mont_mul, ECV_T2, ECV_QY, ECV_QY
+    ecm mp_sub_mod, ECV_T1, ECV_T1, ECV_T2
+    add     x0, sp, #ECV_T1
+    ladr    x1, p256_ctx
+    bl      mp_is_zero
+    cbz     w0, ecdsa_verify_fail
+    add     x0, sp, #ECV_P1
+    add     x1, sp, #ECV_U1
+    ladr    x2, p256_g_mont
+    bl      ec_mul
+    add     x0, sp, #ECV_P2
+    add     x1, sp, #ECV_U2
+    add     x2, sp, #ECV_QX
+    bl      ec_mul
+    add     x0, sp, #ECV_P1
+    add     x1, sp, #ECV_P1
+    add     x2, sp, #ECV_P2
+    bl      ec_add
+    add     x0, sp, #(ECV_P1 + EC_Z)
+    ladr    x1, p256_ctx
+    bl      mp_is_zero
+    cbnz    w0, ecdsa_verify_fail
+    add     x0, sp, #ECV_T1
+    add     x1, sp, #(ECV_P1 + EC_Z)
+    ladr    x2, p256_ctx
+    bl      mp_inv_mod
+    ecm mp_mont_mul, ECV_T1, ECV_T1, ECV_T1
+    ecm mp_mont_mul, ECV_T1, ECV_T1, ECV_P1
+    ecm2 mp_from_mont, ECV_T1, ECV_T1
+    add     x0, sp, #ECV_T1
+    ladr    x1, p256_n
+    ladr    x2, p256_n_ctx
+    bl      mp_geq
+    cbz     w0, ecdsa_verify_compare
+    add     x0, sp, #ECV_T1
+    add     x1, sp, #ECV_T1
+    ladr    x2, p256_n
+    ladr    x3, p256_n_ctx
+    bl      mp_sub_mod
+
+ecdsa_verify_compare:
+    add     x0, sp, #ECV_T1
+    add     x1, sp, #ECV_R
+    mov     w2, #32
+    bl      mem_equal
+    cmp     w0, #1
+    cset    w0, ne
+    b       ecdsa_verify_done
+
+ecdsa_verify_fail:
+    mov     w0, #1
+
+ecdsa_verify_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp]
+    add     sp, sp, #ECV_FRAME
+    ret
+
+asn1_next:
+    add     x3, x0, #2
+    cmp     x3, x1
+    b.hi    asn1_next_error
+    ldrb    w2, [x0]
+    ldrb    w4, [x0, #1]
+    mov     x5, #2
+    tbz     w4, #7, asn1_next_length
+    and     w6, w4, #0x7f
+    cbz     w6, asn1_next_error
+    cmp     w6, #2
+    b.hi    asn1_next_error
+    add     x3, x3, x6
+    cmp     x3, x1
+    b.hi    asn1_next_error
+    mov     x4, #0
+    add     x7, x0, #2
+
+asn1_next_long:
+    ldrb    w8, [x7], #1
+    orr     x4, x8, x4, lsl #8
+    sub     w6, w6, #1
+    cbnz    w6, asn1_next_long
+    sub     x5, x7, x0
+
+asn1_next_length:
+    add     x0, x0, x5
+    add     x3, x0, x4
+    cmp     x3, x1
+    b.hi    asn1_next_error
+    mov     x1, x4
+    ret
+
+asn1_next_error:
+    mov     w2, #-1
+    ret
+
+asn1_expect:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     w19, w2
+    bl      asn1_next
+    cmp     w2, w19
+    b.eq    asn1_expect_done
+    mov     w2, #-1
+
+asn1_expect_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+x509_parse:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    str     x23, [sp, #48]
+    mov     x19, x2
+    add     x1, x0, x1
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    mov     x23, x3
+    mov     x20, x0
+    add     x1, x0, x1
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    sub     x4, x0, x20
+    add     x4, x4, x1
+    str     x20, [x19, #X509_TBS]
+    str     x4, [x19, #X509_TBS_LEN]
+    mov     x22, x3
+    add     x21, x0, x1
+    mov     x1, x21
+    bl      asn1_next
+    tbnz    w2, #31, x509_parse_fail
+    cmp     w2, #ASN1_CONTEXT_0
+    b.ne    x509_parse_serial
+    mov     x0, x3
+    mov     x1, x21
+    bl      asn1_next
+    tbnz    w2, #31, x509_parse_fail
+
+x509_parse_serial:
+    mov     w20, #4
+
+x509_parse_skip:
+    mov     x0, x3
+    mov     x1, x21
+    bl      asn1_next
+    tbnz    w2, #31, x509_parse_fail
+    sub     w20, w20, #1
+    cbnz    w20, x509_parse_skip
+    mov     x0, x3
+    mov     x1, x21
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    mov     x1, x21
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    mov     x20, x3
+    mov     x1, x21
+    mov     w2, #ASN1_OID
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    cmp     x1, #7
+    b.ne    x509_parse_fail
+    mov     x22, x3
+    ladr    x1, oid_ec_public_key
+    mov     w2, #7
+    bl      mem_equal
+    cbz     w0, x509_parse_fail
+    mov     x0, x22
+    mov     x1, x21
+    mov     w2, #ASN1_OID
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    cmp     x1, #8
+    b.ne    x509_parse_fail
+    ladr    x1, oid_prime256v1
+    mov     w2, #8
+    bl      mem_equal
+    cbz     w0, x509_parse_fail
+    mov     x0, x20
+    mov     x1, x21
+    mov     w2, #ASN1_BIT_STRING
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    cmp     x1, #66
+    b.ne    x509_parse_fail
+    ldrb    w4, [x0]
+    cbnz    w4, x509_parse_fail
+    ldrb    w4, [x0, #1]
+    cmp     w4, #4
+    b.ne    x509_parse_fail
+    add     x0, x0, #2
+    str     x0, [x19, #X509_KEY]
+    ldr     x0, [x19, #X509_TBS]
+    ldr     x1, [x19, #X509_TBS_LEN]
+    add     x0, x0, x1
+    mov     x1, x23
+    bl      asn1_next
+    tbnz    w2, #31, x509_parse_fail
+    mov     x0, x3
+    mov     x1, x23
+    mov     w2, #ASN1_BIT_STRING
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    cmp     x1, #2
+    b.lo    x509_parse_fail
+    ldrb    w4, [x0]
+    cbnz    w4, x509_parse_fail
+    add     x0, x0, #1
+    sub     x1, x1, #1
+    str     x0, [x19, #X509_SIG]
+    str     x1, [x19, #X509_SIG_LEN]
+    mov     w0, #0
+    b       x509_parse_done
+
+x509_parse_fail:
+    mov     w0, #1
+
+x509_parse_done:
+    ldr     x23, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+    ret
+
+ecdsa_sig_decode:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x2
+    mov     x20, x3
+    add     x1, x0, x1
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, ecdsa_sig_decode_fail
+    add     x21, x0, x1
+    mov     x1, x21
+    mov     w2, #ASN1_INTEGER
+    bl      asn1_expect
+    tbnz    w2, #31, ecdsa_sig_decode_fail
+    mov     x22, x3
+    mov     x2, x19
+    bl      ecdsa_sig_int
+    cbnz    w0, ecdsa_sig_decode_fail
+    mov     x0, x22
+    mov     x1, x21
+    mov     w2, #ASN1_INTEGER
+    bl      asn1_expect
+    tbnz    w2, #31, ecdsa_sig_decode_fail
+    mov     x2, x20
+    bl      ecdsa_sig_int
+    b       ecdsa_sig_decode_done
+
+ecdsa_sig_decode_fail:
+    mov     w0, #1
+
+ecdsa_sig_decode_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+ecdsa_sig_int:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x1
+
+ecdsa_sig_int_strip:
+    cbz     x20, ecdsa_sig_int_fail
+    ldrb    w3, [x19]
+    cbnz    w3, ecdsa_sig_int_copy
+    add     x19, x19, #1
+    sub     x20, x20, #1
+    b       ecdsa_sig_int_strip
+
+ecdsa_sig_int_copy:
+    cmp     x20, #32
+    b.hi    ecdsa_sig_int_fail
+    mov     x0, x2
+    mov     w1, #32
+    str     x2, [sp, #-16]!
+    bl      mem_wipe
+    ldr     x2, [sp], #16
+    add     x1, x2, #32
+    sub     x1, x1, x20
+    mov     x0, x19
+    mov     w2, w20
+    bl      mem_copy
+    mov     w0, #0
+    b       ecdsa_sig_int_done
+
+ecdsa_sig_int_fail:
+    mov     w0, #1
+
+ecdsa_sig_int_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+ecdsa_selftest:
+    stp     x29, x30, [sp, #-144]!
+    stp     x19, x20, [sp, #16]
+    mov     w19, #1
+    ladr    x0, ecdsa_test_q
+    ladr    x1, ecdsa_test_h
+    ladr    x2, ecdsa_test_r
+    ladr    x3, ecdsa_test_s
+    bl      ecdsa_verify
+    cbnz    w0, ecdsa_selftest_fail
+    mov     w19, #2
+    ladr    x0, ecdsa_test_q
+    ladr    x1, ecdsa_test_h
+    ladr    x2, ecdsa_test_r
+    ladr    x3, ecdsa_test_s_bad
+    bl      ecdsa_verify
+    cmp     w0, #1
+    b.ne    ecdsa_selftest_fail
+    mov     w19, #3
+    ladr    x0, x509_test_cert
+    mov     x1, #(x509_test_cert_end - x509_test_cert)
+    add     x2, sp, #32
+    bl      x509_parse
+    cbnz    w0, ecdsa_selftest_fail
+    ldr     x0, [sp, #(32 + X509_KEY)]
+    ladr    x1, x509_test_leaf_key
+    mov     w2, #64
+    bl      mem_equal
+    cbz     w0, ecdsa_selftest_fail
+    ldr     x0, [sp, #(32 + X509_SIG)]
+    ldr     x1, [sp, #(32 + X509_SIG_LEN)]
+    add     x2, sp, #72
+    add     x3, sp, #104
+    bl      ecdsa_sig_decode
+    cbnz    w0, ecdsa_selftest_fail
+    ladr    x0, sha_ctx
+    bl      sha256_init
+    ladr    x0, sha_ctx
+    ldr     x1, [sp, #(32 + X509_TBS)]
+    ldr     x2, [sp, #(32 + X509_TBS_LEN)]
+    bl      sha256_update
+    ladr    x0, sha_ctx
+    ladr    x1, sha_digest
+    bl      sha256_final
+    ladr    x0, x509_test_ca_key
+    ladr    x1, sha_digest
+    add     x2, sp, #72
+    add     x3, sp, #104
+    bl      ecdsa_verify
+    cbnz    w0, ecdsa_selftest_fail
+    ladr    x0, ecdsa_ok_msg
+    bl      uart_puts
+    b       ecdsa_selftest_done
+
+ecdsa_selftest_fail:
+    ladr    x0, ecdsa_fail_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+
+ecdsa_selftest_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #144
+    ret
+
+tls_certificate:
+    stp     x29, x30, [sp, #-96]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x20, x0
+    mov     w21, w1
+    ladr    x19, tls_ctx
+    mov     w2, #TLS_CERT_SIZE
+    cmp     w21, w2
+    b.hi    tls_certificate_big
+    cmp     w21, #7
+    b.lo    tls_certificate_short
+    ladr    x1, tls_cert_buf
+    mov     x0, x20
+    mov     w2, w21
+    bl      mem_copy
+    ladr    x20, tls_cert_buf
+    ldrb    w0, [x20]
+    add     x20, x20, #1
+    add     x20, x20, x0
+    ladr    x1, tls_cert_buf
+    add     x1, x1, x21
+    add     x0, x20, #6
+    cmp     x0, x1
+    b.hi    tls_certificate_short
+    ldrb    w2, [x20, #3]
+    ldrb    w3, [x20, #4]
+    ldrb    w4, [x20, #5]
+    lsl     w2, w2, #16
+    orr     w2, w2, w3, lsl #8
+    orr     w22, w2, w4
+    add     x20, x20, #6
+    add     x0, x20, x22
+    cmp     x0, x1
+    b.hi    tls_certificate_short
+    mov     x0, x20
+    mov     x1, x22
+    add     x2, sp, #48
+    bl      x509_parse
+    cbnz    w0, tls_certificate_bad
+    ldr     x0, [sp, #(48 + X509_KEY)]
+    add     x1, x19, #TLS_SERVER_Q
+    mov     w2, #64
+    bl      mem_copy
+    ladr    x0, tls_cert_msg
+    bl      uart_puts
+    mov     x0, x21
+    bl      uart_putdec
+    ladr    x0, tls_cert_tail
+    bl      uart_puts
+    mov     x0, x22
+    bl      uart_putdec
+    ladr    x0, tls_cert_tail2
+    bl      uart_puts
+    mov     w0, #0
+    b       tls_certificate_done
+
+tls_certificate_big:
+    ladr    x0, tls_certbig_msg
+    b       tls_certificate_fail
+
+tls_certificate_short:
+    ladr    x0, tls_short_msg
+    b       tls_certificate_fail
+
+tls_certificate_bad:
+    ladr    x0, tls_certbad_msg
+
+tls_certificate_fail:
+    bl      tls_fail
+    mov     w0, #1
+
+tls_certificate_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #96
+    ret
+
+tls_cert_verify:
+    stp     x29, x30, [sp, #-256]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x20, x0
+    mov     w21, w1
+    ladr    x19, tls_ctx
+    cmp     w21, #4
+    b.lo    tls_cert_verify_short
+    ldrb    w0, [x20]
+    ldrb    w1, [x20, #1]
+    orr     w0, w1, w0, lsl #8
+    mov     w1, #TLS_SIG_ECDSA_P256
+    cmp     w0, w1
+    b.ne    tls_cert_verify_scheme
+    ldrb    w0, [x20, #2]
+    ldrb    w1, [x20, #3]
+    orr     w22, w1, w0, lsl #8
+    add     w0, w22, #4
+    cmp     w0, w21
+    b.hi    tls_cert_verify_short
+    add     x0, x20, #4
+    mov     x1, x22
+    add     x2, sp, #48
+    add     x3, sp, #80
+    bl      ecdsa_sig_decode
+    cbnz    w0, tls_cert_verify_bad
+    add     x0, sp, #112
+    mov     w1, #64
+    mov     w2, #0x20
+
+tls_cert_verify_spaces:
+    strb    w2, [x0], #1
+    sub     w1, w1, #1
+    cbnz    w1, tls_cert_verify_spaces
+    ladr    x0, tls_cv_label
+    add     x1, sp, #176
+    mov     w2, #(tls_cv_label_end - tls_cv_label)
+    bl      mem_copy
+    add     x0, sp, #(176 + 34)
+    bl      tls_transcript_hash
+    ladr    x0, sha_ctx
+    bl      sha256_init
+    ladr    x0, sha_ctx
+    add     x1, sp, #112
+    mov     x2, #(64 + 34 + 32)
+    bl      sha256_update
+    ladr    x0, sha_ctx
+    ladr    x1, sha_digest
+    bl      sha256_final
+    add     x0, x19, #TLS_SERVER_Q
+    ladr    x1, sha_digest
+    add     x2, sp, #48
+    add     x3, sp, #80
+    bl      ecdsa_verify
+    cbnz    w0, tls_cert_verify_wrong
+    ladr    x0, tls_verified_msg
+    bl      uart_puts
+    mov     w0, #0
+    b       tls_cert_verify_done
+
+tls_cert_verify_scheme:
+    ladr    x0, tls_scheme_msg
+    b       tls_cert_verify_fail
+
+tls_cert_verify_short:
+    ladr    x0, tls_short_msg
+    b       tls_cert_verify_fail
+
+tls_cert_verify_bad:
+    ladr    x0, tls_sigbad_msg
+    b       tls_cert_verify_fail
+
+tls_cert_verify_wrong:
+    ladr    x0, tls_sigwrong_msg
+
+tls_cert_verify_fail:
+    bl      tls_fail
+    mov     w0, #1
+
+tls_cert_verify_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #256
     ret
 
 .section .text.vectors
@@ -13801,7 +15083,7 @@ tls_server_hello_msg:
 tls_cert_msg:
     .asciz  "TLS ZERTIFIKAT "
 tls_cert_tail:
-    .asciz  " Byte, NICHT GEPRUEFT\r\n"
+    .asciz  " Byte, Blatt "
 tls_done_msg:
     .asciz  "TLS HANDSHAKE FERTIG, sende GET\r\n"
 tls_https_msg:
@@ -13851,6 +15133,150 @@ gic_node_name:
     .asciz  "intc"
 gic_v3_compatible:
     .asciz  "arm,gic-v3"
+.balign 8
+p256_ctx:
+    .quad   4, p256_p, 0x1, p256_r2, p256_one
+p256_n_ctx:
+    .quad   4, p256_n, 0xccd1c8aaee00bc4f, p256_n_r2, p256_n_one
+p256_p:
+    .quad   0xffffffffffffffff, 0x00000000ffffffff, 0x0000000000000000, 0xffffffff00000001
+p256_r2:
+    .quad   0x0000000000000003, 0xfffffffbffffffff, 0xfffffffffffffffe, 0x00000004fffffffd
+p256_one:
+    .quad   0x0000000000000001, 0xffffffff00000000, 0xffffffffffffffff, 0x00000000fffffffe
+p256_n:
+    .quad   0xf3b9cac2fc632551, 0xbce6faada7179e84, 0xffffffffffffffff, 0xffffffff00000000
+p256_n_r2:
+    .quad   0x83244c95be79eea2, 0x4699799c49bd6fa6, 0x2845b2392b6bec59, 0x66e12d94f3d95620
+p256_n_one:
+    .quad   0x0c46353d039cdaaf, 0x4319055258e8617b, 0x0000000000000000, 0x00000000ffffffff
+p256_b_mont:
+    .quad   0xd89cdf6229c4bddf, 0xacf005cd78843090, 0xe5a220abf7212ed6, 0xdc30061d04874834
+p256_g_mont:
+p256_gx_mont:
+    .quad   0x79e730d418a9143c, 0x75ba95fc5fedb601, 0x79fb732b77622510, 0x18905f76a53755c6
+p256_gy_mont:
+    .quad   0xddf25357ce95560a, 0x8b4ab8e4ba19e45c, 0xd2e88688dd21f325, 0x8571ff1825885d85
+mp_plain_one:
+    .quad   1, 0, 0, 0, 0, 0
+oid_ec_public_key:
+    .byte   0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01
+oid_prime256v1:
+    .byte   0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07
+tls_cv_label:
+    .ascii  "TLS 1.3, server CertificateVerify"
+    .byte   0
+tls_cv_label_end:
+ecdsa_ok_msg:
+    .asciz  "ECDSA OK, RFC 6979 und echtes Zertifikat geprueft\r\n"
+ecdsa_fail_msg:
+    .asciz  "ECDSA FEHLER Test "
+tls_cert_tail2:
+    .asciz  " Byte, ECDSA P-256\r\n"
+tls_certbig_msg:
+    .asciz  "Zertifikat zu gross"
+tls_certbad_msg:
+    .asciz  "Zertifikat nicht lesbar oder nicht ECDSA P-256"
+tls_scheme_msg:
+    .asciz  "Signaturverfahren nicht ECDSA P-256"
+tls_sigbad_msg:
+    .asciz  "Signatur nicht lesbar"
+tls_sigwrong_msg:
+    .asciz  "SIGNATUR DES SERVERS FALSCH"
+tls_verified_msg:
+    .asciz  "TLS SIGNATUR GEPRUEFT, ECDSA P-256, Sitzung an Zertifikat gebunden\r\n"
+ecdsa_test_q:
+    .byte   0x60,0xfe,0xd4,0xba,0x25,0x5a,0x9d,0x31,0xc9,0x61,0xeb,0x74,0xc6,0x35,0x6d,0x68
+    .byte   0xc0,0x49,0xb8,0x92,0x3b,0x61,0xfa,0x6c,0xe6,0x69,0x62,0x2e,0x60,0xf2,0x9f,0xb6
+    .byte   0x79,0x03,0xfe,0x10,0x08,0xb8,0xbc,0x99,0xa4,0x1a,0xe9,0xe9,0x56,0x28,0xbc,0x64
+    .byte   0xf2,0xf1,0xb2,0x0c,0x2d,0x7e,0x9f,0x51,0x77,0xa3,0xc2,0x94,0xd4,0x46,0x22,0x99
+ecdsa_test_h:
+    .byte   0xaf,0x2b,0xdb,0xe1,0xaa,0x9b,0x6e,0xc1,0xe2,0xad,0xe1,0xd6,0x94,0xf4,0x1f,0xc7
+    .byte   0x1a,0x83,0x1d,0x02,0x68,0xe9,0x89,0x15,0x62,0x11,0x3d,0x8a,0x62,0xad,0xd1,0xbf
+ecdsa_test_r:
+    .byte   0xef,0xd4,0x8b,0x2a,0xac,0xb6,0xa8,0xfd,0x11,0x40,0xdd,0x9c,0xd4,0x5e,0x81,0xd6
+    .byte   0x9d,0x2c,0x87,0x7b,0x56,0xaa,0xf9,0x91,0xc3,0x4d,0x0e,0xa8,0x4e,0xaf,0x37,0x16
+ecdsa_test_s:
+    .byte   0xf7,0xcb,0x1c,0x94,0x2d,0x65,0x7c,0x41,0xd4,0x36,0xc7,0xa1,0xb6,0xe2,0x9f,0x65
+    .byte   0xf3,0xe9,0x00,0xdb,0xb9,0xaf,0xf4,0x06,0x4d,0xc4,0xab,0x2f,0x84,0x3a,0xcd,0xa8
+ecdsa_test_s_bad:
+    .byte   0xf7,0xcb,0x1c,0x94,0x2d,0x65,0x7c,0x41,0xd4,0x36,0xc7,0xa1,0xb6,0xe2,0x9f,0x65
+    .byte   0xf3,0xe9,0x00,0xdb,0xb9,0xaf,0xf4,0x06,0x4d,0xc4,0xab,0x2f,0x84,0x3a,0xcd,0xa9
+x509_test_ca_key:
+    .byte   0xfd,0x1d,0x14,0x14,0x8e,0x23,0x42,0x93,0x26,0xcf,0x70,0xd0,0x89,0xd7,0xb1,0x1e
+    .byte   0x72,0xac,0x3e,0x5d,0x59,0x52,0x81,0xdf,0x1c,0xf5,0xd6,0x25,0xb9,0xd6,0x77,0x07
+    .byte   0x85,0x0b,0x8d,0x12,0xb1,0x2b,0x3f,0x40,0xb9,0x1f,0x72,0x06,0xe0,0xff,0x40,0x52
+    .byte   0x0a,0x93,0x49,0xf8,0xc9,0x71,0xb0,0x7e,0xee,0xe0,0xa3,0x45,0x51,0x18,0x44,0x74
+x509_test_leaf_key:
+    .byte   0x76,0x4e,0x09,0xa3,0xdd,0xb2,0xcf,0x45,0xa5,0x4d,0xd1,0x5b,0x9d,0xf0,0x51,0x00
+    .byte   0x52,0x23,0x33,0xdd,0x9d,0x81,0x77,0x99,0x6d,0x8b,0x7f,0x6e,0x86,0xeb,0xc1,0x01
+    .byte   0x1c,0xa7,0xf9,0x1e,0x89,0x26,0x40,0x42,0xbf,0x9e,0x1d,0x95,0x38,0xb3,0xcd,0xa5
+    .byte   0x01,0xcc,0xb9,0xeb,0x89,0xa3,0xd5,0x5b,0xdb,0xb2,0xb1,0x82,0x09,0x5d,0x35,0x62
+x509_test_cert:
+    .byte   0x30,0x82,0x03,0xe6,0x30,0x82,0x03,0x8d,0xa0,0x03,0x02,0x01,0x02,0x02,0x10,0x06
+    .byte   0x24,0xd0,0xab,0x31,0x15,0x58,0x78,0x0b,0x7d,0x52,0x13,0xb9,0x63,0x18,0x31,0x30
+    .byte   0x0a,0x06,0x08,0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x02,0x30,0x51,0x31,0x0b,0x30
+    .byte   0x09,0x06,0x03,0x55,0x04,0x06,0x13,0x02,0x55,0x53,0x31,0x18,0x30,0x16,0x06,0x03
+    .byte   0x55,0x04,0x0a,0x0c,0x0f,0x53,0x53,0x4c,0x20,0x43,0x6f,0x72,0x70,0x6f,0x72,0x61
+    .byte   0x74,0x69,0x6f,0x6e,0x31,0x28,0x30,0x26,0x06,0x03,0x55,0x04,0x03,0x0c,0x1f,0x43
+    .byte   0x6c,0x6f,0x75,0x64,0x66,0x6c,0x61,0x72,0x65,0x20,0x54,0x4c,0x53,0x20,0x49,0x73
+    .byte   0x73,0x75,0x69,0x6e,0x67,0x20,0x45,0x43,0x43,0x20,0x43,0x41,0x20,0x33,0x30,0x1e
+    .byte   0x17,0x0d,0x32,0x36,0x30,0x37,0x32,0x39,0x32,0x32,0x31,0x30,0x30,0x38,0x5a,0x17
+    .byte   0x0d,0x32,0x36,0x31,0x30,0x32,0x37,0x32,0x32,0x31,0x37,0x32,0x31,0x5a,0x30,0x16
+    .byte   0x31,0x14,0x30,0x12,0x06,0x03,0x55,0x04,0x03,0x0c,0x0b,0x65,0x78,0x61,0x6d,0x70
+    .byte   0x6c,0x65,0x2e,0x63,0x6f,0x6d,0x30,0x59,0x30,0x13,0x06,0x07,0x2a,0x86,0x48,0xce
+    .byte   0x3d,0x02,0x01,0x06,0x08,0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07,0x03,0x42,0x00
+    .byte   0x04,0x76,0x4e,0x09,0xa3,0xdd,0xb2,0xcf,0x45,0xa5,0x4d,0xd1,0x5b,0x9d,0xf0,0x51
+    .byte   0x00,0x52,0x23,0x33,0xdd,0x9d,0x81,0x77,0x99,0x6d,0x8b,0x7f,0x6e,0x86,0xeb,0xc1
+    .byte   0x01,0x1c,0xa7,0xf9,0x1e,0x89,0x26,0x40,0x42,0xbf,0x9e,0x1d,0x95,0x38,0xb3,0xcd
+    .byte   0xa5,0x01,0xcc,0xb9,0xeb,0x89,0xa3,0xd5,0x5b,0xdb,0xb2,0xb1,0x82,0x09,0x5d,0x35
+    .byte   0x62,0xa3,0x82,0x02,0x80,0x30,0x82,0x02,0x7c,0x30,0x0c,0x06,0x03,0x55,0x1d,0x13
+    .byte   0x01,0x01,0xff,0x04,0x02,0x30,0x00,0x30,0x1f,0x06,0x03,0x55,0x1d,0x23,0x04,0x18
+    .byte   0x30,0x16,0x80,0x14,0x83,0x03,0xfd,0xe7,0xf6,0xf5,0x4a,0x4d,0x15,0x41,0xf4,0xed
+    .byte   0x22,0x16,0xd3,0x32,0x0a,0x3e,0xca,0x66,0x30,0x6c,0x06,0x08,0x2b,0x06,0x01,0x05
+    .byte   0x05,0x07,0x01,0x01,0x04,0x60,0x30,0x5e,0x30,0x39,0x06,0x08,0x2b,0x06,0x01,0x05
+    .byte   0x05,0x07,0x30,0x02,0x86,0x2d,0x68,0x74,0x74,0x70,0x3a,0x2f,0x2f,0x69,0x2e,0x63
+    .byte   0x66,0x2d,0x69,0x2e,0x73,0x73,0x6c,0x2e,0x63,0x6f,0x6d,0x2f,0x43,0x6c,0x6f,0x75
+    .byte   0x64,0x66,0x6c,0x61,0x72,0x65,0x2d,0x54,0x4c,0x53,0x2d,0x49,0x2d,0x45,0x33,0x2e
+    .byte   0x63,0x65,0x72,0x30,0x21,0x06,0x08,0x2b,0x06,0x01,0x05,0x05,0x07,0x30,0x01,0x86
+    .byte   0x15,0x68,0x74,0x74,0x70,0x3a,0x2f,0x2f,0x6f,0x2e,0x63,0x66,0x2d,0x69,0x2e,0x73
+    .byte   0x73,0x6c,0x2e,0x63,0x6f,0x6d,0x30,0x25,0x06,0x03,0x55,0x1d,0x11,0x04,0x1e,0x30
+    .byte   0x1c,0x82,0x0b,0x65,0x78,0x61,0x6d,0x70,0x6c,0x65,0x2e,0x63,0x6f,0x6d,0x82,0x0d
+    .byte   0x2a,0x2e,0x65,0x78,0x61,0x6d,0x70,0x6c,0x65,0x2e,0x63,0x6f,0x6d,0x30,0x23,0x06
+    .byte   0x03,0x55,0x1d,0x20,0x04,0x1c,0x30,0x1a,0x30,0x08,0x06,0x06,0x67,0x81,0x0c,0x01
+    .byte   0x02,0x01,0x30,0x0e,0x06,0x0c,0x2b,0x06,0x01,0x04,0x01,0x82,0xa9,0x30,0x01,0x03
+    .byte   0x01,0x01,0x30,0x13,0x06,0x03,0x55,0x1d,0x25,0x04,0x0c,0x30,0x0a,0x06,0x08,0x2b
+    .byte   0x06,0x01,0x05,0x05,0x07,0x03,0x01,0x30,0x53,0x06,0x03,0x55,0x1d,0x1f,0x04,0x4c
+    .byte   0x30,0x4a,0x30,0x48,0xa0,0x46,0xa0,0x44,0x86,0x42,0x68,0x74,0x74,0x70,0x3a,0x2f
+    .byte   0x2f,0x63,0x2e,0x63,0x66,0x2d,0x69,0x2e,0x73,0x73,0x6c,0x2e,0x63,0x6f,0x6d,0x2f
+    .byte   0x61,0x65,0x38,0x30,0x31,0x65,0x64,0x31,0x63,0x35,0x35,0x62,0x62,0x35,0x37,0x39
+    .byte   0x64,0x37,0x39,0x32,0x30,0x38,0x62,0x30,0x64,0x37,0x37,0x32,0x61,0x63,0x66,0x62
+    .byte   0x38,0x63,0x63,0x33,0x61,0x32,0x30,0x38,0x2e,0x63,0x72,0x6c,0x30,0x0e,0x06,0x03
+    .byte   0x55,0x1d,0x0f,0x01,0x01,0xff,0x04,0x04,0x03,0x02,0x07,0x80,0x30,0x0f,0x06,0x09
+    .byte   0x2b,0x06,0x01,0x04,0x01,0x82,0xda,0x4b,0x2c,0x04,0x02,0x05,0x00,0x30,0x82,0x01
+    .byte   0x04,0x06,0x0a,0x2b,0x06,0x01,0x04,0x01,0xd6,0x79,0x02,0x04,0x02,0x04,0x81,0xf5
+    .byte   0x04,0x81,0xf2,0x00,0xf0,0x00,0x77,0x00,0x94,0x4e,0x43,0x87,0xfa,0xec,0xc1,0xef
+    .byte   0x81,0xf3,0x19,0x24,0x26,0xa8,0x18,0x65,0x01,0xc7,0xd3,0x5f,0x38,0x02,0x01,0x3f
+    .byte   0x72,0x67,0x7d,0x55,0x37,0x2e,0x19,0xd8,0x00,0x00,0x01,0x9f,0xaf,0xf6,0xc3,0x36
+    .byte   0x00,0x00,0x04,0x03,0x00,0x48,0x30,0x46,0x02,0x21,0x00,0xfd,0x58,0x5a,0x2d,0x44
+    .byte   0x6c,0xd6,0x46,0x32,0xd4,0xa4,0xab,0xb9,0x52,0x01,0x55,0x10,0x85,0xb6,0x24,0x1e
+    .byte   0xcc,0xb6,0xf6,0x5e,0xfa,0xda,0x1c,0x48,0xd8,0x1c,0xc9,0x02,0x21,0x00,0x90,0x85
+    .byte   0x74,0x3a,0x02,0x58,0x4f,0x7d,0x26,0x31,0x4a,0x4a,0x6c,0xe3,0x79,0x18,0x5b,0x88
+    .byte   0x7d,0x0c,0xdc,0x0c,0x3e,0x87,0x8d,0x78,0xcb,0xd6,0xc6,0xc5,0x3f,0x8f,0x00,0x75
+    .byte   0x00,0xc8,0xa3,0xc4,0x7f,0xc7,0xb3,0xad,0xb9,0x35,0x6b,0x01,0x3f,0x6a,0x7a,0x12
+    .byte   0x6d,0xe3,0x3a,0x4e,0x43,0xa5,0xc6,0x46,0xf9,0x97,0xad,0x39,0x75,0x99,0x1d,0xcf
+    .byte   0x9a,0x00,0x00,0x01,0x9f,0xaf,0xf6,0xc3,0x4c,0x00,0x00,0x04,0x03,0x00,0x46,0x30
+    .byte   0x44,0x02,0x20,0x0a,0xa6,0xb3,0xed,0x8c,0xc4,0x0b,0x94,0xba,0xd2,0x92,0xce,0x1e
+    .byte   0x08,0x3a,0x09,0x67,0xa5,0xaa,0x7a,0x44,0x4b,0x1f,0xa0,0x16,0x1d,0x21,0xdc,0xa3
+    .byte   0xd2,0xd7,0xb5,0x02,0x20,0x32,0xc4,0x61,0x36,0xd6,0xf0,0xd0,0x6a,0x7d,0x43,0x42
+    .byte   0x2d,0x64,0x1e,0x43,0xff,0x4a,0x93,0xce,0xb3,0xca,0x30,0x10,0xdb,0x25,0x9a,0x2b
+    .byte   0xf8,0xd6,0x64,0x71,0xee,0x30,0x0a,0x06,0x08,0x2a,0x86,0x48,0xce,0x3d,0x04,0x03
+    .byte   0x02,0x03,0x47,0x00,0x30,0x44,0x02,0x20,0x10,0xb8,0x7d,0x44,0x4a,0x83,0xb0,0x80
+    .byte   0x4c,0x04,0x09,0x00,0x0d,0x6b,0x1c,0xde,0x2b,0xa1,0x6e,0x4c,0x07,0xc9,0xf7,0x2f
+    .byte   0xeb,0x0f,0x87,0xb2,0x38,0x5d,0x3d,0xcc,0x02,0x20,0x3c,0xdd,0x6b,0x6d,0xdf,0x67
+    .byte   0x32,0x80,0xdb,0xea,0x86,0xe4,0xbf,0xe4,0xd6,0xd8,0xb9,0x83,0x8a,0xe4,0xdd,0x68
+    .byte   0x89,0x53,0x45,0x1b,0xbe,0x95,0x06,0x2c,0xa2,0xaf
+x509_test_cert_end:
 .section .bss
 
 .balign 8
@@ -14132,6 +15558,8 @@ tls_rx_buf:
     .space  TLS_RX_SIZE
 tls_hs_buf:
     .space  TLS_HS_SIZE
+tls_cert_buf:
+    .space  TLS_CERT_SIZE
 dns_id:
     .space  2
 

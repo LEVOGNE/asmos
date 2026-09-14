@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-49.597%20Byte-brightgreen?style=flat-square" alt="49597 Byte">
+<img src="https://img.shields.io/badge/Kernel-56.749%20Byte-brightgreen?style=flat-square" alt="56749 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>49.597&nbsp;Byte</b> groß, also <b>48&nbsp;KB</b>.<br>
+Das fertige System ist <b>56.749&nbsp;Byte</b> groß, also <b>55&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>343 KB · 14315 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>377 KB · 15743 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,16 +146,16 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 14315 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 15743 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1455 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1572 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
 | `net_` `tcp_` `dhcp_` `dns_` `http_` | 241 | **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP mit Verbindungstabelle |
-| `tls_` | 111 | **TLS 1.3**: ClientHello, ServerHello, Schlüsselableitung, Record-Schicht, Finished, verschlüsselte Anwendungsdaten |
+| `tls_` | 136 | **TLS 1.3**: ClientHello, ServerHello, Schlüsselableitung, Record-Schicht, Finished, verschlüsselte Anwendungsdaten |
  **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP mit Verbindungstabelle |
 | `font_` `glyph_` | 117 | TrueType auswerten und über die Vektor-Engine zeichnen |
 | `win_` `dirty_` | 110 | Fenster, Stapelreihenfolge, Ziehen, Teilaktualisierung, Fensterpuffer |
@@ -166,7 +166,7 @@ In `kernel.S` stecken **1455 Sprungmarken**. Jede gehört zu einem Zuständigkei
 | `virtio_` `mouse_` `click_` | 73 | Gerätetreiber, Maus, Klickerkennung |
 | `vg_` `cov_` `edge_` `icon_` | 60 | **Vektor-Engine**: Pfade, Kurven, Füllung, Strich, Kantenglättung, Icons |
 | `console_` `string_` `out_` `power_` | 59 | Konsole, Textwerkzeuge, Herunterfahren |
-| `sha_` `hmac_` `hkdf_` `aes_` `ghash_` `fe_` `x25519_` `crypto_` | 213 | **Kryptografie**: SHA-256, HMAC, HKDF, AES-128-GCM über die ARMv8-Erweiterung, X25519 in reiner Ganzzahlarithmetik, Selbsttest gegen 22 Vektoren beim Start |
+| `sha_` `hmac_` `hkdf_` `aes_` `ghash_` `fe_` `x25519_` `mp_` `ec_` `ecdsa_` `asn1_` `x509_` `crypto_` | 291 | **Kryptografie**: SHA-256, HMAC, HKDF, AES-128-GCM über die ARMv8-Erweiterung, X25519, Montgomery-Arithmetik, ECDSA P-256, DER-Parser für X.509, Selbsttest gegen 25 Vektoren beim Start |
 | `vec_` `panic_` `irq_` `gic_` | 50 | Fehlerbehandlung und Unterbrechungen, GICv2 und GICv3 |
 | `uart_` | 29 | Serielle Schnittstelle, Textausgabe, Tastatureingabe |
 | `boot_` | 15 | Hochfahren, Privilegstufe, Speicher vorbereiten |
@@ -179,7 +179,7 @@ In `kernel.S` stecken **1455 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **49.597 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **56.749 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -290,7 +290,7 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 8. Datenträger und FAT32 lesend | ✅ |
 | 9. Fenstersystem | ✅ inklusive erstem Fensterinhalt |
 | 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP, DNS, TCP-Client mit Verbindungstabelle, eingehende Prüfsummen, zufällige Kennungen und Ports, Härtung Block 1 abgeschlossen |
-| 11. Verschlüsselte Verbindungen | ✅ TLS 1.3 gegen example.com: `HTTPS HTTP/1.1 200 OK`. Offen: Zertifikatsprüfung |
+| 11. Verschlüsselte Verbindungen | ✅ TLS 1.3 gegen example.com: `HTTPS HTTP/1.1 200 OK`, Serversignatur geprüft (ECDSA P-256). Offen: Kette bis zur Wurzel, Name, Gültigkeit |
 | 12. Vektorgrafik | ✅ Schrift, Zeiger und Icons, offen als Zeichenfläche für Anwendungen |
 | 13. Animationsschicht und Compositor | ✅ Animationen, Fensterpuffer als Ebenen, Gruppendeckkraft; Zoom und Drehung offen |
 | 14. Portierung auf Raspberry Pi 5 | offen |
@@ -349,10 +349,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 352 KB in drei Dateien |
-| Zeilen Assembler | 14315 |
-| Sprungmarken | 1455 |
-| **Fertiges Betriebssystem** | **49.597 Byte** |
+| Eigener Quelltext | 392 KB in drei Dateien |
+| Zeilen Assembler | 15743 |
+| Sprungmarken | 1572 |
+| **Fertiges Betriebssystem** | **56.749 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -650,6 +650,23 @@ Jetzt liest der Kernel beim Start aus dem Device Tree, welcher Controller verbau
 | Größe des fertigen Systems | 49.106 Byte | 49.597 Byte (+491) |
 
 Das Bild ist byteweise gleich der Referenz. Der Raspberry Pi 5 hat einen GICv2 (GIC-400), der bisherige Pfad bleibt also der wichtigere; der GICv3-Pfad ist die Eintrittskarte für schnelle Läufe auf dem Mac und für spätere Boards mit GICv3.
+
+### Stand 14.09.2026, siebzehnte Runde: die Sitzung gehört jetzt zum Zertifikat
+
+Bisher war die Verbindung verschlüsselt, aber nicht an eine Identität gebunden: Jeder, der sich in die Leitung stellt, hätte den Handshake mit seinem eigenen Schlüssel führen können. TLS 1.3 verlangt vom Server deshalb eine Unterschrift über den gesamten bisherigen Gesprächsverlauf mit dem privaten Schlüssel seines Zertifikats (CertificateVerify). Diese Unterschrift wird jetzt geprüft.
+
+Dafür kamen drei Dinge dazu. Erstens ein Parser für DER-kodierte Daten (ASN.1), der aus dem Zertifikat den öffentlichen Schlüssel holt und aus der Signatur die beiden Zahlen `r` und `s`. Zweitens Ganzzahlarithmetik beliebiger Gliederzahl mit Montgomery-Multiplikation, geschrieben mit Schleifen über die Glieder, damit derselbe Kern später auch die Kurve P-384 rechnet. Drittens die Kurve P-256 in Jacobi-Koordinaten mit Punktverdopplung, Punktaddition, Skalarmultiplikation und der ECDSA-Prüfung selbst. Da nur öffentliche Werte verarbeitet werden, muss nichts davon in konstanter Zeit laufen.
+
+Der Selbsttest beim Start prüft den Vektor aus RFC 6979 (Anhang A.2.5), lehnt dieselbe Signatur mit einem gekippten Bit ab, und zerlegt das echte Zertifikat von example.com (1.002 Byte, im Kernel als Testdatum), holt den Schlüssel heraus und prüft die Unterschrift der ausstellenden Stelle darauf. Live gegen example.com: `TLS SIGNATUR GEPRUEFT, ECDSA P-256, Sitzung an Zertifikat gebunden`. Ein Testbau mit einem gekippten Bit in der Serversignatur endet mit `TLS FEHLER: SIGNATUR DES SERVERS FALSCH`, und die Verbindung wird nicht weitergeführt.
+
+| Kennzahl | vorher | nachher |
+|---|---|---|
+| Größe des fertigen Systems | 49.597 Byte | **56.749 Byte** (+7.152, davon 1.400 Byte Testdaten: das Zertifikat, Schlüssel, Vektoren) |
+| Befehle bis Ruhe, 8 s | 480,5 Mio. | 508,9 Mio.; eine ECDSA-Prüfung kostet rund 5,7 Mio., drei davon im Selbsttest, eine im Handshake |
+| davon in der Montgomery-Multiplikation | | 19,0 Mio. (3,7 %) |
+| Geprüft auf | TCG, hvf | TCG (GICv2), hvf |
+
+Das Bild ist byteweise gleich der Referenz. Ehrlich benannt: Geprüft ist die Unterschrift des Servers mit dem Schlüssel aus dem ersten Zertifikat der Kette, noch nicht die Kette selbst bis zu einer vertrauten Wurzel, nicht der Name im Zertifikat und nicht der Gültigkeitszeitraum. Bis dahin ist die Bindung an "irgendein Zertifikat", nicht an "das Zertifikat von example.com". Die Multiplikation ist bewusst allgemein geschrieben und deshalb langsam; eine ausgerollte Fassung für vier Glieder würde sie um das Drei- bis Fünffache beschleunigen.
 
 **Fehlersuche im X25519-Block, kein Fund.** Sechs Vektoren aus dem RFC prüfen die Leiter, aber nicht die Ränder der Zahlenarithmetik. Ein Testbau hat deshalb 42 weitere Fälle gerechnet und gegen die Referenz des Entwicklungsrechners verglichen: 32 Schlüsselvereinbarungen mit Mustereingaben, zwei absichtlich unsaubere Kodierungen der Basiszahl 9 (einmal um die Primzahl vergrößert, einmal mit gesetztem oberstem Bit, beide müssen den Alice-Schlüssel ergeben) und acht Rechnungen der Feldarithmetik mit dem größtmöglichen Wert 2²⁵⁶−1: Quadrat, Summe, `0−1`, `a−a`, die Normierung selbst, `1−a`, die Multiplikation mit 121665 und die Inversion. Genau diese Extremwerte treiben die Überlaufbehandlung in ihre zweite Runde. **0 Abweichungen.** Dazu nachgerechnet: Nach jeder Faltung des Überlaufs mit 38 ist höchstens noch ein zweiter Übertrag möglich, ein dritter nicht; die zweite Runde im Code ist also ausreichend, nicht nur vorsichtig.
 
