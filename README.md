@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-34.696%20Byte-brightgreen?style=flat-square" alt="34696 Byte">
+<img src="https://img.shields.io/badge/Kernel-36.640%20Byte-brightgreen?style=flat-square" alt="36640 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>34.696&nbsp;Byte</b> groß, also <b>34&nbsp;KB</b>.<br>
+Das fertige System ist <b>36.640&nbsp;Byte</b> groß, also <b>36&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>259 KB · 11074 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>269 KB · 11463 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,11 +146,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 11074 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 11463 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1109 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1150 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -164,6 +164,7 @@ In `kernel.S` stecken **1109 Sprungmarken**. Jede gehört zu einem Zuständigkei
 | `virtio_` `mouse_` `click_` | 73 | Gerätetreiber, Maus, Klickerkennung |
 | `vg_` `cov_` `edge_` `icon_` | 60 | **Vektor-Engine**: Pfade, Kurven, Füllung, Strich, Kantenglättung, Icons |
 | `console_` `string_` `out_` `power_` | 59 | Konsole, Textwerkzeuge, Herunterfahren |
+| `sha_` | 41 | **Kryptografie**: SHA-256 über die ARMv8-Erweiterung, Selbsttest gegen fünf Vektoren |
 | `vec_` `panic_` `irq_` `gic_` | 37 | Fehlerbehandlung und Unterbrechungen |
 | `uart_` | 29 | Serielle Schnittstelle, Textausgabe, Tastatureingabe |
 | `boot_` | 15 | Hochfahren, Privilegstufe, Speicher vorbereiten |
@@ -176,7 +177,7 @@ In `kernel.S` stecken **1109 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **34.696 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **36.640 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -287,7 +288,7 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 8. Datenträger und FAT32 lesend | ✅ |
 | 9. Fenstersystem | ✅ inklusive erstem Fensterinhalt |
 | 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP, DNS, TCP-Client mit Verbindungstabelle, eingehende Prüfsummen, zufällige Kennungen und Ports, Härtung Block 1 abgeschlossen |
-| 11. Verschlüsselte Verbindungen | offen |
+| 11. Verschlüsselte Verbindungen | 🔧 begonnen: SHA-256 über die Prozessorerweiterung, fünf Testvektoren beim Start geprüft |
 | 12. Vektorgrafik | ✅ Schrift, Zeiger und Icons, offen als Zeichenfläche für Anwendungen |
 | 13. Animationsschicht und Compositor | ✅ Animationen, Fensterpuffer als Ebenen, Gruppendeckkraft; Zoom und Drehung offen |
 | 14. Portierung auf Raspberry Pi 5 | offen |
@@ -346,10 +347,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 260 KB in drei Dateien |
-| Zeilen Assembler | 11074 |
-| Sprungmarken | 1109 |
-| **Fertiges Betriebssystem** | **34.696 Byte** |
+| Eigener Quelltext | 274 KB in drei Dateien |
+| Zeilen Assembler | 11463 |
+| Sprungmarken | 1150 |
+| **Fertiges Betriebssystem** | **36.640 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -548,3 +549,18 @@ Bisher waren drei Dinge im Netzwerk fest oder leicht zu erraten: die Kennung jed
 | Startsequenz in drei Starts | Zeitgeberstand | `0x3f15b0f9`, `0xdacc08ce`, `0x6af503c9` |
 
 Nachgewiesen über einen Paketmitschnitt von QEMU (`filter-dump`), aus dem ein Skript die Werte liest. Der Kollisionsschutz für Ports ist mit einem Testbau bewiesen, der nur vier mögliche Ports zulässt und vier Verbindungen öffnet: alle vier bekamen verschiedene Ports, alle vier holten `HTTP/1.1 200 OK`. Ein Testbau, der einen geschlossenen Port anspricht, meldet weiterhin `TCP RST VOM SERVER`. Das Bild ist byteweise gleich der Referenz.
+
+### Stand 14.09.2026, elfte Runde: SHA-256, der erste Baustein für verschlüsselte Verbindungen
+
+Meilenstein 11 beginnt. TLS braucht vier Rechenbausteine: eine Prüfsummenfunktion (SHA-256), eine Schlüsselableitung darauf (HKDF), eine Verschlüsselung (AES-GCM) und einen Schlüsseltausch (X25519). Der erste ist eingebaut. Der Prozessor bringt dafür eigene Befehle mit (ARMv8 Cryptography Extension: `sha256h`, `sha256h2`, `sha256su0`, `sha256su1`), ein 64-Byte-Block kostet damit rund 120 Befehle statt einiger tausend. Ob die Erweiterung vorhanden ist, prüft das System beim Start am Prozessorregister und meldet sonst `SHA256 FEHLT`.
+
+Beim Start läuft jedes Mal ein Selbsttest gegen fünf bekannte Ergebnisse aus dem Standard: `abc`, die leere Nachricht, eine Nachricht von genau 56 Byte (erzwingt einen zusätzlichen Füllblock), eine von 55 Byte (der Grenzfall, bei dem die Länge gerade noch in den Block passt) und eine Million `a`, eingespeist in 1.000 Stücken zu 1.000 Byte, damit auch das Zusammensetzen über Blockgrenzen hinweg geprüft ist. Erst wenn alle fünf stimmen, erscheint `SHA256 OK, 5 Testvektoren`.
+
+| Kennzahl | vorher | nachher |
+|---|---|---|
+| Größe des fertigen Systems | 34.696 Byte | **36.640 Byte** (+1.944: 256 Byte Rundenkonstanten, 160 Byte Testvektoren, der Rest Code und Selbsttest) |
+| Start bis Ruhe | 475 Mio. Befehle | 476,8 Mio., der Selbsttest mit 15.625 Blöcken kostet 2,3 Mio. (0,5 %) |
+| ein Block SHA-256 | | 117 Befehle |
+| Geprüft auf | | QEMU-Emulation (Cortex-A72) **und** Apple Silicon direkt (`accel=hvf`, `-cpu host`), beide `SHA256 OK` |
+
+Das Bild ist byteweise gleich der Referenz, die Netzwerkkette läuft unverändert. Beim Einbau meldete die Linker-Zusicherung zum dritten Mal ihren Wert: Die Testvektoren und die Konstantentabelle waren hinter `BOOT OK` eingefügt worden, und dieser Text liegt im Füllraum eines Fehlerbehandlungseintrags. Zehn Einträge wären verschoben worden, der Bau brach ab, die Daten liegen jetzt im Datenbereich.

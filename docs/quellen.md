@@ -1695,3 +1695,24 @@ Einordnung: `virt` hat keinen Hardware-Zufall (kein `RNDR`, Cortex-A72 ist ARMv8
 `dns_resolve` ist der neue öffentliche Einstieg (setzt `dns_tries` zurück und fällt in `dns_query`), `dns_query` bleibt der Wiederholpfad für `dns_tick`.
 
 Nachweis über Paketmitschnitt (`-object filter-dump`): drei Starts liefern die DNS-Kennungen `0x3f9a`, `0x9d28`, `0x0c3c`, die Ports 61730, 50039, 64051 und die Startsequenzen `0x3f15b0f9`, `0xdacc08ce`, `0x6af503c9`. Kollisionsschutz: Testbau mit `TCP_PORT_MASK` 3 und vier Verbindungen ergab in zwei Läufen jeweils die vier verschiedenen Ports 49152 bis 49155 und viermal `HTTP/1.1 200 OK`. Regression RST: Testbau gegen 10.0.2.2:9 meldet `TCP RST VOM SERVER`.
+
+## TLS, Baustein 1: SHA-256 (14.09.2026)
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| `sha_k256` | 64 Rundenkonstanten, erste `0x428a2f98`, letzte `0xc67178f2` | FIPS 180-4, Abschnitt 4.2.2 (die ersten 32 Bit der Kubikwurzeln der ersten 64 Primzahlen) |
+| `sha_iv` | `0x6a09e667 … 0x5be0cd19` | FIPS 180-4, Abschnitt 5.3.3 |
+| Auffüllung | `0x80`, Nullen bis 56 mod 64, dann Länge in Bit als 64-Bit big-endian | FIPS 180-4, Abschnitt 5.1.1 |
+| `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` | vier Runden je Befehlspaar, Zustand `abcd` in `q0`, `efgh` in `q1`, `sha256h2` bekommt die Kopie von `abcd` vor der Runde | ARM DDI 0487, Abschnitt C7.2 (SHA256H: "SHA256 hash update (part 1)", SHA256H2, SHA256SU0 "schedule update 0", SHA256SU1) |
+| Nachrichtenplan | `su0(W[t−16..t−13], W[t−12..t−9])`, dann `su1(…, W[t−8..t−5], W[t−4..t−1])`, zwölfmal, die letzten vier Runden ohne Plan | ARM DDI 0487, Pseudocode zu SHA256SU0/SU1; FIPS 180-4, Abschnitt 6.2.2 Schritt 1 |
+| `ID_AA64ISAR0_EL1.SHA2`, Bits [15:12] | `0b0001` = SHA256 vorhanden, `0b0000` = nicht vorhanden | ARM DDI 0487, D19.2 (Register `ID_AA64ISAR0_EL1`, Feld SHA2) |
+| `.arch armv8-a+crypto` | schaltet die Erweiterung im Assembler frei; Cortex-A72 (QEMU) und Apple Silicon (`hvf`) melden das Feld als 1 | binutils, "AArch64 Options", `-march` Erweiterung `crypto` |
+| Byte-Reihenfolge | Eingabe und Ausgabe big-endian (`rev32`), Zustand intern in Maschinenreihenfolge | FIPS 180-4, Abschnitt 3.1 |
+
+Testvektoren: `abc` und die 56-Byte-Nachricht aus FIPS 180-2, Anhang B.1 und B.2; leere Nachricht und eine Million `a` aus NIST CAVP (SHA Test Vectors for Hashing Byte-Oriented Messages) beziehungsweise FIPS 180-2 Anhang B.3; der 55-Byte-Grenzfall (Länge passt gerade noch in den Block, kein Füllblock) mit `hashlib` auf dem Entwicklungsrechner gebildet und im Erzeugungsskript gegen alle fünf Erwartungen nachgerechnet.
+
+Kontext `SHA_CTX`: Zustand 0 (32 Byte), Puffer 32 (64), Byte-Zähler 96 (8), Füllstand 104 (4), Größe 112. `sha256_final` überschreibt den Kontext danach mit Nullen. `sha256_block` ist rahmenlos und ruft nichts auf; sie benutzt nur `v0`–`v7` und `v16`–`v19`, alle aufruferseitig zu sichern. Keine Unterbrechungsroutine des Systems benutzt NEON (geprüft: `timer_tick`, `uart_rx_isr`, `virtio_input_poll`), deshalb bleibt der Vektorzustand über einen Interrupt hinweg erhalten.
+
+Gemessen: Selbsttest 15.625 Blöcke in 2,3 Mio. Befehlen, ein Block 117 Befehle. `SHA256 OK, 5 Testvektoren` unter TCG (Cortex-A72) und unter hvf (`-cpu host`, Apple Silicon).
+
+Nächste Bausteine in dieser Reihenfolge: HMAC und HKDF (RFC 2104, RFC 5869) auf SHA-256, AES-128 (`aese`/`aesmc`) mit GCM (`pmull` für GHASH), X25519 (RFC 7748), dann der TLS-1.3-Handshake (RFC 8446).

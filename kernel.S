@@ -1,3 +1,5 @@
+.arch armv8-a+crypto
+
 .equ UART_BASE,             0x09000000
 .equ UART_DR,               0x00
 .equ UART_FR,               0x18
@@ -726,6 +728,14 @@
 .equ IRQ_FRAME_SIZE,        160
 
 .equ BOOT_SELFTEST,         0
+.equ SHA_CTX_STATE,         0
+.equ SHA_CTX_BUF,           32
+.equ SHA_CTX_COUNT,         96
+.equ SHA_CTX_FILL,          104
+.equ SHA_CTX_SIZE,          112
+.equ SHA_BLOCK_SIZE,        64
+.equ SHA_DIGEST_SIZE,       32
+.equ SHA_TEST_CHUNK,        1000
 .equ PMM_SELFTEST,          0
 .equ FS_SELFTEST,          0
 .equ FS_SELFTEST_BIG,       0
@@ -965,6 +975,7 @@ boot_fade_ok:
     bl      timer_init
     msr     daifclr, #DAIF_I
     bl      net_init
+    bl      sha_selftest
 
 .if BOOT_SELFTEST
     brk     #0
@@ -9986,6 +9997,326 @@ tcp_put_line_done:
     ldp     x29, x30, [sp], #32
     ret
 
+
+.macro sha_round wv
+    ld1     {v4.4s}, [x2], #16
+    add     v4.4s, v4.4s, \wv\().4s
+    mov     v2.16b, v0.16b
+    sha256h q0, q1, v4.4s
+    sha256h2 q1, q2, v4.4s
+.endm
+
+.macro sha_sched w0, w1, w2, w3
+    sha256su0 \w0\().4s, \w1\().4s
+    sha256su1 \w0\().4s, \w2\().4s, \w3\().4s
+.endm
+
+sha_available:
+    mrs     x0, id_aa64isar0_el1
+    ubfx    x0, x0, #12, #4
+    ret
+
+sha256_init:
+    ladr    x1, sha_iv
+    ld1     {v0.4s, v1.4s}, [x1]
+    st1     {v0.4s, v1.4s}, [x0]
+    str     xzr, [x0, #SHA_CTX_COUNT]
+    str     xzr, [x0, #SHA_CTX_FILL]
+    ret
+
+sha256_block:
+    ld1     {v0.4s, v1.4s}, [x0]
+    mov     v6.16b, v0.16b
+    mov     v7.16b, v1.16b
+    ld1     {v16.4s, v17.4s, v18.4s, v19.4s}, [x1]
+    rev32   v16.16b, v16.16b
+    rev32   v17.16b, v17.16b
+    rev32   v18.16b, v18.16b
+    rev32   v19.16b, v19.16b
+    ladr    x2, sha_k256
+    sha_round v16
+    sha_sched v16, v17, v18, v19
+    sha_round v17
+    sha_sched v17, v18, v19, v16
+    sha_round v18
+    sha_sched v18, v19, v16, v17
+    sha_round v19
+    sha_sched v19, v16, v17, v18
+    sha_round v16
+    sha_sched v16, v17, v18, v19
+    sha_round v17
+    sha_sched v17, v18, v19, v16
+    sha_round v18
+    sha_sched v18, v19, v16, v17
+    sha_round v19
+    sha_sched v19, v16, v17, v18
+    sha_round v16
+    sha_sched v16, v17, v18, v19
+    sha_round v17
+    sha_sched v17, v18, v19, v16
+    sha_round v18
+    sha_sched v18, v19, v16, v17
+    sha_round v19
+    sha_sched v19, v16, v17, v18
+    sha_round v16
+    sha_round v17
+    sha_round v18
+    sha_round v19
+    add     v0.4s, v0.4s, v6.4s
+    add     v1.4s, v1.4s, v7.4s
+    st1     {v0.4s, v1.4s}, [x0]
+    ret
+
+sha256_update:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    ldr     x3, [x19, #SHA_CTX_COUNT]
+    add     x3, x3, x21
+    str     x3, [x19, #SHA_CTX_COUNT]
+
+sha256_update_loop:
+    cbz     x21, sha256_update_done
+    ldr     w22, [x19, #SHA_CTX_FILL]
+    cbnz    w22, sha256_update_buffer
+    cmp     x21, #SHA_BLOCK_SIZE
+    b.lo    sha256_update_buffer
+    mov     x0, x19
+    mov     x1, x20
+    bl      sha256_block
+    add     x20, x20, #SHA_BLOCK_SIZE
+    sub     x21, x21, #SHA_BLOCK_SIZE
+    b       sha256_update_loop
+
+sha256_update_buffer:
+    mov     w3, #SHA_BLOCK_SIZE
+    sub     w3, w3, w22
+    cmp     x21, x3
+    csel    x3, x21, x3, lo
+    add     x4, x19, #SHA_CTX_BUF
+    add     x4, x4, x22
+    mov     x5, x3
+
+sha256_update_copy:
+    ldrb    w6, [x20], #1
+    strb    w6, [x4], #1
+    subs    x5, x5, #1
+    b.ne    sha256_update_copy
+    add     w22, w22, w3
+    sub     x21, x21, x3
+    cmp     w22, #SHA_BLOCK_SIZE
+    b.ne    sha256_update_store
+    mov     x0, x19
+    add     x1, x19, #SHA_CTX_BUF
+    bl      sha256_block
+    mov     w22, #0
+
+sha256_update_store:
+    str     w22, [x19, #SHA_CTX_FILL]
+    b       sha256_update_loop
+
+sha256_update_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+sha256_final:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x0
+    mov     x20, x1
+    ldr     x21, [x19, #SHA_CTX_COUNT]
+    ldr     w22, [x19, #SHA_CTX_FILL]
+    add     x4, x19, #SHA_CTX_BUF
+    mov     w0, #0x80
+    strb    w0, [x4, x22]
+    add     w22, w22, #1
+
+sha256_final_pad:
+    cmp     w22, #(SHA_BLOCK_SIZE - 8)
+    b.eq    sha256_final_length
+    cmp     w22, #SHA_BLOCK_SIZE
+    b.ne    sha256_final_zero
+    mov     x0, x19
+    mov     x1, x4
+    bl      sha256_block
+    add     x4, x19, #SHA_CTX_BUF
+    mov     w22, #0
+    b       sha256_final_pad
+
+sha256_final_zero:
+    strb    wzr, [x4, x22]
+    add     w22, w22, #1
+    b       sha256_final_pad
+
+sha256_final_length:
+    lsl     x21, x21, #3
+    rev     x21, x21
+    str     x21, [x4, #(SHA_BLOCK_SIZE - 8)]
+    mov     x0, x19
+    mov     x1, x4
+    bl      sha256_block
+    ld1     {v0.4s, v1.4s}, [x19]
+    rev32   v0.16b, v0.16b
+    rev32   v1.16b, v1.16b
+    st1     {v0.4s, v1.4s}, [x20]
+    mov     x0, x19
+    mov     w1, #SHA_CTX_SIZE
+
+sha256_final_wipe:
+    str     xzr, [x0], #8
+    subs    w1, w1, #8
+    b.ne    sha256_final_wipe
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+sha_compare:
+    ldp     x2, x3, [x0]
+    ldp     x4, x5, [x1]
+    eor     x2, x2, x4
+    eor     x3, x3, x5
+    orr     x2, x2, x3
+    ldp     x3, x4, [x0, #16]
+    ldp     x5, x6, [x1, #16]
+    eor     x3, x3, x5
+    eor     x4, x4, x6
+    orr     x2, x2, x3
+    orr     x2, x2, x4
+    cmp     x2, #0
+    cset    w0, ne
+    ret
+
+sha_check:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    ladr    x0, sha_ctx
+    bl      sha256_init
+    ladr    x0, sha_ctx
+    mov     x1, x19
+    mov     x2, x20
+    bl      sha256_update
+    ladr    x0, sha_ctx
+    ladr    x1, sha_digest
+    bl      sha256_final
+    ladr    x0, sha_digest
+    mov     x1, x21
+    bl      sha_compare
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+sha_put_digest:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, #0
+
+sha_put_digest_loop:
+    ldrb    w0, [x19, x20]
+    bl      uart_puthex8
+    add     w20, w20, #1
+    cmp     w20, #SHA_DIGEST_SIZE
+    b.lo    sha_put_digest_loop
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+sha_selftest:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    bl      sha_available
+    cbz     w0, sha_selftest_missing
+    mov     w19, #1
+    ladr    x0, sha_test_abc
+    mov     x1, #3
+    ladr    x2, sha_expect_abc
+    bl      sha_check
+    cbnz    w0, sha_selftest_fail
+    ladr    x0, sha_abc_msg
+    bl      uart_puts
+    ladr    x0, sha_digest
+    bl      sha_put_digest
+    ladr    x0, uart_newline
+    bl      uart_puts
+    mov     w19, #2
+    ladr    x0, sha_test_abc
+    mov     x1, #0
+    ladr    x2, sha_expect_empty
+    bl      sha_check
+    cbnz    w0, sha_selftest_fail
+    mov     w19, #3
+    ladr    x0, sha_test_two
+    mov     x1, #(sha_test_two_end - sha_test_two)
+    ladr    x2, sha_expect_two
+    bl      sha_check
+    cbnz    w0, sha_selftest_fail
+    mov     w19, #4
+    ladr    x0, sha_test_two
+    mov     x1, #(SHA_BLOCK_SIZE - 9)
+    ladr    x2, sha_expect_55
+    bl      sha_check
+    cbnz    w0, sha_selftest_fail
+    mov     w19, #5
+    ladr    x0, sha_buf
+    mov     w1, #SHA_TEST_CHUNK
+    mov     w2, #0x61
+
+sha_selftest_fill:
+    strb    w2, [x0], #1
+    subs    w1, w1, #1
+    b.ne    sha_selftest_fill
+    ladr    x0, sha_ctx
+    bl      sha256_init
+    mov     w20, #SHA_TEST_CHUNK
+
+sha_selftest_million:
+    ladr    x0, sha_ctx
+    ladr    x1, sha_buf
+    mov     x2, #SHA_TEST_CHUNK
+    bl      sha256_update
+    subs    w20, w20, #1
+    b.ne    sha_selftest_million
+    ladr    x0, sha_ctx
+    ladr    x1, sha_digest
+    bl      sha256_final
+    ladr    x0, sha_digest
+    ladr    x1, sha_expect_million
+    bl      sha_compare
+    cbnz    w0, sha_selftest_fail
+    ladr    x0, sha_ok_msg
+    bl      uart_puts
+    b       sha_selftest_done
+
+sha_selftest_fail:
+    ladr    x0, sha_fail_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+    b       sha_selftest_done
+
+sha_selftest_missing:
+    ladr    x0, sha_missing_msg
+    bl      uart_puts
+
+sha_selftest_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
 .section .text.vectors
 .balign VEC_TABLE_ALIGN
 .global vec_table
@@ -10641,6 +10972,57 @@ vg_dot_tab:
     .word   46341, 46341
 
 
+sha_ok_msg:
+    .asciz  "SHA256 OK, 5 Testvektoren\r\n"
+sha_fail_msg:
+    .asciz  "SHA256 FEHLER Test "
+sha_missing_msg:
+    .asciz  "SHA256 FEHLT, keine SHA2-Erweiterung\r\n"
+sha_abc_msg:
+    .asciz  "SHA256 abc = "
+sha_test_abc:
+    .ascii  "abc"
+sha_test_two:
+    .ascii  "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+sha_test_two_end:
+
+.balign 16
+sha_k256:
+    .word   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5
+    .word   0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5
+    .word   0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3
+    .word   0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174
+    .word   0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc
+    .word   0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da
+    .word   0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7
+    .word   0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967
+    .word   0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13
+    .word   0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85
+    .word   0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3
+    .word   0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070
+    .word   0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5
+    .word   0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3
+    .word   0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208
+    .word   0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+sha_iv:
+    .word   0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a
+    .word   0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+sha_expect_abc:
+    .byte   0xba,0x78,0x16,0xbf,0x8f,0x01,0xcf,0xea,0x41,0x41,0x40,0xde,0x5d,0xae,0x22,0x23
+    .byte   0xb0,0x03,0x61,0xa3,0x96,0x17,0x7a,0x9c,0xb4,0x10,0xff,0x61,0xf2,0x00,0x15,0xad
+sha_expect_empty:
+    .byte   0xe3,0xb0,0xc4,0x42,0x98,0xfc,0x1c,0x14,0x9a,0xfb,0xf4,0xc8,0x99,0x6f,0xb9,0x24
+    .byte   0x27,0xae,0x41,0xe4,0x64,0x9b,0x93,0x4c,0xa4,0x95,0x99,0x1b,0x78,0x52,0xb8,0x55
+sha_expect_two:
+    .byte   0x24,0x8d,0x6a,0x61,0xd2,0x06,0x38,0xb8,0xe5,0xc0,0x26,0x93,0x0c,0x3e,0x60,0x39
+    .byte   0xa3,0x3c,0xe4,0x59,0x64,0xff,0x21,0x67,0xf6,0xec,0xed,0xd4,0x19,0xdb,0x06,0xc1
+sha_expect_55:
+    .byte   0xaa,0x35,0x3e,0x00,0x9e,0xdb,0xae,0xbf,0xc6,0xe4,0x94,0xc8,0xd8,0x47,0x69,0x68
+    .byte   0x96,0xcb,0x8b,0x39,0x8e,0x01,0x73,0xa4,0xb5,0xc1,0xb6,0x36,0x29,0x2d,0x87,0xc7
+sha_expect_million:
+    .byte   0xcd,0xc7,0x6e,0x5c,0x99,0x14,0xfb,0x92,0x81,0xa1,0xc7,0xe2,0x84,0xd7,0x3e,0x67
+    .byte   0xf1,0x80,0x9a,0x48,0xa4,0x97,0x20,0x0e,0x04,0x6d,0x39,0xcc,0xc7,0x11,0x2c,0xd0
+
 .section .bss
 
 .balign 8
@@ -10891,6 +11273,13 @@ net_timer_armed:
 .balign 8
 net_rand_state:
     .space  8
+.balign 16
+sha_ctx:
+    .space  SHA_CTX_SIZE
+sha_digest:
+    .space  SHA_DIGEST_SIZE
+sha_buf:
+    .space  SHA_TEST_CHUNK
 dns_id:
     .space  2
 
