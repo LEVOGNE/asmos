@@ -1736,3 +1736,29 @@ Alle Erwartungswerte wurden im Erzeugungsskript mit `hmac`/`hashlib` neu berechn
 Speicherhygiene: `hmac_init` baut den inneren Füllblock auf dem Stack und überschreibt ihn danach (`mem_wipe`); `hmac_final` nullt den äußeren Schlüsselblock und den inneren Zwischenwert; `hkdf_expand` nullt `T` am Ende. `hmac_compute` und `hkdf_expand` halten ihren Kontext ausschließlich im eigenen Stackrahmen (224 beziehungsweise 288 Byte).
 
 Gemessen: `HMAC OK, 4 Testvektoren`, `HKDF OK, 3 Testvektoren` unter TCG und hvf; Start weiterhin 476,8 Mio. Befehle. Der Startblock `.text.boot` war nach zwei Selbsttest-Aufrufen bei 8 Byte Füllung; seit `crypto_selftest` sind es wieder 16.
+
+## TLS, Baustein 4: AES-128-GCM (14.09.2026)
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| `aes_rcon` | `01 02 04 08 10 20 40 80 1b 36` | FIPS 197, Abschnitt 5.2 (Rcon) |
+| Schlüsselaufbereitung | `w[i] = w[i−4] ⊕ SubWord(RotWord(w[i−1])) ⊕ Rcon` für `i ≡ 0 mod 4`, sonst `w[i] = w[i−4] ⊕ w[i−1]`; im Code als Präfix-XOR über die vier Wörter mit `ext` | FIPS 197, Abschnitt 5.2, Abbildung 11 |
+| `aese v, 0` als SubWord | `AESE` rechnet AddRoundKey, SubBytes, ShiftRows; mit Nullschlüssel und vier gleichen Wörtern ist ShiftRows wirkungslos, es bleibt SubBytes | ARM DDI 0487, C7.2 AESE; FIPS 197 Abschnitt 5.1.1 und 5.1.2 |
+| `ext v, v, v, #1` als RotWord | Bytes um eins nach unten rotieren; bei vier gleichen Wörtern rotiert jedes Wort in sich | FIPS 197, Abschnitt 5.2 (RotWord) |
+| Rundenfolge | 9 × (`aese`, `aesmc`) mit Schlüssel 0 bis 8, dann `aese` mit Schlüssel 9 und XOR Schlüssel 10 (letzte Runde ohne MixColumns) | FIPS 197, Abschnitt 5.1, Abbildung 5; ARM DDI 0487 AESE/AESMC |
+| `H = E_K(0¹²⁸)`, `J0 = IV ‖ 0³¹ ‖ 1` bei 96-Bit-IV, Zähler `inc32` big-endian im letzten Wort, erster Datenblock mit Zähler 2 | NIST SP 800-38D, Abschnitt 7.1 Schritte 1 bis 3, Abschnitt 6.2 (inc32) |
+| GHASH | `Y_i = (Y_{i−1} ⊕ X_i) · H`, Eingabe `A ‖ 0^v ‖ C ‖ 0^u ‖ len64(A) ‖ len64(C)`, Längen in Bit big-endian | NIST SP 800-38D, Abschnitt 6.4 und 7.1 Schritt 5 |
+| Tag | `T = GHASH ⊕ E_K(J0)` | NIST SP 800-38D, Abschnitt 7.1 Schritt 6 |
+| Bitreihenfolge | GCM zählt Bit 0 als höchstwertiges Bit von Byte 0; ein Prozessorwort zählt Bit `8·Byte + Bit` aufsteigend. `rbit` je Byte bildet GCM-Bit `i` genau auf Grad `i` ab, die Bytefolge bleibt. Danach ist die Multiplikation eine gewöhnliche Polynommultiplikation modulo `x¹²⁸ + x⁷ + x² + x + 1` | NIST SP 800-38D, Abschnitt 6.3 (Blockmultiplikation, Polynom `R = 11100001 ‖ 0¹²⁰`); Herleitung im Text |
+| `GCM_POLY_R` `0x87` | die unteren Bits von `x¹²⁸ mod P`, also `x⁷ + x² + x + 1`; Reduktion in zwei Schritten (`h₀·R`, `h₁·R·x⁶⁴`, Überhang von `h₁·R` noch einmal mit `R`) | NIST SP 800-38D, Abschnitt 6.3 |
+| `pmull`/`pmull2` | Polynommultiplikation 64 × 64 → 128 Bit ohne Übertrag, untere beziehungsweise obere Lane; vier Produkte je Multiplikation (Schulbuch), drei für die Reduktion | ARM DDI 0487, C7.2 PMULL, PMULL2 |
+| `ID_AA64ISAR0_EL1.AES`, Bits [7:4] | `0b0010` = AES und PMULL/PMULL2 vorhanden, `0b0001` nur AES | ARM DDI 0487, D19.2 (ID_AA64ISAR0_EL1, Feld AES) |
+| Testvektoren | McGrew, Viega, "The Galois/Counter Mode of Operation (GCM)", Test Case 1 bis 4 (AES-128); dieselben in NIST SP 800-38D beziehungsweise dem GCM-Spezifikationsentwurf | Werte im Erzeugungsskript mit `cryptography` (`AESGCM`) nachgerechnet und gegen die Anfangsbytes `58e2fcce`, `0388dace`/`ab6e47d4`, `42831ec2`/`4d5c2af3`, `5bc94fbc` geprüft |
+
+Schnittstelle: `aes_gcm_setkey(x0 Kontext 192 Byte, x1 Schlüssel 16 Byte)`; `aes_gcm_encrypt(x0 Kontext, x1 IV 12 Byte, x2 AAD, x3 AAD-Länge, x4 Eingabe, x5 Länge, x6 Ausgabe, x7 Tag-Ausgabe)`; `aes_gcm_decrypt` gleich, `x7` ist der zu prüfende Tag, Rückgabe `w0` 0 bei Erfolg, 1 bei falschem Tag, dann ist die Ausgabe genullt. Beide laufen über `aes_gcm_run` mit `w8` als Richtung. Rahmen 144 Byte: Register, `J0`, Blockpuffer, ursprüngliche Länge und Ausgabeadresse. Rundenschlüssel liegen während des Aufrufs in `v16`–`v26`, `H` in `v27`, `R` in `v28`, Null in `v29`, `Y` in `v30`, `E_K(J0)` in `v31`; `aes_wipe_keys` nullt sie am Ende. `v8`–`v15` werden nicht benutzt (untere Hälften wären aufrufergesichert). Der Tagvergleich läuft ohne frühen Ausstieg (zwei `ldp`, `eor`, `orr`).
+
+Nicht enthalten: IV-Längen außer 96 Bit (TLS 1.3 nutzt genau 96), AES-256, Beschleunigung durch Mehrfachblöcke je Runde. Die Multiplikation hat 7 `pmull` je Block; bei Bedarf ließe sich mit vorberechneten Potenzen von `H` auf 4 Blöcke je Reduktion kommen.
+
+**Gefundener Fehler beim Bau:** erste Fassung mit `rbit` + Byteumkehr, Vektor 2 schlug fehl (Vektor 1 hat leere Nachricht, dort ist GHASH konstant null und prüft die Multiplikation nicht). Regel: Ein Selbsttest braucht mindestens einen Vektor, der jede Rechenstufe tatsächlich benutzt.
+
+Gemessen: `AES-GCM OK, 4 Testvektoren, Manipulation erkannt` unter TCG und hvf, Start 476,8 Mio. Befehle, Bild unverändert.

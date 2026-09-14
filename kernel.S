@@ -745,6 +745,20 @@
 .equ HKDF_FRAME_T,          240
 .equ HKDF_FRAME_COUNT,      272
 .equ HKDF_FRAME_SIZE,       288
+.equ AES_BLOCK_SIZE,        16
+.equ AES_KEY_SIZE,          16
+.equ AES_ROUND_KEYS,        176
+.equ AES_CTX_H,             176
+.equ AES_CTX_SIZE,          192
+.equ GCM_IV_SIZE,           12
+.equ GCM_TAG_SIZE,          16
+.equ GCM_POLY_R,            0x87
+.equ GCM_FRAME_J0,          96
+.equ GCM_FRAME_TMP,         112
+.equ GCM_FRAME_LEN,         128
+.equ GCM_FRAME_OUT,         136
+.equ GCM_FRAME_SIZE,        144
+.equ AES_TEST_MAX,          64
 .equ PMM_SELFTEST,          0
 .equ FS_SELFTEST,          0
 .equ FS_SELFTEST_BIG,       0
@@ -10246,6 +10260,7 @@ crypto_selftest:
     stp     x29, x30, [sp, #-16]!
     bl      sha_selftest
     bl      hmac_selftest
+    bl      aes_selftest
     ldp     x29, x30, [sp], #16
     ret
 
@@ -10657,6 +10672,426 @@ hmac_selftest_report:
     bl      uart_puts
 
 hmac_selftest_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+
+.macro aes_enc_block
+    aese    v0.16b, v16.16b
+    aesmc   v0.16b, v0.16b
+    aese    v0.16b, v17.16b
+    aesmc   v0.16b, v0.16b
+    aese    v0.16b, v18.16b
+    aesmc   v0.16b, v0.16b
+    aese    v0.16b, v19.16b
+    aesmc   v0.16b, v0.16b
+    aese    v0.16b, v20.16b
+    aesmc   v0.16b, v0.16b
+    aese    v0.16b, v21.16b
+    aesmc   v0.16b, v0.16b
+    aese    v0.16b, v22.16b
+    aesmc   v0.16b, v0.16b
+    aese    v0.16b, v23.16b
+    aesmc   v0.16b, v0.16b
+    aese    v0.16b, v24.16b
+    aesmc   v0.16b, v0.16b
+    aese    v0.16b, v25.16b
+    eor     v0.16b, v0.16b, v26.16b
+.endm
+
+.macro gcm_reflect vreg
+    rbit    \vreg\().16b, \vreg\().16b
+.endm
+
+aes_available:
+    mrs     x0, id_aa64isar0_el1
+    ubfx    x0, x0, #4, #4
+    cmp     x0, #2
+    cset    w0, hs
+    ret
+
+aes_expand:
+    ld1     {v2.16b}, [x1]
+    st1     {v2.16b}, [x0], #16
+    movi    v0.16b, #0
+    ladr    x2, aes_rcon
+    mov     w3, #10
+
+aes_expand_round:
+    ldrb    w5, [x2], #1
+    dup     v1.4s, v2.s[3]
+    aese    v1.16b, v0.16b
+    ext     v1.16b, v1.16b, v1.16b, #1
+    dup     v4.4s, w5
+    eor     v1.16b, v1.16b, v4.16b
+    ext     v3.16b, v0.16b, v2.16b, #12
+    eor     v2.16b, v2.16b, v3.16b
+    ext     v3.16b, v0.16b, v2.16b, #8
+    eor     v2.16b, v2.16b, v3.16b
+    eor     v2.16b, v2.16b, v1.16b
+    st1     {v2.16b}, [x0], #16
+    subs    w3, w3, #1
+    b.ne    aes_expand_round
+    ret
+
+aes_load_keys:
+    ld1     {v16.16b, v17.16b, v18.16b, v19.16b}, [x0], #64
+    ld1     {v20.16b, v21.16b, v22.16b, v23.16b}, [x0], #64
+    ld1     {v24.16b, v25.16b, v26.16b, v27.16b}, [x0]
+    ret
+
+aes_wipe_keys:
+    movi    v16.16b, #0
+    movi    v17.16b, #0
+    movi    v18.16b, #0
+    movi    v19.16b, #0
+    movi    v20.16b, #0
+    movi    v21.16b, #0
+    movi    v22.16b, #0
+    movi    v23.16b, #0
+    movi    v24.16b, #0
+    movi    v25.16b, #0
+    movi    v26.16b, #0
+    movi    v27.16b, #0
+    movi    v30.16b, #0
+    movi    v31.16b, #0
+    ret
+
+aes_gcm_setkey:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     x19, x0
+    bl      aes_expand
+    mov     x0, x19
+    bl      aes_load_keys
+    movi    v0.16b, #0
+    aes_enc_block
+    gcm_reflect v0
+    add     x0, x19, #AES_CTX_H
+    st1     {v0.16b}, [x0]
+    bl      aes_wipe_keys
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+ghash_absorb:
+    gcm_reflect v1
+    eor     v30.16b, v30.16b, v1.16b
+    pmull   v2.1q, v30.1d, v27.1d
+    pmull2  v3.1q, v30.2d, v27.2d
+    ext     v4.16b, v27.16b, v27.16b, #8
+    pmull   v5.1q, v30.1d, v4.1d
+    pmull2  v4.1q, v30.2d, v4.2d
+    eor     v4.16b, v4.16b, v5.16b
+    ext     v5.16b, v29.16b, v4.16b, #8
+    ext     v4.16b, v4.16b, v29.16b, #8
+    eor     v2.16b, v2.16b, v5.16b
+    eor     v3.16b, v3.16b, v4.16b
+    pmull   v4.1q, v3.1d, v28.1d
+    pmull2  v5.1q, v3.2d, v28.2d
+    eor     v2.16b, v2.16b, v4.16b
+    ext     v6.16b, v29.16b, v5.16b, #8
+    eor     v2.16b, v2.16b, v6.16b
+    ext     v6.16b, v5.16b, v29.16b, #8
+    pmull   v6.1q, v6.1d, v28.1d
+    eor     v30.16b, v2.16b, v6.16b
+    ret
+
+ghash_data:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x1
+
+ghash_data_loop:
+    cmp     x20, #AES_BLOCK_SIZE
+    b.lo    ghash_data_partial
+    ld1     {v1.16b}, [x19], #16
+    bl      ghash_absorb
+    sub     x20, x20, #AES_BLOCK_SIZE
+    b       ghash_data_loop
+
+ghash_data_partial:
+    cbz     x20, ghash_data_done
+    add     x0, sp, #32
+    mov     w1, #AES_BLOCK_SIZE
+    bl      mem_wipe
+    mov     x0, x19
+    add     x1, sp, #32
+    mov     w2, w20
+    bl      mem_copy
+    add     x0, sp, #32
+    ld1     {v1.16b}, [x0]
+    bl      ghash_absorb
+    add     x0, sp, #32
+    mov     w1, #AES_BLOCK_SIZE
+    bl      mem_wipe
+
+ghash_data_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+aes_gcm_encrypt:
+    mov     w8, #0
+    b       aes_gcm_run
+
+aes_gcm_decrypt:
+    mov     w8, #1
+
+aes_gcm_run:
+    stp     x29, x30, [sp, #-GCM_FRAME_SIZE]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    stp     x27, x28, [sp, #80]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    mov     x22, x3
+    mov     x23, x4
+    mov     x24, x5
+    mov     x25, x6
+    mov     x26, x7
+    mov     w27, w8
+    str     x24, [sp, #GCM_FRAME_LEN]
+    str     x25, [sp, #GCM_FRAME_OUT]
+    mov     x0, x19
+    bl      aes_load_keys
+    mov     x0, #GCM_POLY_R
+    dup     v28.2d, x0
+    movi    v29.16b, #0
+    movi    v30.16b, #0
+    mov     x0, x20
+    add     x1, sp, #GCM_FRAME_J0
+    mov     w2, #GCM_IV_SIZE
+    bl      mem_copy
+    mov     w0, #0x01000000
+    str     w0, [sp, #(GCM_FRAME_J0 + GCM_IV_SIZE)]
+    add     x0, sp, #GCM_FRAME_J0
+    ld1     {v0.16b}, [x0]
+    aes_enc_block
+    mov     v31.16b, v0.16b
+    mov     w28, #1
+    mov     x0, x21
+    mov     x1, x22
+    bl      ghash_data
+
+aes_gcm_run_data:
+    cbz     x24, aes_gcm_run_lengths
+    add     w28, w28, #1
+    add     x0, sp, #GCM_FRAME_J0
+    ld1     {v0.16b}, [x0]
+    rev     w0, w28
+    mov     v0.s[3], w0
+    aes_enc_block
+    cmp     x24, #AES_BLOCK_SIZE
+    b.lo    aes_gcm_run_partial
+    ld1     {v1.16b}, [x23], #16
+    eor     v2.16b, v1.16b, v0.16b
+    st1     {v2.16b}, [x25], #16
+    cbnz    w27, aes_gcm_run_absorb
+    mov     v1.16b, v2.16b
+
+aes_gcm_run_absorb:
+    bl      ghash_absorb
+    sub     x24, x24, #AES_BLOCK_SIZE
+    b       aes_gcm_run_data
+
+aes_gcm_run_partial:
+    add     x0, sp, #GCM_FRAME_TMP
+    st1     {v0.16b}, [x0]
+    mov     x1, #0
+
+aes_gcm_run_partial_xor:
+    ldrb    w2, [x23, x1]
+    ldrb    w3, [x0, x1]
+    eor     w2, w2, w3
+    strb    w2, [x25, x1]
+    add     x1, x1, #1
+    cmp     x1, x24
+    b.lo    aes_gcm_run_partial_xor
+    mov     x0, x25
+    cbz     w27, aes_gcm_run_partial_hash
+    mov     x0, x23
+
+aes_gcm_run_partial_hash:
+    mov     x1, x24
+    bl      ghash_data
+    mov     x24, #0
+    b       aes_gcm_run_data
+
+aes_gcm_run_lengths:
+    lsl     x0, x22, #3
+    rev     x0, x0
+    ldr     x1, [sp, #GCM_FRAME_LEN]
+    lsl     x1, x1, #3
+    rev     x1, x1
+    stp     x0, x1, [sp, #GCM_FRAME_TMP]
+    add     x0, sp, #GCM_FRAME_TMP
+    ld1     {v1.16b}, [x0]
+    bl      ghash_absorb
+    mov     v0.16b, v30.16b
+    gcm_reflect v0
+    eor     v0.16b, v0.16b, v31.16b
+    cbnz    w27, aes_gcm_run_verify
+    st1     {v0.16b}, [x26]
+    mov     w0, #0
+    b       aes_gcm_run_done
+
+aes_gcm_run_verify:
+    add     x0, sp, #GCM_FRAME_TMP
+    st1     {v0.16b}, [x0]
+    ldp     x1, x2, [sp, #GCM_FRAME_TMP]
+    ldp     x3, x4, [x26]
+    eor     x1, x1, x3
+    eor     x2, x2, x4
+    orr     x1, x1, x2
+    cmp     x1, #0
+    cset    w19, ne
+    cbz     w19, aes_gcm_run_verified
+    ldr     x0, [sp, #GCM_FRAME_OUT]
+    ldr     x1, [sp, #GCM_FRAME_LEN]
+    bl      mem_wipe
+
+aes_gcm_run_verified:
+    mov     w0, w19
+
+aes_gcm_run_done:
+    mov     w19, w0
+    add     x0, sp, #GCM_FRAME_J0
+    mov     w1, #(AES_BLOCK_SIZE * 2)
+    bl      mem_wipe
+    bl      aes_wipe_keys
+    mov     w0, w19
+    ldp     x27, x28, [sp, #80]
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #GCM_FRAME_SIZE
+    ret
+
+aes_check:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    ladr    x0, aes_ctx
+    ldr     x1, [x19]
+    bl      aes_gcm_setkey
+    ladr    x0, aes_ctx
+    ldp     x1, x2, [x19, #8]
+    ldp     x3, x4, [x19, #24]
+    ldr     x5, [x19, #40]
+    ladr    x6, aes_buf
+    ladr    x7, aes_tag
+    bl      aes_gcm_encrypt
+    ladr    x0, aes_buf
+    ldr     x1, [x19, #48]
+    ldr     w2, [x19, #40]
+    bl      mem_equal
+    cbz     w0, aes_check_fail
+    ladr    x0, aes_tag
+    ldr     x1, [x19, #56]
+    mov     w2, #GCM_TAG_SIZE
+    bl      mem_equal
+    cbz     w0, aes_check_fail
+    ladr    x0, aes_ctx
+    ldp     x1, x2, [x19, #8]
+    ldr     x3, [x19, #24]
+    ldr     x4, [x19, #48]
+    ldr     x5, [x19, #40]
+    ladr    x6, aes_buf
+    ldr     x7, [x19, #56]
+    bl      aes_gcm_decrypt
+    cbnz    w0, aes_check_fail
+    ladr    x0, aes_buf
+    ldr     x1, [x19, #32]
+    ldr     w2, [x19, #40]
+    bl      mem_equal
+    cbz     w0, aes_check_fail
+    mov     w0, #0
+    b       aes_check_done
+
+aes_check_fail:
+    mov     w0, #1
+
+aes_check_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+aes_selftest:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    bl      aes_available
+    cbz     w0, aes_selftest_missing
+    mov     w19, #1
+    ladr    x0, aes_case_1
+    bl      aes_check
+    cbnz    w0, aes_selftest_fail
+    mov     w19, #2
+    ladr    x0, aes_case_2
+    bl      aes_check
+    cbnz    w0, aes_selftest_fail
+    mov     w19, #3
+    ladr    x0, aes_case_3
+    bl      aes_check
+    cbnz    w0, aes_selftest_fail
+    mov     w19, #4
+    ladr    x0, aes_case_4
+    bl      aes_check
+    cbnz    w0, aes_selftest_fail
+    mov     w19, #5
+    ladr    x20, aes_case_4
+    ldr     x0, [x20, #56]
+    ladr    x1, aes_tag
+    mov     w2, #GCM_TAG_SIZE
+    bl      mem_copy
+    ladr    x1, aes_tag
+    ldrb    w0, [x1]
+    eor     w0, w0, #1
+    strb    w0, [x1]
+    ladr    x0, aes_ctx
+    ldp     x1, x2, [x20, #8]
+    ldr     x3, [x20, #24]
+    ldr     x4, [x20, #48]
+    ldr     x5, [x20, #40]
+    ladr    x6, aes_buf
+    ladr    x7, aes_tag
+    bl      aes_gcm_decrypt
+    cmp     w0, #1
+    b.ne    aes_selftest_fail
+    ladr    x0, aes_buf
+    ldr     w1, [x20, #40]
+    mov     w2, #0
+
+aes_selftest_wiped:
+    ldrb    w3, [x0], #1
+    orr     w2, w2, w3
+    subs    w1, w1, #1
+    b.ne    aes_selftest_wiped
+    cbnz    w2, aes_selftest_fail
+    ladr    x0, aes_ok_msg
+    bl      uart_puts
+    b       aes_selftest_done
+
+aes_selftest_fail:
+    ladr    x0, aes_fail_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+    b       aes_selftest_done
+
+aes_selftest_missing:
+    ladr    x0, aes_missing_msg
+    bl      uart_puts
+
+aes_selftest_done:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
@@ -11469,6 +11904,82 @@ hkdf_case_3_okm:
     .byte   0xb8,0xa1,0x1f,0x5c,0x5e,0xe1,0x87,0x9e,0xc3,0x45,0x4e,0x5f,0x3c,0x73,0x8d,0x2d
     .byte   0x9d,0x20,0x13,0x95,0xfa,0xa4,0xb6,0x1a,0x96,0xc8
 
+aes_ok_msg:
+    .asciz  "AES-GCM OK, 4 Testvektoren, Manipulation erkannt\r\n"
+aes_fail_msg:
+    .asciz  "AES-GCM FEHLER Test "
+aes_missing_msg:
+    .asciz  "AES-GCM FEHLT, keine AES- oder PMULL-Erweiterung\r\n"
+aes_rcon:
+    .byte   0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36
+.balign 8
+aes_case_1:
+    .quad   aes_case_1_key, aes_case_1_iv, aes_case_1_aad, 0, aes_case_1_pt, 0, aes_case_1_ct, aes_case_1_tag
+aes_case_1_key:
+    .byte   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+aes_case_1_iv:
+    .byte   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+aes_case_1_aad:
+aes_case_1_pt:
+aes_case_1_ct:
+aes_case_1_tag:
+    .byte   0x58,0xe2,0xfc,0xce,0xfa,0x7e,0x30,0x61,0x36,0x7f,0x1d,0x57,0xa4,0xe7,0x45,0x5a
+.balign 8
+aes_case_2:
+    .quad   aes_case_2_key, aes_case_2_iv, aes_case_2_aad, 0, aes_case_2_pt, 16, aes_case_2_ct, aes_case_2_tag
+aes_case_2_key:
+    .byte   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+aes_case_2_iv:
+    .byte   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+aes_case_2_aad:
+aes_case_2_pt:
+    .byte   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+aes_case_2_ct:
+    .byte   0x03,0x88,0xda,0xce,0x60,0xb6,0xa3,0x92,0xf3,0x28,0xc2,0xb9,0x71,0xb2,0xfe,0x78
+aes_case_2_tag:
+    .byte   0xab,0x6e,0x47,0xd4,0x2c,0xec,0x13,0xbd,0xf5,0x3a,0x67,0xb2,0x12,0x57,0xbd,0xdf
+.balign 8
+aes_case_3:
+    .quad   aes_case_3_key, aes_case_3_iv, aes_case_3_aad, 0, aes_case_3_pt, 64, aes_case_3_ct, aes_case_3_tag
+aes_case_3_key:
+    .byte   0xfe,0xff,0xe9,0x92,0x86,0x65,0x73,0x1c,0x6d,0x6a,0x8f,0x94,0x67,0x30,0x83,0x08
+aes_case_3_iv:
+    .byte   0xca,0xfe,0xba,0xbe,0xfa,0xce,0xdb,0xad,0xde,0xca,0xf8,0x88
+aes_case_3_aad:
+aes_case_3_pt:
+    .byte   0xd9,0x31,0x32,0x25,0xf8,0x84,0x06,0xe5,0xa5,0x59,0x09,0xc5,0xaf,0xf5,0x26,0x9a
+    .byte   0x86,0xa7,0xa9,0x53,0x15,0x34,0xf7,0xda,0x2e,0x4c,0x30,0x3d,0x8a,0x31,0x8a,0x72
+    .byte   0x1c,0x3c,0x0c,0x95,0x95,0x68,0x09,0x53,0x2f,0xcf,0x0e,0x24,0x49,0xa6,0xb5,0x25
+    .byte   0xb1,0x6a,0xed,0xf5,0xaa,0x0d,0xe6,0x57,0xba,0x63,0x7b,0x39,0x1a,0xaf,0xd2,0x55
+aes_case_3_ct:
+    .byte   0x42,0x83,0x1e,0xc2,0x21,0x77,0x74,0x24,0x4b,0x72,0x21,0xb7,0x84,0xd0,0xd4,0x9c
+    .byte   0xe3,0xaa,0x21,0x2f,0x2c,0x02,0xa4,0xe0,0x35,0xc1,0x7e,0x23,0x29,0xac,0xa1,0x2e
+    .byte   0x21,0xd5,0x14,0xb2,0x54,0x66,0x93,0x1c,0x7d,0x8f,0x6a,0x5a,0xac,0x84,0xaa,0x05
+    .byte   0x1b,0xa3,0x0b,0x39,0x6a,0x0a,0xac,0x97,0x3d,0x58,0xe0,0x91,0x47,0x3f,0x59,0x85
+aes_case_3_tag:
+    .byte   0x4d,0x5c,0x2a,0xf3,0x27,0xcd,0x64,0xa6,0x2c,0xf3,0x5a,0xbd,0x2b,0xa6,0xfa,0xb4
+.balign 8
+aes_case_4:
+    .quad   aes_case_4_key, aes_case_4_iv, aes_case_4_aad, 20, aes_case_4_pt, 60, aes_case_4_ct, aes_case_4_tag
+aes_case_4_key:
+    .byte   0xfe,0xff,0xe9,0x92,0x86,0x65,0x73,0x1c,0x6d,0x6a,0x8f,0x94,0x67,0x30,0x83,0x08
+aes_case_4_iv:
+    .byte   0xca,0xfe,0xba,0xbe,0xfa,0xce,0xdb,0xad,0xde,0xca,0xf8,0x88
+aes_case_4_aad:
+    .byte   0xfe,0xed,0xfa,0xce,0xde,0xad,0xbe,0xef,0xfe,0xed,0xfa,0xce,0xde,0xad,0xbe,0xef
+    .byte   0xab,0xad,0xda,0xd2
+aes_case_4_pt:
+    .byte   0xd9,0x31,0x32,0x25,0xf8,0x84,0x06,0xe5,0xa5,0x59,0x09,0xc5,0xaf,0xf5,0x26,0x9a
+    .byte   0x86,0xa7,0xa9,0x53,0x15,0x34,0xf7,0xda,0x2e,0x4c,0x30,0x3d,0x8a,0x31,0x8a,0x72
+    .byte   0x1c,0x3c,0x0c,0x95,0x95,0x68,0x09,0x53,0x2f,0xcf,0x0e,0x24,0x49,0xa6,0xb5,0x25
+    .byte   0xb1,0x6a,0xed,0xf5,0xaa,0x0d,0xe6,0x57,0xba,0x63,0x7b,0x39
+aes_case_4_ct:
+    .byte   0x42,0x83,0x1e,0xc2,0x21,0x77,0x74,0x24,0x4b,0x72,0x21,0xb7,0x84,0xd0,0xd4,0x9c
+    .byte   0xe3,0xaa,0x21,0x2f,0x2c,0x02,0xa4,0xe0,0x35,0xc1,0x7e,0x23,0x29,0xac,0xa1,0x2e
+    .byte   0x21,0xd5,0x14,0xb2,0x54,0x66,0x93,0x1c,0x7d,0x8f,0x6a,0x5a,0xac,0x84,0xaa,0x05
+    .byte   0x1b,0xa3,0x0b,0x39,0x6a,0x0a,0xac,0x97,0x3d,0x58,0xe0,0x91
+aes_case_4_tag:
+    .byte   0x5b,0xc9,0x4f,0xbc,0x32,0x21,0xa5,0xdb,0x94,0xfa,0xe9,0x5a,0xe7,0x12,0x1a,0x47
 .section .bss
 
 .balign 8
@@ -11730,6 +12241,13 @@ hkdf_prk:
     .space  SHA_DIGEST_SIZE
 hkdf_okm:
     .space  96
+.balign 16
+aes_ctx:
+    .space  AES_CTX_SIZE
+aes_buf:
+    .space  AES_TEST_MAX
+aes_tag:
+    .space  GCM_TAG_SIZE
 dns_id:
     .space  2
 
