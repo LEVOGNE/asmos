@@ -1678,3 +1678,20 @@ Ein verworfenes Paket meldet `NET PRUEFSUMME IP|ICMP|UDP|TCP`. Nachweis mit vier
 | `dns_skip_name` ohne Paketgrenze | zweites Argument `x1` = Paketende, Überschreiten liefert das Ende zurück, die Längenprüfungen dahinter greifen dann | RFC 1035, Abschnitt 4.1.4 (Namen als Labelfolge oder Zeiger) |
 
 Bewusst nicht enthalten: Wiederzusammensetzen von Fragmenten (RFC 791, Abschnitt 3.2). Das System sendet mit `TCP_MSS` 1460 und bietet 4096 Byte Fenster, im Emulator entstehen keine Fragmente; auf echter Hardware hinter einem Router mit kleinerer MTU wäre es der nächste Schritt.
+
+## Netzwerk, Härtung 4: Zufall für Kennungen, Ports und Startsequenz (14.09.2026)
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| `net_random` | xorshift64 mit Verschiebungen 13, 7, 17; Zustand 64 Bit in `net_rand_state`, vor jedem Schritt mit `cntvct_el0` per XOR vermischt, Rückgabe die oberen 32 Bit; Zustand 0 wird durch `NET_RAND_SEED` ersetzt, weil xorshift bei 0 stehen bliebe | Marsaglia, "Xorshift RNGs", Journal of Statistical Software 8(14), 2003, Abschnitt 3, Tripel (13, 7, 17) für 64 Bit |
+| `NET_RAND_SEED` | `0x9e3779b97f4a7c15` | 2⁶⁴ / φ, die übliche Konstante für Streuung (Knuth, TAOCP Band 3, Abschnitt 6.4, multiplikatives Hashing); hier nur Rückfall gegen den Nullzustand |
+| DNS-Kennung | 16 Bit aus `net_random` je Anfrage, in `dns_id` gemerkt und in `dns_handle` verglichen | RFC 5452, Abschnitt 9.2: unvorhersagbare Kennung gegen untergeschobene Antworten |
+| TCP-Quellport | `TCP_LOCAL_PORT_BASE` + (`net_random` und `TCP_PORT_MASK` `0x3fff`), also 49152 bis 65535, neu gezogen bei Gleichheit mit einem belegten Platz | RFC 6335, Abschnitt 6 (dynamischer Bereich); RFC 6056, Abschnitt 3.3.1 (Zufallsport) |
+| TCP-Startsequenz | 32 Bit aus `net_random` | RFC 793, Abschnitt 3.3; RFC 6528 verlangt einen für Außenstehende nicht ableitbaren Anteil |
+| RST in `SYN_SENT` | nur angenommen, wenn ACK gesetzt und `SEG.ACK` = `ISS` + 1 | RFC 793, Abschnitt 3.9, "SEGMENT ARRIVES", Zustand SYN-SENT, zweiter Schritt |
+
+Einordnung: `virt` hat keinen Hardware-Zufall (kein `RNDR`, Cortex-A72 ist ARMv8.0). Die Entropie stammt aus dem Zeitgeberstand beim Start und bei jedem Aufruf, also aus dem Zeitpunkt, zu dem Pakete ankommen. Das genügt gegen blindes Raten von außen, ist aber kein kryptografischer Generator; für TLS (Meilenstein 11) braucht es eine eigene, belegte Quelle.
+
+`dns_resolve` ist der neue öffentliche Einstieg (setzt `dns_tries` zurück und fällt in `dns_query`), `dns_query` bleibt der Wiederholpfad für `dns_tick`.
+
+Nachweis über Paketmitschnitt (`-object filter-dump`): drei Starts liefern die DNS-Kennungen `0x3f9a`, `0x9d28`, `0x0c3c`, die Ports 61730, 50039, 64051 und die Startsequenzen `0x3f15b0f9`, `0xdacc08ce`, `0x6af503c9`. Kollisionsschutz: Testbau mit `TCP_PORT_MASK` 3 und vier Verbindungen ergab in zwei Läufen jeweils die vier verschiedenen Ports 49152 bis 49155 und viermal `HTTP/1.1 200 OK`. Regression RST: Testbau gegen 10.0.2.2:9 meldet `TCP RST VOM SERVER`.

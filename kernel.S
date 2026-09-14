@@ -276,7 +276,6 @@
 .equ DNS_RCODE_MASK,        0x000f
 .equ DNS_TYPE_A,            1
 .equ DNS_CLASS_IN,          1
-.equ DNS_ID_VALUE,          0x6173
 .equ DNS_NAME_MAX,          64
 .equ DNS_RETRY_TICKS,       90
 .equ DNS_RETRY_MAX,         3
@@ -304,6 +303,8 @@
 .equ TCP_MSS,               1460
 .equ TCP_WINDOW_SIZE,       4096
 .equ TCP_LOCAL_PORT_BASE,   49152
+.equ TCP_PORT_MASK,         0x3fff
+.equ NET_RAND_SEED,         0x9e3779b97f4a7c15
 .equ TCP_STATE_CLOSED,      0
 .equ TCP_STATE_SYN_SENT,    1
 .equ TCP_STATE_ESTABLISHED, 2
@@ -8330,6 +8331,22 @@ net_checksum_done:
     and     w0, w0, #0xffff
     ret
 
+net_random:
+    ladr    x1, net_rand_state
+    ldr     x0, [x1]
+    mrs     x2, cntvct_el0
+    eor     x0, x0, x2
+    cbnz    x0, net_random_step
+    ldr     x0, =NET_RAND_SEED
+
+net_random_step:
+    eor     x0, x0, x0, lsl #13
+    eor     x0, x0, x0, lsr #7
+    eor     x0, x0, x0, lsl #17
+    str     x0, [x1]
+    lsr     x0, x0, #32
+    ret
+
 net_pseudo_sum:
     lsr     w4, w0, #16
     and     w0, w0, #0xffff
@@ -8585,7 +8602,7 @@ net_ip_handle_proto:
     ladr    x0, net_ping_msg
     bl      uart_puts
     ladr    x0, dns_test_name
-    bl      dns_query
+    bl      dns_resolve
     b       net_ip_handle_done
 
 net_ip_handle_udp:
@@ -8983,6 +9000,10 @@ dhcp_handle_ret:
     ret
 
 
+dns_resolve:
+    ladr    x1, dns_tries
+    strb    wzr, [x1]
+
 dns_query:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
@@ -9017,9 +9038,12 @@ dns_query:
     mov     w4, w20
     bl      net_udp_begin
     mov     w20, w1
+    bl      net_random
+    and     w2, w0, #0xffff
+    ladr    x1, dns_id
+    strh    w2, [x1]
     mov     x0, x22
     mov     x1, #DNS_ID
-    mov     w2, #DNS_ID_VALUE
     bl      mem_write16be
     mov     x0, x22
     mov     x1, #DNS_FLAGS
@@ -9106,7 +9130,8 @@ dns_handle:
     mov     x0, x19
     mov     x1, #DNS_ID
     bl      mem_read16be
-    mov     w1, #DNS_ID_VALUE
+    ladr    x1, dns_id
+    ldrh    w1, [x1]
     cmp     w0, w1
     b.ne    dns_handle_done
     mov     x0, x19
@@ -9289,18 +9314,41 @@ tcp_open_clear:
     str     xzr, [x1], #8
     subs    x2, x2, #8
     b.ne    tcp_open_clear
-    mov     w2, #TCP_LOCAL_PORT_BASE
-    add     w2, w2, w19
-    mrs     x3, cntvct_el0
-    add     x3, x3, x19, lsl #16
     mov     x19, x0
     str     w20, [x19, #TCB_REMOTE_IP]
     str     w21, [x19, #TCB_REMOTE_PORT]
     str     x22, [x19, #TCB_HANDLER]
-    str     w2, [x19, #TCB_LOCAL_PORT]
-    str     w3, [x19, #TCB_ISS]
-    str     w3, [x19, #TCB_SND_NXT]
-    str     w3, [x19, #TCB_SND_UNA]
+    bl      net_random
+    str     w0, [x19, #TCB_ISS]
+    str     w0, [x19, #TCB_SND_NXT]
+    str     w0, [x19, #TCB_SND_UNA]
+
+tcp_open_port:
+    bl      net_random
+    and     w0, w0, #TCP_PORT_MASK
+    mov     w1, #TCP_LOCAL_PORT_BASE
+    add     w22, w1, w0
+    mov     w0, #0
+
+tcp_open_port_check:
+    cmp     w0, #TCP_MAX
+    b.hs    tcp_open_port_ok
+    str     x0, [sp, #-16]!
+    bl      tcp_slot
+    ldr     x1, [sp], #16
+    add     w1, w1, #1
+    ldrb    w2, [x0, #TCB_STATE]
+    cbz     w2, tcp_open_port_next
+    ldr     w2, [x0, #TCB_LOCAL_PORT]
+    cmp     w2, w22
+    b.eq    tcp_open_port
+
+tcp_open_port_next:
+    mov     w0, w1
+    b       tcp_open_port_check
+
+tcp_open_port_ok:
+    str     w22, [x19, #TCB_LOCAL_PORT]
     ladr    x0, tcp_syn_msg
     bl      uart_puts
     mov     w0, w20
@@ -9781,6 +9829,17 @@ tcp_handle_more:
     b       tcp_handle_done
 
 tcp_handle_rst:
+    ldrb    w0, [x26, #TCB_STATE]
+    cmp     w0, #TCP_STATE_SYN_SENT
+    b.ne    tcp_handle_rst_do
+    tst     w23, #TCP_FLAG_ACK
+    b.eq    tcp_handle_done
+    ldr     w0, [x26, #TCB_ISS]
+    add     w0, w0, #1
+    cmp     w22, w0
+    b.ne    tcp_handle_done
+
+tcp_handle_rst_do:
     mov     x0, x26
     bl      tcp_finish
     ladr    x0, tcp_rst_msg
@@ -10829,6 +10888,11 @@ net_tick_pending:
     .space  1
 net_timer_armed:
     .space  1
+.balign 8
+net_rand_state:
+    .space  8
+dns_id:
+    .space  2
 
 .balign 16
 net_rx_desc:

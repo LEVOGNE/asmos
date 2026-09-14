@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-34.520%20Byte-brightgreen?style=flat-square" alt="34520 Byte">
+<img src="https://img.shields.io/badge/Kernel-34.696%20Byte-brightgreen?style=flat-square" alt="34696 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>34.520&nbsp;Byte</b> groß, also <b>34&nbsp;KB</b>.<br>
+Das fertige System ist <b>34.696&nbsp;Byte</b> groß, also <b>34&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>257 KB · 11010 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>259 KB · 11074 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,15 +146,15 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 11010 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 11074 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1099 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1109 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
-| `net_` `tcp_` `dhcp_` `dns_` `http_` | 231 | **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP mit Verbindungstabelle |
+| `net_` `tcp_` `dhcp_` `dns_` `http_` | 241 | **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP mit Verbindungstabelle |
 | `font_` `glyph_` | 117 | TrueType auswerten und über die Vektor-Engine zeichnen |
 | `win_` `dirty_` | 110 | Fenster, Stapelreihenfolge, Ziehen, Teilaktualisierung, Fensterpuffer |
 | `fb_` `cursor_` | 86 | Bildschirm, Bildpunkte, Mauszeiger |
@@ -176,7 +176,7 @@ In `kernel.S` stecken **1099 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **34.520 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **34.696 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -286,7 +286,7 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 7. Speicherverwaltung, MMU aktiv | ✅ |
 | 8. Datenträger und FAT32 lesend | ✅ |
 | 9. Fenstersystem | ✅ inklusive erstem Fensterinhalt |
-| 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP, DNS, TCP-Client mit Verbindungstabelle, eingehende Prüfsummen, Härtung teilweise |
+| 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP, DNS, TCP-Client mit Verbindungstabelle, eingehende Prüfsummen, zufällige Kennungen und Ports, Härtung Block 1 abgeschlossen |
 | 11. Verschlüsselte Verbindungen | offen |
 | 12. Vektorgrafik | ✅ Schrift, Zeiger und Icons, offen als Zeichenfläche für Anwendungen |
 | 13. Animationsschicht und Compositor | ✅ Animationen, Fensterpuffer als Ebenen, Gruppendeckkraft; Zoom und Drehung offen |
@@ -347,9 +347,9 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 | | |
 |---|---|
 | Eigener Quelltext | 260 KB in drei Dateien |
-| Zeilen Assembler | 11010 |
-| Sprungmarken | 1099 |
-| **Fertiges Betriebssystem** | **34.520 Byte** |
+| Zeilen Assembler | 11074 |
+| Sprungmarken | 1109 |
+| **Fertiges Betriebssystem** | **34.696 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -535,3 +535,16 @@ Eine Durchsicht des gesamten Netzwerkcodes, Zeile für Zeile, auf die Fehlerklas
 | **Das Überspringen eines DNS-Namens kannte das Paketende nicht.** Ein bösartig gebautes Paket ohne abschließendes Nullbyte hätte den Leser über das Paket hinaus in den Nachbarspeicher laufen lassen | Lesen außerhalb des Pakets | Der Überspringer bekommt jetzt die Paketgrenze mit und bleibt an ihr stehen; die Kette läuft unverändert |
 
 Größe des fertigen Systems: 34.520 Byte (+96). Das Bild ist byteweise gleich der Referenz, über 10 s weiterhin 13 Interrupts und keine Netzarbeit nach Ende der Kette.
+
+### Stand 14.09.2026, zehnte Runde: nichts mehr vorhersagbar
+
+Bisher waren drei Dinge im Netzwerk fest oder leicht zu erraten: die Kennung jeder DNS-Anfrage (immer `0x6173`), der eigene TCP-Port (49152 plus Platznummer) und die Startsequenznummer einer Verbindung (der Zählerstand des Zeitgebers). Wer das weiß, kann gefälschte DNS-Antworten unterschieben oder fremde Segmente in eine Verbindung einschleusen. Jetzt liefert ein kleiner Zufallsgenerator (`net_random`, xorshift64, bei jedem Aufruf mit dem Zeitgeberstand vermischt) alle drei Werte. Der Port wird aus dem gesamten dynamischen Bereich 49152 bis 65535 gezogen und gegen die anderen offenen Verbindungen geprüft. Dazu zwei kleine Funde aus der letzten Fehlersuche: ein RST in der Verbindungsaufbauphase zählt nur noch, wenn er sich auf unser SYN bezieht, und eine neue Namensauflösung beginnt wieder mit drei Versuchen.
+
+| Kennzahl | vorher | nachher |
+|---|---|---|
+| Größe des fertigen Systems | 34.520 Byte | **34.696 Byte** (+176) |
+| DNS-Kennung in drei Starts | `0x6173`, `0x6173`, `0x6173` | `0x3f9a`, `0x9d28`, `0x0c3c` |
+| eigener TCP-Port in drei Starts | 49152, 49152, 49152 | 61730, 50039, 64051 |
+| Startsequenz in drei Starts | Zeitgeberstand | `0x3f15b0f9`, `0xdacc08ce`, `0x6af503c9` |
+
+Nachgewiesen über einen Paketmitschnitt von QEMU (`filter-dump`), aus dem ein Skript die Werte liest. Der Kollisionsschutz für Ports ist mit einem Testbau bewiesen, der nur vier mögliche Ports zulässt und vier Verbindungen öffnet: alle vier bekamen verschiedene Ports, alle vier holten `HTTP/1.1 200 OK`. Ein Testbau, der einen geschlossenen Port anspricht, meldet weiterhin `TCP RST VOM SERVER`. Das Bild ist byteweise gleich der Referenz.
