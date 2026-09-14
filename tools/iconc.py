@@ -107,18 +107,23 @@ class SvgLeser:
             tag=element.tag.rsplit('}',1)[-1]
             if tag not in {'svg','g','path','title','desc','metadata'}:
                 raise ValueError(f"SVG-Element nicht unterstuetzt: {tag}")
-            if 'transform' in element.attrib or 'style' in element.attrib:
-                raise ValueError("SVG transform/style wird noch nicht unterstuetzt")
+            if 'transform' in element.attrib:
+                raise ValueError("SVG transform wird noch nicht unterstuetzt")
     def pfade(self):
         return [e.get('d','') for e in self.root.iter() if e.tag.rsplit('}',1)[-1]=='path']
     def strichbreite(self):
-        m=re.search(r'stroke-width="([\d.]+)"', self.text)
+        m=re.search(r'stroke-width[=:]"?([\d.]+)', self.text)
         return float(m.group(1)) if m else 2.0
     def viewbox(self):
         m=re.search(r'viewBox="([^"]*)"', self.text)
         if not m: return (0,0,24,24)
         v=[float(x) for x in m.group(1).split()]
         return tuple(v)
+    def faktor(self):
+        v=self.viewbox()
+        if v[0]!=0 or v[1]!=0 or v[2]!=v[3] or v[2]<=0:
+            raise ValueError("Der Konverter erwartet eine quadratische viewBox mit Ursprung 0 0")
+        return 24.0/v[2]
 
 class Zerleger:
     def __init__(self,d):
@@ -187,14 +192,23 @@ class Icon:
         self.name=os.path.basename(pfad).replace('.svg','').replace('-','_')
         text=open(pfad).read()
         leser=SvgLeser(text)
-        if leser.viewbox()!=(0,0,24,24):
-            raise ValueError("Der Konverter erwartet viewBox 0 0 24 24")
+        f=leser.faktor()
         self.breite=24
-        self.strich=leser.strichbreite()
-        self.konturen=[]
+        self.strich=leser.strichbreite()*f
+        self.bloecke=[]
         for d in leser.pfade():
             p=Pfad(); Zerleger(d).lauf(p)
-            self.konturen+=p.konturen
+            self.bloecke.append([([tuple([b[0]]+[v*f for v in b[1:]]) for b in k],g) for k,g in p.konturen])
+        self.konturen=[k for block in self.bloecke for k in block]
+
+    def je_pfad(self):
+        teile=[]
+        for i,block in enumerate(self.bloecke):
+            t=Icon.__new__(Icon)
+            t.name=f"{self.name}_{i}"; t.breite=self.breite; t.strich=self.strich
+            t.bloecke=[block]; t.konturen=block
+            teile.append(t)
+        return teile
 
     def punkte(self):
         return sum(len(k) for k,_ in self.konturen)
@@ -221,11 +235,23 @@ class Icon:
                 else: aus+= bytes([3,k(b[1]),k(b[2]),k(b[3]),k(b[4])])
         return bytes(aus)
 
+    def asm(self):
+        b=self.binaer()
+        zeilen=[f"icon_{self.name}:"]
+        for i in range(0,len(b),12):
+            zeilen.append("    .byte   "+", ".join(str(v) for v in b[i:i+12]))
+        return "\n".join(zeilen)
+
 if __name__=='__main__':
+    dateien=[a for a in sys.argv[1:] if not a.startswith('--')]
+    als_asm='--asm' in sys.argv
+    je_pfad='--paths' in sys.argv
     gesamt=0
-    for f in sys.argv[1:]:
+    for f in dateien:
         ic=Icon(f)
-        b=ic.binaer()
-        gesamt+=len(b)
-        print(f"{ic.name:<18} {len(ic.konturen)} Konturen, {ic.punkte():>3} Befehle ({ic.kurven()} Kurven), {len(b):>4} Byte")
-    print(f"{'SUMME':<18} {gesamt} Byte fuer {len(sys.argv)-1} Icons")
+        for teil in (ic.je_pfad() if je_pfad else [ic]):
+            b=teil.binaer()
+            gesamt+=len(b)
+            if als_asm: print(teil.asm())
+            else: print(f"{teil.name:<18} {len(teil.konturen)} Konturen, {teil.punkte():>3} Befehle ({teil.kurven()} Kurven), {len(b):>4} Byte")
+    if not als_asm: print(f"{'SUMME':<18} {gesamt} Byte fuer {len(dateien)} Icons")

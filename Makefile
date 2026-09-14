@@ -18,7 +18,7 @@ FONT_SRC      := $(firstword $(wildcard $(FONT_STORE) $(FONT_ALT)))
 
 DEVICES := -m 256M -device ramfb -device virtio-tablet-device -global virtio-mmio.force-legacy=false -drive file=$(DISK),if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 
-DISPLAY_OPT :=
+DISPLAY_OPT := -display cocoa,zoom-interpolation=on
 
 CHECK_SECONDS := 3
 CHECK_EXPECT  := BOOT OK

@@ -82,6 +82,10 @@
 .equ CLICK_WINDOW_MS,       400
 .equ MS_PER_SECOND,         1000
 .equ CLICK_MAX,             3
+.equ CLICK_X,               0
+.equ CLICK_Y,               4
+.equ CLICK_PENDING,         8
+.equ CLICK_RECORD_SIZE,     12
 
 .equ FWCFG_BASE,            0x09020000
 .equ FWCFG_DATA,            0x00
@@ -399,16 +403,29 @@
 .equ CURSOR_STATE_W,        8
 .equ CURSOR_STATE_H,        12
 .equ CURSOR_STATE_VISIBLE,  16
-.equ CURSOR_STATE_SIZE,     20
+.equ CURSOR_STATE_PENDING,  17
+.equ CURSOR_STATE_PREV_X,   20
+.equ CURSOR_STATE_PREV_Y,   24
+.equ CURSOR_STATE_PREV_W,   28
+.equ CURSOR_STATE_PREV_H,   32
+.equ CURSOR_STATE_SIZE,     36
 
 
 .equ CURSOR_W,              48
 .equ CURSOR_H,              48
-.equ CURSOR_WHITE_STRIDE,   (CURSOR_W / 8)
-.equ ALPHA_8_TO_16,         257
+.equ CURSOR_ALPHA_FULL,     0x10000
+.equ CURSOR_ALPHA_PRESSED,  59638
+.equ CURSOR_PRESSED_PCT,    96
+.equ CURSOR_PRESSED_OFFSET, ((CURSOR_W - (CURSOR_W * CURSOR_PRESSED_PCT) / 100) / 2)
 .equ ALPHA_MAX,             0xffff
 .equ ALPHA_ROUND,           0x8000
+.equ CURSOR_STRIDE,         (CURSOR_W * FB_BPP)
 .equ CURSOR_BACKING_SIZE,   (CURSOR_W * CURSOR_H * FB_BPP)
+.equ CURSOR_SPRITE_SIZE,    CURSOR_BACKING_SIZE
+
+.equ FB_TARGET_BASE,        0
+.equ FB_TARGET_STRIDE,      8
+.equ FB_TARGET_SIZE,        16
 
 .equ WIN_X,                 0
 .equ WIN_Y,                 4
@@ -514,6 +531,8 @@
 .equ ICON_SUBDIV,           8
 .equ ICON_BIAS,             32
 .equ ICON_SCALE,            ((ICON_SIZE << FIX_SHIFT) / (ICON_UNITS * ICON_SUBDIV))
+.equ CURSOR_SCALE,          ((CURSOR_W << FIX_SHIFT) / (ICON_UNITS * ICON_SUBDIV))
+.equ CURSOR_SCALE_PRESSED,  ((CURSOR_SCALE * CURSOR_PRESSED_PCT) / 100)
 .equ ICON_CMD_MOVE,         1
 .equ ICON_CMD_LINE,         2
 .equ ICON_CMD_QUAD,         3
@@ -733,7 +752,9 @@ boot_memory_ready:
     bl      fb_present_all
 
 boot_fade_ok:
+    bl      cursor_render
     bl      cursor_show
+    bl      cursor_present
 .if FS_SELFTEST
     bl      blk_selftest
     bl      fat_list_root
@@ -897,9 +918,18 @@ string_equal_no:
     mov     w0, #0
     ret
 
+fb_target_screen:
+    ladr    x9, fb_target
+    ladr    x10, fb_render
+    str     x10, [x9, #FB_TARGET_BASE]
+    mov     x10, #FB_STRIDE
+    str     x10, [x9, #FB_TARGET_STRIDE]
+    ret
+
 fb_init:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
+    bl      fb_target_screen
     bl      fwcfg_find_ramfb
     cmn     w0, #1
     b.eq    fb_init_missing
@@ -1110,10 +1140,9 @@ fb_rect_empty:
     ret
 
 fb_pixel_addr:
-    mov     x9, #FB_STRIDE
-    madd    x9, x1, x9, xzr
-    ladr    x10, fb_render
-    add     x9, x10, x9
+    ladr    x10, fb_target
+    ldp     x10, x9, [x10]
+    madd    x9, x1, x9, x10
     add     x0, x9, x0, lsl #3
     ret
 
@@ -1205,10 +1234,15 @@ cursor_hide:
     mov     x5, #(CURSOR_W * FB_BPP)
     bl      cursor_copy
     ldr     w0, [x19, #CURSOR_STATE_X]
-    ldr     w1, [x19, #CURSOR_STATE_Y]
-    ldr     w2, [x19, #CURSOR_STATE_W]
-    ldr     w3, [x19, #CURSOR_STATE_H]
-    bl      fb_present
+    str     w0, [x19, #CURSOR_STATE_PREV_X]
+    ldr     w0, [x19, #CURSOR_STATE_Y]
+    str     w0, [x19, #CURSOR_STATE_PREV_Y]
+    ldr     w0, [x19, #CURSOR_STATE_W]
+    str     w0, [x19, #CURSOR_STATE_PREV_W]
+    ldr     w0, [x19, #CURSOR_STATE_H]
+    str     w0, [x19, #CURSOR_STATE_PREV_H]
+    mov     w0, #1
+    strb    w0, [x19, #CURSOR_STATE_PENDING]
 
 cursor_hide_done:
     ldr     x19, [sp, #16]
@@ -1251,6 +1285,14 @@ cursor_show:
     bl      cursor_copy
 
 cursor_show_draw:
+    bl      mouse_get_buttons
+    mov     w24, #CURSOR_ALPHA_FULL
+    mov     w13, #CURSOR_ALPHA_PRESSED
+    ladr    x21, cursor_sprite
+    ladr    x9, cursor_sprite_pressed
+    cmp     w0, #0
+    csel    w24, w13, w24, ne
+    csel    x21, x9, x21, ne
     ldr     w0, [x19, #CURSOR_STATE_X]
     ldr     w1, [x19, #CURSOR_STATE_Y]
     bl      fb_pixel_addr
@@ -1260,37 +1302,32 @@ cursor_show_draw:
 cursor_show_draw_row:
     cmp     w6, w23
     b.hs    cursor_show_done
-    ladr    x21, cursor_alpha_rows
-    ldrh    w9, [x21, x6, lsl #1]
-    ladr    x21, cursor_alpha_rle
-    add     x21, x21, x9, lsl #1
-    mov     w7, #0
     mov     w4, #0
     mov     x5, x20
+    mov     x7, x21
 
 cursor_show_draw_col:
     cmp     w4, w22
     b.hs    cursor_show_draw_next
-    tst     w7, #0x7f
-    b.ne    cursor_show_draw_run
-    ldrb    w7, [x21], #1
-    ldrb    w8, [x21], #1
-
-cursor_show_draw_run:
-    sub     w7, w7, #1
-    mov     w12, w8
-    cbz     w12, cursor_show_draw_skip
-    mov     w13, #ALPHA_8_TO_16
-    mul     w12, w12, w13
-    tbz     w7, #7, cursor_show_draw_dark
-    mov     x10, x12
-    orr     x10, x10, x12, lsl #CH_SHIFT_G
-    orr     x10, x10, x12, lsl #CH_SHIFT_B
+    ldr     x8, [x7], #FB_BPP
+    lsr     x12, x8, #CH_SHIFT_A
+    cbz     x12, cursor_show_draw_skip
+    mul     x12, x12, x24
+    lsr     x12, x12, #16
+    and     x10, x8, #0xffff
+    mul     x10, x10, x24
+    lsr     x10, x10, #16
+    lsr     x13, x8, #CH_SHIFT_G
+    and     x13, x13, #0xffff
+    mul     x13, x13, x24
+    lsr     x13, x13, #16
+    orr     x10, x10, x13, lsl #CH_SHIFT_G
+    lsr     x13, x8, #CH_SHIFT_B
+    and     x13, x13, #0xffff
+    mul     x13, x13, x24
+    lsr     x13, x13, #16
+    orr     x10, x10, x13, lsl #CH_SHIFT_B
     orr     x10, x10, x12, lsl #CH_SHIFT_A
-    b       cursor_show_draw_blend
-
-cursor_show_draw_dark:
-    lsl     x10, x12, #CH_SHIFT_A
 
 cursor_show_draw_blend:
     mov     x13, #ALPHA_MAX
@@ -1342,27 +1379,147 @@ cursor_show_draw_skip:
 cursor_show_draw_next:
     mov     x9, #FB_STRIDE
     add     x20, x20, x9
+    add     x21, x21, #CURSOR_STRIDE
     add     w6, w6, #1
     b       cursor_show_draw_row
 
 cursor_show_done:
     mov     w0, #1
     strb    w0, [x19, #CURSOR_STATE_VISIBLE]
-    ldr     w0, [x19, #CURSOR_STATE_X]
-    ldr     w1, [x19, #CURSOR_STATE_Y]
-    ldr     w2, [x19, #CURSOR_STATE_W]
-    ldr     w3, [x19, #CURSOR_STATE_H]
-    bl      fb_present
     ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #80
     ret
 
+cursor_render:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, cursor_sprite
+    mov     w1, #0
+    mov     x2, #CURSOR_SCALE
+    bl      cursor_render_sprite
+    ladr    x0, cursor_sprite_pressed
+    mov     w1, #CURSOR_PRESSED_OFFSET
+    mov     x2, #CURSOR_SCALE_PRESSED
+    bl      cursor_render_sprite
+    ldp     x29, x30, [sp], #16
+    ret
+
+cursor_render_sprite:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     x19, x0
+    mov     w20, w1
+    mov     x21, x2
+    mov     x1, #(CURSOR_SPRITE_SIZE / 8)
+
+cursor_render_clear:
+    str     xzr, [x0], #8
+    subs    x1, x1, #1
+    b.ne    cursor_render_clear
+    ladr    x9, fb_target
+    str     x19, [x9, #FB_TARGET_BASE]
+    mov     x0, #CURSOR_STRIDE
+    str     x0, [x9, #FB_TARGET_STRIDE]
+    mov     w0, #0
+    mov     w1, #0
+    mov     w2, #CURSOR_W
+    mov     w3, #CURSOR_H
+    bl      fb_clip_set
+    ladr    x0, icon_cursor_body
+    mov     w1, w20
+    mov     w2, w20
+    ldr     x3, =COLOR_CURSOR_DARK
+    mov     x4, x21
+    bl      icon_fill
+    ladr    x0, icon_cursor_body
+    mov     w1, w20
+    mov     w2, w20
+    ldr     x3, =COLOR_CURSOR
+    mov     x4, x21
+    bl      icon_draw_scaled
+    ladr    x0, icon_cursor_ring
+    mov     w1, w20
+    mov     w2, w20
+    ldr     x3, =COLOR_CURSOR_DARK
+    mov     x4, x21
+    bl      icon_fill
+    bl      fb_clip_full
+    bl      fb_target_screen
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+cursor_present:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    ladr    x19, cursor_state
+    ldr     w0, [x19, #CURSOR_STATE_X]
+    ldr     w1, [x19, #CURSOR_STATE_Y]
+    ldr     w2, [x19, #CURSOR_STATE_W]
+    ldr     w3, [x19, #CURSOR_STATE_H]
+    ldrb    w4, [x19, #CURSOR_STATE_PENDING]
+    cbz     w4, cursor_present_new
+    strb    wzr, [x19, #CURSOR_STATE_PENDING]
+    ldr     w5, [x19, #CURSOR_STATE_PREV_X]
+    ldr     w6, [x19, #CURSOR_STATE_PREV_Y]
+    ldr     w7, [x19, #CURSOR_STATE_PREV_W]
+    ldr     w8, [x19, #CURSOR_STATE_PREV_H]
+    add     w2, w2, w0
+    add     w3, w3, w1
+    add     w7, w7, w5
+    add     w8, w8, w6
+    cmp     w0, w5
+    csel    w20, w0, w5, lt
+    cmp     w1, w6
+    csel    w21, w1, w6, lt
+    cmp     w2, w7
+    csel    w22, w2, w7, gt
+    cmp     w3, w8
+    csel    w9, w3, w8, gt
+    sub     w22, w22, w20
+    sub     w9, w9, w21
+    cmp     w22, #(CURSOR_W * 2)
+    b.gt    cursor_present_split
+    cmp     w9, #(CURSOR_H * 2)
+    b.gt    cursor_present_split
+    mov     w0, w20
+    mov     w1, w21
+    mov     w2, w22
+    mov     w3, w9
+    bl      fb_present
+    b       cursor_present_done
+
+cursor_present_split:
+    ldr     w0, [x19, #CURSOR_STATE_X]
+    ldr     w1, [x19, #CURSOR_STATE_Y]
+    ldr     w2, [x19, #CURSOR_STATE_W]
+    ldr     w3, [x19, #CURSOR_STATE_H]
+    bl      fb_present
+    ldr     w0, [x19, #CURSOR_STATE_PREV_X]
+    ldr     w1, [x19, #CURSOR_STATE_PREV_Y]
+    ldr     w2, [x19, #CURSOR_STATE_PREV_W]
+    ldr     w3, [x19, #CURSOR_STATE_PREV_H]
+    bl      fb_present
+    b       cursor_present_done
+
+cursor_present_new:
+    bl      fb_present
+
+cursor_present_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
 cursor_update:
     stp     x29, x30, [sp, #-16]!
     bl      cursor_hide
     bl      cursor_show
+    bl      cursor_present
     ldp     x29, x30, [sp], #16
     ret
 
@@ -1481,6 +1638,25 @@ win_dirty_bounds:
     b       dirty_add
 
 win_repaint:
+    stp     x29, x30, [sp, #-16]!
+    bl      win_repaint_render
+    bl      win_repaint_present
+    ldp     x29, x30, [sp], #16
+    ret
+
+dirty_rect_load:
+    ladr    x9, dirty_list
+    mov     x10, #DIRTY_SIZE
+    madd    x9, x19, x10, x9
+    ldr     w0, [x9, #DIRTY_X]
+    ldr     w1, [x9, #DIRTY_Y]
+    ldr     w2, [x9, #DIRTY_X2]
+    ldr     w3, [x9, #DIRTY_Y2]
+    sub     w2, w2, w0
+    sub     w3, w3, w1
+    ret
+
+win_repaint_render:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
 .if WIN_FORCE_FULL
@@ -1488,45 +1664,50 @@ win_repaint:
 .endif
     ladr    x19, dirty_count
     ldrb    w0, [x19, #4]
-    cbnz    w0, win_repaint_full
+    cbnz    w0, win_repaint_render_full
     ldr     w20, [x19]
-    cbz     w20, win_repaint_end
     mov     w19, #0
 
-win_repaint_loop:
+win_repaint_render_loop:
     cmp     w19, w20
-    b.hs    win_repaint_end
-    ladr    x9, dirty_list
-    mov     x10, #DIRTY_SIZE
-    madd    x9, x19, x10, x9
-    ldr     w0, [x9, #DIRTY_X]
-    ldr     w1, [x9, #DIRTY_Y]
-    ldr     w2, [x9, #DIRTY_X2]
-    ldr     w3, [x9, #DIRTY_Y2]
-    sub     w2, w2, w0
-    sub     w3, w3, w1
+    b.hs    win_repaint_render_end
+    bl      dirty_rect_load
     bl      fb_clip_set
     bl      win_draw_all
-    ladr    x9, dirty_list
-    mov     x10, #DIRTY_SIZE
-    madd    x9, x19, x10, x9
-    ldr     w0, [x9, #DIRTY_X]
-    ldr     w1, [x9, #DIRTY_Y]
-    ldr     w2, [x9, #DIRTY_X2]
-    ldr     w3, [x9, #DIRTY_Y2]
-    sub     w2, w2, w0
-    sub     w3, w3, w1
-    bl      fb_present
     add     w19, w19, #1
-    b       win_repaint_loop
+    b       win_repaint_render_loop
 
-win_repaint_full:
+win_repaint_render_full:
     bl      fb_clip_full
     bl      win_draw_all
+
+win_repaint_render_end:
+    bl      fb_clip_full
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+win_repaint_present:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    ladr    x19, dirty_count
+    ldrb    w0, [x19, #4]
+    cbnz    w0, win_repaint_present_full
+    ldr     w20, [x19]
+    mov     w19, #0
+
+win_repaint_present_loop:
+    cmp     w19, w20
+    b.hs    win_repaint_present_end
+    bl      dirty_rect_load
+    bl      fb_present
+    add     w19, w19, #1
+    b       win_repaint_present_loop
+
+win_repaint_present_full:
     bl      fb_present_all
 
-win_repaint_end:
-    bl      fb_clip_full
+win_repaint_present_end:
     bl      dirty_reset
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
@@ -1712,6 +1893,13 @@ vg_dot_close:
     ret
 
 icon_draw:
+    mov     x4, #ICON_SCALE
+icon_draw_scaled:
+    mov     w5, #1
+    b       icon_run
+icon_fill:
+    mov     w5, #0
+icon_run:
     stp     x29, x30, [sp, #-112]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
@@ -1722,11 +1910,14 @@ icon_draw:
     mov     x19, x0
     mov     w25, w1
     mov     w26, w2
-    mov     x20, #ICON_SCALE
+    mov     x20, x4
+    mov     w28, w5
     bl      vg_edge_reset
+    cbz     w28, icon_run_width
     ladr    x0, vg_emit
     ladr    x1, vg_seg
     str     x1, [x0]
+icon_run_width:
     ldrb    w21, [x19], #1
     ldrb    w0, [x19], #1
     mul     x0, x0, x20
@@ -1739,7 +1930,7 @@ icon_draw:
 
 icon_contour:
     cmp     w22, w21
-    b.hs    icon_fill
+    b.hs    icon_run_fill
     ldrb    w23, [x19], #1
     and     w23, w23, #0x7f
     mov     w24, #0
@@ -1762,12 +1953,17 @@ icon_cmd:
     ldr     w0, [x4]
     ladr    x4, vg_cur_y
     ldr     w1, [x4]
-    bl      vg_seg
+    ladr    x4, vg_emit
+    ldr     x4, [x4]
+    blr     x4
     ldp     x0, x1, [sp], #16
 
 icon_cmd_move:
     bl      icon_set_cur
+    cbz     w28, icon_cmd_next
     bl      vg_dot
+
+icon_cmd_next:
     add     w24, w24, #1
     b       icon_cmd
 
@@ -1793,16 +1989,13 @@ icon_cmd_quad:
     mov     w5, w7
     bl      vg_quad
     ldp     x0, x1, [sp], #16
-    bl      icon_set_cur
-    bl      vg_dot
-    add     w24, w24, #1
-    b       icon_cmd
+    b       icon_cmd_move
 
 icon_contour_next:
     add     w22, w22, #1
     b       icon_contour
 
-icon_fill:
+icon_run_fill:
     ldr     x0, [sp, #96]
     bl      vg_fill
     ldp     x27, x28, [sp, #80]
@@ -4972,6 +5165,11 @@ mouse_get_pos:
     ldr     w1, [x2, #4]
     ret
 
+mouse_get_buttons:
+    ladr    x2, mouse_buttons
+    ldrb    w0, [x2]
+    ret
+
 mouse_clamp:
     cmp     w0, #0
     csel    w0, wzr, w0, lt
@@ -5059,8 +5257,9 @@ mouse_apply_key:
     ladr    x3, mouse_dirty
     mov     w0, #1
     strb    w0, [x3]
-    cbz     w2, mouse_apply_done
-    b       mouse_click
+    cbnz    w2, mouse_click
+    ladr    x3, release_record
+    b       mouse_click_record
 
 mouse_click:
     mrs     x0, cntvct_el0
@@ -5085,15 +5284,16 @@ mouse_click_first:
 
 mouse_click_store:
     str     w5, [x3]
-    ladr    x3, mouse_x
-    ldr     w0, [x3]
-    ldr     w1, [x3, #4]
-    ladr    x3, click_x
-    str     w0, [x3]
-    str     w1, [x3, #4]
-    ladr    x3, click_pending
+    ladr    x3, click_record
+
+mouse_click_record:
+    ladr    x4, mouse_x
+    ldr     w0, [x4]
+    ldr     w1, [x4, #4]
+    str     w0, [x3, #CLICK_X]
+    str     w1, [x3, #CLICK_Y]
     mov     w0, #1
-    strb    w0, [x3]
+    strb    w0, [x3, #CLICK_PENDING]
     b       mouse_apply_done
 
 mouse_apply_syn:
@@ -5981,7 +6181,14 @@ fb_blend_pixel:
     lsr     x10, x10, #16
     add     x9, x9, x10
     orr     x6, x6, x9, lsl #CH_SHIFT_B
-    orr     x6, x6, x4, lsl #CH_SHIFT_A
+    lsr     x10, x3, #CH_SHIFT_A
+    mul     x10, x10, x5
+    add     x10, x10, #ALPHA_ROUND
+    lsr     x11, x10, #16
+    add     x10, x10, x11
+    lsr     x10, x10, #16
+    add     x10, x10, x1
+    orr     x6, x6, x10, lsl #CH_SHIFT_A
     str     x6, [x0]
 fb_blend_done:
     ret
@@ -6584,14 +6791,20 @@ console_take_flag:
     ret
 
 click_take:
+    ladr    x0, click_record
+    b       click_take_record
+
+release_take:
+    ladr    x0, release_record
+
+click_take_record:
     mrs     x3, daif
     msr     daifset, #DAIF_I
-    ladr    x4, click_pending
-    ldrb    w0, [x4]
-    strb    wzr, [x4]
-    ladr    x4, click_x
-    ldr     w1, [x4]
-    ldr     w2, [x4, #4]
+    mov     x4, x0
+    ldrb    w0, [x4, #CLICK_PENDING]
+    strb    wzr, [x4, #CLICK_PENDING]
+    ldr     w1, [x4, #CLICK_X]
+    ldr     w2, [x4, #CLICK_Y]
     msr     daif, x3
     ret
 
@@ -6615,17 +6828,27 @@ console_drain_overflow:
     bl      uart_puts
 console_drain_click:
     bl      click_take
-    cbz     w0, console_drain_mouse
+    cbz     w0, console_drain_release
     stp     w1, w2, [sp, #32]
     mov     w0, w1
     mov     w1, w2
     bl      power_hit
-    cbnz    w0, console_drain_power
+    ladr    x1, power_armed
+    strb    w0, [x1]
+    cbnz    w0, console_drain_release
     ldp     w0, w1, [sp, #32]
     bl      win_click
     mov     w19, #1
-    b       console_drain_mouse
-console_drain_power:
+console_drain_release:
+    bl      release_take
+    cbz     w0, console_drain_mouse
+    stp     w1, w2, [sp, #32]
+    ladr    x0, power_armed
+    bl      console_take_flag
+    cbz     w0, console_drain_mouse
+    ldp     w0, w1, [sp, #32]
+    bl      power_hit
+    cbz     w0, console_drain_mouse
     bl      power_off
 console_drain_mouse:
     ladr    x0, mouse_dirty
@@ -6642,8 +6865,10 @@ console_drain_anim:
 console_drain_repaint:
     cbz     w19, console_drain_blink
     bl      cursor_hide
-    bl      win_repaint
+    bl      win_repaint_render
     bl      cursor_show
+    bl      win_repaint_present
+    bl      cursor_present
     ladr    x0, fb_fade_dirty
     ldrb    w1, [x0]
     cbz     w1, console_drain_blink
@@ -7000,8 +7225,11 @@ console_pending:
     ladr    x1, uart_rx_overflow
     ldrb    w2, [x1]
     cbnz    w2, console_pending_yes
-    ladr    x1, click_pending
-    ldrb    w2, [x1]
+    ladr    x1, click_record
+    ldrb    w2, [x1, #CLICK_PENDING]
+    cbnz    w2, console_pending_yes
+    ladr    x1, release_record
+    ldrb    w2, [x1, #CLICK_PENDING]
     cbnz    w2, console_pending_yes
     ladr    x1, mouse_dirty
     ldrb    w2, [x1]
@@ -7363,78 +7591,6 @@ fat_big_name:
 
 
 
-.balign 2
-cursor_alpha_rows:
-    .2byte  0, 1, 2, 8, 18, 28, 37, 48, 61, 74, 87, 100
-    .2byte  114, 128, 141, 154, 167, 180, 192, 203, 216, 227, 238, 249
-    .2byte  260, 272, 284, 298, 312, 326, 340, 351, 363, 374, 385, 396
-    .2byte  407, 417, 428, 439, 450, 461, 470, 478, 486, 493, 499, 500
-
-cursor_alpha_rle:
-    .byte  48, 0, 48, 0, 6, 0, 129, 14, 129, 60, 129, 62, 129, 18, 38, 0
-    .byte  4, 0, 129, 9, 129, 147, 129, 249, 130, 255, 129, 252, 129, 180, 129, 72
-    .byte  129, 1, 35, 0, 3, 0, 129, 9, 129, 203, 129, 255, 4, 229, 130, 255
-    .byte  129, 219, 129, 113, 129, 16, 33, 0, 3, 0, 129, 148, 129, 255, 7, 229
-    .byte  130, 255, 129, 245, 129, 154, 129, 47, 31, 0, 2, 0, 129, 14, 129, 249
-    .byte  3, 229, 131, 255, 5, 229, 130, 255, 129, 195, 129, 88, 129, 5, 28, 0
-    .byte  2, 0, 129, 60, 129, 255, 2, 229, 129, 255, 2, 229, 132, 255, 4, 229
-    .byte  130, 255, 129, 231, 129, 129, 129, 26, 26, 0, 2, 0, 129, 62, 129, 255
-    .byte  2, 229, 129, 255, 5, 229, 131, 255, 4, 229, 130, 255, 129, 251, 129, 170
-    .byte  129, 62, 24, 0, 2, 0, 129, 19, 129, 252, 2, 229, 130, 255, 6, 229
-    .byte  131, 255, 5, 229, 130, 255, 129, 210, 129, 103, 129, 11, 21, 0, 3, 0
-    .byte  129, 179, 129, 255, 2, 229, 129, 255, 8, 229, 132, 255, 4, 229, 130, 255
-    .byte  129, 240, 129, 144, 129, 38, 19, 0, 3, 0, 129, 71, 129, 255, 2, 229
-    .byte  129, 255, 11, 229, 131, 255, 5, 229, 129, 255, 129, 254, 129, 185, 129, 78
-    .byte  129, 2, 16, 0, 3, 0, 129, 1, 129, 219, 129, 255, 1, 229, 130, 255
-    .byte  12, 229, 131, 255, 5, 229, 130, 255, 129, 223, 129, 119, 129, 19, 14, 0
-    .byte  4, 0, 129, 112, 129, 255, 2, 229, 129, 255, 14, 229, 132, 255, 4, 229
-    .byte  130, 255, 129, 247, 129, 160, 129, 52, 12, 0, 4, 0, 129, 16, 129, 245
-    .byte  2, 229, 130, 255, 16, 229, 131, 255, 5, 229, 130, 255, 129, 201, 129, 93
-    .byte  129, 7, 9, 0, 5, 0, 129, 153, 129, 255, 2, 229, 129, 255, 18, 229
-    .byte  132, 255, 4, 229, 130, 255, 129, 234, 129, 134, 129, 30, 7, 0, 5, 0
-    .byte  129, 46, 129, 255, 2, 229, 130, 255, 20, 229, 131, 255, 5, 229, 129, 255
-    .byte  129, 252, 129, 175, 129, 55, 5, 0, 6, 0, 129, 195, 129, 255, 2, 229
-    .byte  129, 255, 22, 229, 131, 255, 5, 229, 129, 255, 129, 254, 129, 128, 4, 0
-    .byte  6, 0, 129, 87, 129, 255, 2, 229, 129, 255, 24, 229, 132, 255, 4, 229
-    .byte  129, 255, 129, 95, 3, 0, 6, 0, 129, 5, 129, 230, 129, 255, 1, 229
-    .byte  130, 255, 26, 229, 131, 255, 2, 229, 129, 255, 129, 225, 129, 1, 2, 0
-    .byte  7, 0, 129, 128, 129, 255, 2, 229, 129, 255, 28, 229, 130, 255, 2, 229
-    .byte  129, 255, 129, 41, 2, 0, 7, 0, 129, 26, 129, 251, 2, 229, 130, 255
-    .byte  28, 229, 129, 255, 2, 229, 129, 255, 129, 61, 2, 0, 8, 0, 129, 169
-    .byte  129, 255, 2, 229, 129, 255, 27, 229, 130, 255, 2, 229, 129, 255, 129, 34
-    .byte  2, 0, 8, 0, 129, 62, 129, 255, 2, 229, 130, 255, 22, 229, 133, 255
-    .byte  2, 229, 129, 255, 129, 213, 3, 0, 9, 0, 129, 210, 129, 255, 2, 229
-    .byte  129, 255, 18, 229, 133, 255, 5, 229, 129, 255, 129, 254, 129, 76, 3, 0
-    .byte  9, 0, 129, 103, 129, 255, 2, 229, 129, 255, 15, 229, 132, 255, 7, 229
-    .byte  130, 255, 129, 249, 129, 103, 4, 0, 9, 0, 129, 11, 129, 240, 2, 229
-    .byte  130, 255, 12, 229, 131, 255, 7, 229, 130, 255, 129, 254, 129, 209, 129, 136
-    .byte  129, 34, 5, 0, 10, 0, 129, 144, 129, 255, 2, 229, 129, 255, 11, 229
-    .byte  130, 255, 5, 229, 131, 255, 129, 225, 129, 157, 129, 89, 129, 22, 8, 0
-    .byte  10, 0, 129, 38, 129, 254, 2, 229, 130, 255, 10, 229, 129, 255, 2, 229
-    .byte  131, 255, 129, 238, 129, 172, 129, 105, 129, 37, 12, 0, 11, 0, 129, 185
-    .byte  129, 255, 2, 229, 129, 255, 9, 229, 130, 255, 1, 229, 129, 255, 129, 238
-    .byte  129, 122, 129, 52, 129, 2, 15, 0, 11, 0, 129, 78, 129, 255, 2, 229
-    .byte  129, 255, 9, 229, 129, 255, 2, 229, 129, 255, 129, 121, 18, 0, 11, 0
-    .byte  129, 2, 129, 224, 129, 255, 1, 229, 130, 255, 8, 229, 129, 255, 2, 229
-    .byte  129, 255, 129, 52, 18, 0, 12, 0, 129, 119, 129, 255, 2, 229, 129, 255
-    .byte  7, 229, 130, 255, 2, 229, 129, 237, 129, 2, 18, 0, 12, 0, 129, 20
-    .byte  129, 247, 2, 229, 130, 255, 6, 229, 129, 255, 2, 229, 129, 255, 129, 172
-    .byte  19, 0, 13, 0, 129, 160, 129, 255, 2, 229, 129, 255, 6, 229, 129, 255
-    .byte  2, 229, 129, 255, 129, 104, 19, 0, 13, 0, 129, 53, 129, 255, 2, 229
-    .byte  130, 255, 5, 229, 129, 255, 2, 229, 129, 255, 129, 36, 19, 0, 14, 0
-    .byte  129, 201, 129, 255, 2, 229, 129, 255, 4, 229, 130, 255, 2, 229, 129, 224
-    .byte  20, 0, 14, 0, 129, 94, 129, 255, 2, 229, 129, 255, 4, 229, 129, 255
-    .byte  2, 229, 129, 255, 129, 157, 20, 0, 14, 0, 129, 7, 129, 235, 2, 229
-    .byte  130, 255, 3, 229, 129, 255, 2, 229, 129, 255, 129, 89, 20, 0, 15, 0
-    .byte  129, 135, 129, 255, 2, 229, 129, 255, 3, 229, 129, 255, 2, 229, 129, 254
-    .byte  129, 22, 20, 0, 15, 0, 129, 31, 129, 252, 2, 229, 130, 255, 1, 229
-    .byte  130, 255, 1, 229, 129, 255, 129, 209, 21, 0, 16, 0, 129, 176, 129, 255
-    .byte  2, 229, 131, 255, 2, 229, 129, 255, 129, 135, 21, 0, 16, 0, 129, 56
-    .byte  129, 254, 6, 229, 129, 255, 129, 249, 129, 34, 21, 0, 17, 0, 129, 129
-    .byte  130, 255, 3, 229, 129, 255, 129, 254, 129, 103, 22, 0, 18, 0, 129, 96
-    .byte  129, 226, 131, 255, 129, 214, 129, 76, 23, 0, 19, 0, 129, 1, 129, 42
-    .byte  129, 62, 129, 34, 25, 0, 48, 0, 48, 0
-
 .balign 8
 panic_names:
     .quad   panic_name_00
@@ -7499,6 +7655,40 @@ icon_trash:
     .byte   104, 88, 2, 104, 64, 3, 105, 57, 112, 56, 2, 144
     .byte   56, 3, 151, 57, 152, 64, 2, 152, 88
 
+icon_cursor_body:
+    .byte   1, 18, 146, 1, 151, 142, 2, 195, 130, 3, 201, 128
+    .byte   203, 123, 3, 205, 119, 204, 114, 3, 202, 109, 197, 106
+    .byte   2, 69, 53, 3, 64, 51, 59, 53, 3, 55, 55, 53
+    .byte   59, 3, 51, 64, 53, 69, 2, 106, 197, 3, 109, 202
+    .byte   114, 204, 3, 119, 205, 123, 203, 3, 128, 201, 130, 195
+    .byte   2, 142, 151, 3, 142, 148, 144, 147, 3, 145, 145, 147
+    .byte   144, 3, 148, 142, 151, 142, 2, 151, 142
+icon_cursor_ring:
+    .byte   2, 18, 158, 1, 64, 55, 3, 63, 55, 62, 56, 3
+    .byte   61, 56, 60, 57, 3, 59, 57, 58, 58, 3, 57, 59
+    .byte   56, 60, 3, 55, 62, 55, 64, 3, 55, 66, 56, 68
+    .byte   2, 109, 195, 3, 110, 197, 112, 199, 3, 113, 200, 115
+    .byte   200, 3, 117, 201, 118, 201, 3, 120, 201, 122, 200, 3
+    .byte   123, 199, 125, 198, 3, 126, 196, 127, 194, 2, 138, 150
+    .byte   3, 139, 147, 141, 145, 3, 142, 142, 145, 141, 3, 147
+    .byte   139, 150, 138, 2, 194, 127, 3, 196, 126, 198, 125, 3
+    .byte   199, 123, 200, 122, 3, 201, 120, 201, 118, 3, 201, 117
+    .byte   200, 115, 3, 200, 113, 199, 112, 3, 197, 110, 195, 109
+    .byte   2, 68, 56, 3, 67, 56, 67, 56, 3, 66, 55, 65
+    .byte   55, 3, 65, 55, 64, 55, 2, 64, 55, 158, 1, 118
+    .byte   208, 3, 114, 208, 112, 207, 3, 109, 205, 106, 203, 3
+    .byte   104, 201, 103, 198, 2, 49, 71, 3, 48, 67, 48, 64
+    .byte   3, 48, 61, 49, 58, 3, 51, 55, 53, 53, 3, 55
+    .byte   51, 58, 49, 3, 61, 48, 64, 48, 3, 67, 48, 71
+    .byte   49, 2, 198, 103, 3, 201, 104, 203, 107, 3, 206, 109
+    .byte   207, 112, 3, 208, 115, 208, 119, 3, 207, 122, 206, 125
+    .byte   3, 204, 128, 202, 130, 3, 199, 132, 196, 133, 2, 152
+    .byte   145, 3, 150, 146, 149, 146, 3, 147, 147, 146, 149, 3
+    .byte   146, 150, 145, 152, 2, 133, 196, 3, 132, 199, 130, 202
+    .byte   3, 128, 204, 125, 206, 3, 122, 207, 119, 208, 3, 119
+    .byte   208, 118, 208, 3, 118, 208, 118, 208, 3, 118, 208, 118
+    .byte   208, 2, 118, 208
+
 .balign 8
 vg_dot_tab:
     .word   65536, 0
@@ -7556,6 +7746,10 @@ fb_fade_dirty:
 .balign 4
 fb_clip:
     .space  CLIP_SIZE
+
+.balign 8
+fb_target:
+    .space  FB_TARGET_SIZE
 
 .balign 8
 dec_buffer:
@@ -7797,13 +7991,12 @@ mouse_buttons:
     .space  1
 mouse_dirty:
     .space  1
-click_x:
-    .space  4
-
-click_y:
-    .space  4
-
-click_pending:
+.balign 4
+click_record:
+    .space  CLICK_RECORD_SIZE
+release_record:
+    .space  CLICK_RECORD_SIZE
+power_armed:
     .space  1
 
 .balign 4
@@ -7829,6 +8022,10 @@ cursor_state:
 .balign 4
 cursor_backing:
     .space  CURSOR_BACKING_SIZE
+cursor_sprite:
+    .space  CURSOR_SPRITE_SIZE
+cursor_sprite_pressed:
+    .space  CURSOR_SPRITE_SIZE
 
 .section .render, "aw", %nobits
 .balign 64
