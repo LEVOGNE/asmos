@@ -1,4 +1,4 @@
-import sys, os, re, bisect, hashlib, subprocess, tarfile, time, urllib.request, collections
+import sys, os, re, bisect, hashlib, subprocess, tarfile, time, urllib.request, collections, socket, json
 
 QEMU_VERSION = "11.1.1"
 QEMU_URL = f"https://download.qemu.org/qemu-{QEMU_VERSION}.tar.xz"
@@ -136,21 +136,99 @@ class Symbole:
         return beste
 
 
+class Eingabe:
+    ABS_MAX = 32767
+
+    def __init__(self, sockpfad, breite, hoehe):
+        self.sockpfad, self.breite, self.hoehe = sockpfad, breite, hoehe
+        self.sock = None
+
+    def verbinden(self):
+        for _ in range(100):
+            try:
+                self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self.sock.connect(self.sockpfad)
+                break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            raise SystemExit("FEHLER: QMP-Socket nicht erreichbar")
+        self.datei = self.sock.makefile("r")
+        self.datei.readline()
+        self.befehl("qmp_capabilities")
+
+    def befehl(self, name, **args):
+        self.sock.sendall((json.dumps({"execute": name, "arguments": args}) + "\n").encode())
+        while True:
+            antwort = json.loads(self.datei.readline())
+            if "return" in antwort or "error" in antwort:
+                if "error" in antwort:
+                    raise SystemExit(f"FEHLER QMP {name}: {antwort['error']}")
+                return antwort["return"]
+
+    def bewegen(self, x, y):
+        self.befehl("input-send-event", events=[
+            {"type": "abs", "data": {"axis": "x", "value": x * self.ABS_MAX // (self.breite - 1)}},
+            {"type": "abs", "data": {"axis": "y", "value": y * self.ABS_MAX // (self.hoehe - 1)}}])
+
+    def taste(self, unten):
+        self.befehl("input-send-event", events=[{"type": "btn", "data": {"down": unten, "button": "left"}}])
+
+    def schliessen(self):
+        self.datei.close()
+        self.sock.close()
+
+
+class Szenario:
+    WARTEN = 3.0
+    SCHRITT = 0.02
+
+    def __init__(self, name, breite, hoehe):
+        self.name, self.breite, self.hoehe = name, breite, hoehe
+
+    def abspielen(self, eingabe):
+        time.sleep(self.WARTEN)
+        if self.name == "idle":
+            return
+        eingabe.verbinden()
+        if self.name == "move":
+            for i in range(200):
+                eingabe.bewegen(200 + i * 12, 300 + (i % 40) * 8)
+                time.sleep(self.SCHRITT)
+        elif self.name == "drag":
+            x, y = 960 + 700, 640 + 26
+            eingabe.bewegen(x, y)
+            time.sleep(0.2)
+            eingabe.taste(True)
+            time.sleep(0.2)
+            for i in range(100):
+                eingabe.bewegen(x + i * 6, y + i * 3)
+                time.sleep(self.SCHRITT)
+            eingabe.taste(False)
+            time.sleep(0.3)
+        eingabe.schliessen()
+
+
 class Lauf:
-    def __init__(self, projekt, bau, name, sekunden):
-        self.p, self.bau, self.name, self.sekunden = projekt, bau, name, sekunden
+    def __init__(self, projekt, bau, name, sekunden, szenario=None):
+        self.p, self.bau, self.name, self.sekunden, self.szenario = projekt, bau, name, sekunden, szenario
         self.log = os.path.join(projekt.build, f"{name}.plugin")
         self.serial = os.path.join(projekt.build, f"{name}.serial")
+        self.qmp = os.path.join(projekt.build, f"{name}.qmp")
 
     def starten(self, plugin_arg):
-        for f in (self.log, self.serial):
+        for f in (self.log, self.serial, self.qmp):
             if os.path.exists(f):
                 os.remove(f)
         cmd = ["qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a72"] + self.p.geraete() + \
               ["-display", "none", "-serial", f"file:{self.serial}", "-monitor", "stdio",
+               "-qmp", f"unix:{self.qmp},server,nowait",
                "-kernel", self.p.kernel(), "-plugin", plugin_arg, "-d", "plugin", "-D", self.log]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        time.sleep(self.sekunden)
+        if self.szenario:
+            self.szenario.abspielen(Eingabe(self.qmp, self.szenario.breite, self.szenario.hoehe))
+        else:
+            time.sleep(self.sekunden)
         try:
             _, err = proc.communicate(input="quit\n", timeout=60)
         except subprocess.TimeoutExpired:
@@ -173,21 +251,24 @@ class Profil:
     def __init__(self, projekt, bau, symbole, sekunden):
         self.p, self.bau, self.s, self.sekunden = projekt, bau, symbole, sekunden
 
-    def ausfuehren(self):
-        zeilen = Lauf(self.p, self.bau, "hotblocks", self.sekunden).starten(f"{self.bau.dylib('hotblocks')},limit=100000")
-        gesamt, je_marke, bloecke = 0, collections.Counter(), 0
+    def erheben(self, name="hotblocks", szenario=None):
+        zeilen = Lauf(self.p, self.bau, name, self.sekunden, szenario).starten(f"{self.bau.dylib('hotblocks')},limit=100000")
+        je_marke, bloecke = collections.Counter(), 0
         for z in zeilen:
             m = re.match(r"0x([0-9a-f]+),\s*(\d+),\s*(\d+),\s*(\d+)", z)
             if not m:
                 continue
-            n = int(m.group(3)) * int(m.group(4))
-            gesamt += n
             bloecke += 1
-            je_marke[self.s.marke(int(m.group(1), 16))] += n
+            je_marke[self.s.marke(int(m.group(1), 16))] += int(m.group(3)) * int(m.group(4))
         koepfe = sorted(je_marke, key=len)
         je_routine = collections.Counter()
         for marke, n in je_marke.items():
             je_routine[self.s.routine(marke, koepfe)] += n
+        return bloecke, je_routine
+
+    def ausfuehren(self):
+        bloecke, je_routine = self.erheben()
+        gesamt = sum(je_routine.values())
         print(f"\nBloecke: {bloecke}, Instruktionen: {gesamt:,}")
         print(f"{'Routine':<30}{'Instruktionen':>16}{'Anteil':>9}")
         summe = 0
@@ -195,6 +276,31 @@ class Profil:
             summe += n
             print(f"{name:<30}{n:>16,}{100 * n / gesamt:>8.1f}%")
         print(f"{'(Summe der Liste)':<30}{summe:>16,}{100 * summe / gesamt:>8.1f}%")
+
+
+class Szenen:
+    EREIGNISSE = {"move": 200, "drag": 100}
+
+    def __init__(self, projekt, bau, symbole):
+        self.p, self.bau, self.s = projekt, bau, symbole
+        text = open(projekt.pfad("kernel.S")).read()
+        self.breite = int(re.search(r"^\.equ FB_WIDTH,\s*(\d+)", text, re.M).group(1))
+        self.hoehe = int(re.search(r"^\.equ FB_HEIGHT,\s*(\d+)", text, re.M).group(1))
+
+    def ausfuehren(self):
+        profil = Profil(self.p, self.bau, self.s, 0)
+        _, ruhe = profil.erheben("szene_idle", Szenario("idle", self.breite, self.hoehe))
+        for name, anzahl in self.EREIGNISSE.items():
+            _, last = profil.erheben(f"szene_{name}", Szenario(name, self.breite, self.hoehe))
+            diff = collections.Counter({r: last[r] - ruhe.get(r, 0) for r in last})
+            gesamt = sum(v for v in diff.values() if v > 0)
+            print(f"\nSzenario {name}: {anzahl} Ereignisse, {gesamt:,} Instruktionen mehr als Ruhe, "
+                  f"{gesamt // anzahl:,} je Ereignis")
+            print(f"{'Routine':<30}{'Instruktionen':>16}{'je Ereignis':>13}{'Anteil':>8}")
+            for r, n in diff.most_common(18):
+                if n <= 0:
+                    break
+                print(f"{r:<30}{n:>16,}{n // anzahl:>13,}{100 * n / gesamt:>7.1f}%")
 
 
 class Aufrufe:
@@ -256,6 +362,7 @@ class Befehl:
   profile [SEK]             Instruktionen je Routine (Standard 6 s)
   calls [SEK] [MARKE ...]   Aufrufreihenfolge der Bildpipeline oder der genannten Marken
   pages [SEK] [BYTES]       Lese- und Schreibzugriffe je Speicherregion (Standard 1 MiB Seiten)
+  scenes                    Mehrkosten je Mausbewegung und je Ziehschritt gegenueber Ruhe (Eingabe ueber QMP)
   all [SEK]                 profile, calls und pages nacheinander"""
 
     def __init__(self, argv):
@@ -271,7 +378,7 @@ class Befehl:
             self.bau.bauen()
 
     def ausfuehren(self):
-        if len(self.argv) < 2 or self.argv[1] not in ("build", "profile", "calls", "pages", "all"):
+        if len(self.argv) < 2 or self.argv[1] not in ("build", "profile", "calls", "pages", "scenes", "all"):
             print(self.HILFE)
             return 1
         was = self.argv[1]
@@ -281,6 +388,9 @@ class Befehl:
         self.sicherstellen()
         s = Symbole(self.p)
         sek = self.sekunden()
+        if was == "scenes":
+            Szenen(self.p, self.bau, s).ausfuehren()
+            return 0
         if was in ("profile", "all"):
             Profil(self.p, self.bau, s, sek).ausfuehren()
         if was in ("calls", "all"):

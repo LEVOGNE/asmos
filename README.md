@@ -97,7 +97,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 | `make check` | Startet drei Sekunden, schreibt alles mit, prüft und meldet OK oder FEHLER |
 | `make shot` | Macht ein Bildschirmfoto nach `screen.png` und beendet sich selbst |
 | `make debug` | Startet angehalten mit Debugger-Anschluss auf Port 1234 |
-| `make trace` | Misst sechs Sekunden unsichtbar: Instruktionen je Routine, Aufrufreihenfolge der Bildausgabe, Speicherzugriffe je Region. Baut beim ersten Mal drei QEMU-Plugins aus dem QEMU-Quellpaket nach `build/` |
+| `make trace` | Misst sechs Sekunden unsichtbar: Instruktionen je Routine, Aufrufreihenfolge der Bildausgabe, Speicherzugriffe je Region. Baut beim ersten Mal drei QEMU-Plugins aus dem QEMU-Quellpaket nach `build/`. `python3 tools/trace.py scenes` misst zusätzlich die Kosten je Mausbewegung und je Ziehschritt, die Eingabe kommt über QMP |
 | `make disk` | Erzeugt den FAT32-Testdatenträger neu |
 | `make font-rescue` | Holt die Systemschrift aus einem vorhandenen `disk.img` zurück |
 | `make dtb` | Liest die Hardwarebeschreibung der Maschine aus |
