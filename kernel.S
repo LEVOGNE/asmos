@@ -715,6 +715,33 @@
 
 .equ WIN_KIND_NONE,         0
 .equ WIN_KIND_FILES,        1
+.equ WIN_KIND_TERM,         2
+.equ WIN_KIND_NET,          3
+.equ TERM_ROWS,             24
+.equ TERM_COLS,             96
+.equ TERM_STRIDE,           100
+.equ TERM_PROMPT_LEN,       7
+.equ NETLOG_ROWS,           24
+.equ GUI_LINE_MAX,          96
+.equ KEY_RING_SIZE,         32
+.equ KEY_RING_MASK,         31
+.equ KEY_CODE_MAX,          58
+.equ KEY_LEFTSHIFT,         42
+.equ KEY_RIGHTSHIFT,        54
+.equ ASCII_DEL,             0x7f
+.equ VIN_CFG_EV_BITS,       0x11
+.equ VIN_BASE,              0
+.equ VIN_INTID,             8
+.equ VIN_LAST,              12
+.equ VIN_KIND,              14
+.equ VIN_DESC,              16
+.equ VIN_AVAIL,             144
+.equ VIN_USED,              168
+.equ VIN_EVENTS,            240
+.equ VIN_SIZE,              304
+.equ VIN_KIND_NONE,         0
+.equ VIN_KIND_TABLET,       1
+.equ VIN_KIND_KEYBOARD,     2
 
 .equ FILES_MAX,             24
 .equ FILES_NAME,            0
@@ -3275,8 +3302,8 @@ power_wipe_done:
 
 power_device_off:
     stp     x29, x30, [sp, #-16]!
-    ladr    x0, virtio_input_base
-    ldr     x0, [x0]
+    ladr    x0, vin_tablet
+    ldr     x0, [x0, #VIN_BASE]
     cbz     x0, power_device_blk
     bl      virtio_reset
 power_device_blk:
@@ -4099,6 +4126,7 @@ win_draw_content:
     ladr    x19, win_list
     mov     x9, #WIN_SIZE
     madd    x19, x0, x9, x19
+    mov     w20, w0
     mov     w21, w1
     mov     w22, w2
     mov     w0, w21
@@ -4155,8 +4183,7 @@ win_draw_content:
     ldp     x0, x1, [sp], #32
     bl      fb_fill_rect
     ldr     w9, [x19, #WIN_KIND]
-    cmp     w9, #WIN_KIND_FILES
-    b.ne    win_draw_content_title
+    cbz     w9, win_draw_content_title
     add     w0, w21, #WIN_BORDER
     add     w1, w22, #(WIN_BORDER + WIN_TITLEBAR_H)
     ldr     w2, [x19, #WIN_W]
@@ -4175,7 +4202,21 @@ win_draw_content:
     ldr     x0, [sp]
     ldr     x1, [sp, #8]
     ldr     x2, [sp, #24]
+    ldr     w9, [x19, #WIN_KIND]
+    cmp     w9, #WIN_KIND_TERM
+    b.eq    win_draw_content_term
+    cmp     w9, #WIN_KIND_NET
+    b.eq    win_draw_content_net
     bl      files_draw
+    b       win_draw_content_skip
+
+win_draw_content_term:
+    mov     w4, w20
+    bl      term_draw
+    b       win_draw_content_skip
+
+win_draw_content_net:
+    bl      netlog_draw
 
 win_draw_content_skip:
     add     sp, sp, #32
@@ -4264,26 +4305,28 @@ win_selftest:
 
 win_demo:
     stp     x29, x30, [sp, #-16]!
-    mov     w0, #160
-    mov     w1, #160
-    mov     w2, #1240
-    mov     w3, #840
-    ladr    x4, win_title_1
-    mov     w5, #WIN_KIND_NONE
-    bl      win_add
-    mov     w0, #960
-    mov     w1, #640
-    mov     w2, #1400
-    mov     w3, #800
+    bl      term_init
+    bl      netlog_init
+    mov     w0, #2560
+    mov     w1, #200
+    mov     w2, #1180
+    mov     w3, #1160
     ladr    x4, win_title_2
     mov     w5, #WIN_KIND_FILES
     bl      win_add
-    mov     w0, #2040
-    mov     w1, #240
-    mov     w2, #1600
-    mov     w3, #1040
+    mov     w0, #1330
+    mov     w1, #200
+    mov     w2, #1180
+    mov     w3, #1160
     ladr    x4, win_title_3
-    mov     w5, #WIN_KIND_NONE
+    mov     w5, #WIN_KIND_NET
+    bl      win_add
+    mov     w0, #100
+    mov     w1, #200
+    mov     w2, #1180
+    mov     w3, #1160
+    ladr    x4, win_title_1
+    mov     w5, #WIN_KIND_TERM
     bl      win_add
     bl      win_fade_all
     bl      win_draw_all
@@ -4854,9 +4897,17 @@ string_length_loop:
     ret
 
 virtio_find:
+    mov     x1, #VIRTIO_MMIO_BASE
+
+virtio_find_from:
     mov     x4, x0
-    mov     x2, #VIRTIO_MMIO_BASE
-    mov     w3, #VIRTIO_MMIO_COUNT
+    mov     x2, x1
+    mov     x3, #VIRTIO_MMIO_BASE
+    sub     x3, x1, x3
+    lsr     x3, x3, #9
+    mov     w5, #VIRTIO_MMIO_COUNT
+    sub     w3, w5, w3
+    cbz     w3, virtio_find_none
 
 virtio_find_loop:
     ldr     w0, [x2, #VIRTIO_REG_MAGIC]
@@ -4887,6 +4938,8 @@ virtio_find_next:
     add     x2, x2, #VIRTIO_MMIO_STRIDE
     subs    w3, w3, #1
     b.ne    virtio_find_loop
+
+virtio_find_none:
     mov     x0, #0
     ret
 
@@ -5015,51 +5068,7 @@ virtio_driver_ok:
     dsb     sy
     ret
 
-virtio_input_init:
-    stp     x29, x30, [sp, #-32]!
-    str     x19, [sp, #16]
-    mov     x0, #VIRTIO_ID_INPUT
-    bl      virtio_find
-    cbz     x0, virtio_input_fail
-    mov     x19, x0
-    ladr    x1, virtio_input_base
-    str     x19, [x1]
-    mov     x0, x19
-    ladr    x1, virtio_desc
-    ladr    x2, virtio_avail
-    ladr    x3, virtio_used
-    mov     x4, #VIRTIO_QUEUE_SIZE
-    bl      virtio_setup
-    cbnz    w0, virtio_input_fail
-    bl      virtio_input_fill
-    mov     x0, x19
-    bl      virtio_driver_ok
-    str     wzr, [x19, #VIRTIO_REG_QUEUE_NOTIFY]
-    mov     x0, x19
-    mov     x1, #VIRTIO_MMIO_BASE
-    sub     x0, x0, x1
-    lsr     x0, x0, #9
-    add     w0, w0, #VIRTIO_MMIO_IRQ_BASE
-    ladr    x1, virtio_input_intid
-    str     w0, [x1]
-    bl      gic_enable_irq
-    bl      virtio_input_init_abs
-    ladr    x0, virtio_ready_msg
-    bl      uart_puts
-    ldr     x19, [sp, #16]
-    ldp     x29, x30, [sp], #32
-    ret
 
-virtio_input_fail:
-    ladr    x0, virtio_input_base
-    str     xzr, [x0]
-    ladr    x0, virtio_input_intid
-    str     wzr, [x0]
-    ladr    x0, virtio_fail_msg
-    bl      uart_puts
-    ldr     x19, [sp, #16]
-    ldp     x29, x30, [sp], #32
-    ret
 
 mem_read16:
     ldrb    w2, [x0, x1]
@@ -5906,9 +5915,104 @@ blk_read_fail:
     ldp     x29, x30, [sp], #48
     ret
 
+virtio_input_init:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x21, #VIRTIO_MMIO_BASE
+    mov     w22, #0
+
+virtio_input_init_scan:
+    cmp     w22, #2
+    b.hs    virtio_input_init_done
+    mov     x0, #VIRTIO_ID_INPUT
+    mov     x1, x21
+    bl      virtio_find_from
+    cbz     x0, virtio_input_init_done
+    mov     x19, x0
+    add     x21, x19, #VIRTIO_MMIO_STRIDE
+    ladr    x20, vin_tablet
+    mov     x0, x19
+    mov     w1, #VIN_CFG_EV_BITS
+    mov     w2, #EV_ABS
+    bl      vin_config_size
+    cbnz    w0, virtio_input_init_kind
+    ladr    x20, vin_keyboard
+
+virtio_input_init_kind:
+    ldr     x0, [x20, #VIN_BASE]
+    cbnz    x0, virtio_input_init_scan
+    str     x19, [x20, #VIN_BASE]
+    mov     x0, x19
+    add     x1, x20, #VIN_DESC
+    add     x2, x20, #VIN_AVAIL
+    add     x3, x20, #VIN_USED
+    mov     x4, #VIRTIO_QUEUE_SIZE
+    bl      virtio_setup
+    cbnz    w0, virtio_input_fail
+    mov     x0, x20
+    bl      virtio_input_fill
+    mov     x0, x19
+    bl      virtio_driver_ok
+    str     wzr, [x19, #VIRTIO_REG_QUEUE_NOTIFY]
+    mov     x0, x19
+    mov     x1, #VIRTIO_MMIO_BASE
+    sub     x0, x0, x1
+    lsr     x0, x0, #9
+    add     w0, w0, #VIRTIO_MMIO_IRQ_BASE
+    str     w0, [x20, #VIN_INTID]
+    bl      gic_enable_irq
+    ladr    x0, vin_tablet
+    cmp     x20, x0
+    b.ne    virtio_input_init_keyboard
+    mov     w0, #VIN_KIND_TABLET
+    strb    w0, [x20, #VIN_KIND]
+    bl      virtio_input_init_abs
+    ladr    x0, virtio_ready_msg
+    bl      uart_puts
+    add     w22, w22, #1
+    b       virtio_input_init_scan
+
+virtio_input_init_keyboard:
+    mov     w0, #VIN_KIND_KEYBOARD
+    strb    w0, [x20, #VIN_KIND]
+    ladr    x0, virtio_keyboard_msg
+    bl      uart_puts
+    add     w22, w22, #1
+    b       virtio_input_init_scan
+
+virtio_input_init_done:
+    ladr    x0, vin_tablet
+    ldr     x0, [x0, #VIN_BASE]
+    cbz     x0, virtio_input_fail_msg
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+virtio_input_fail:
+    str     xzr, [x20, #VIN_BASE]
+    str     wzr, [x20, #VIN_INTID]
+
+virtio_input_fail_msg:
+    ladr    x0, virtio_fail_msg
+    bl      uart_puts
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+vin_config_size:
+    add     x9, x0, #VIRTIO_REG_CONFIG
+    strb    w1, [x9, #VIN_CFG_SELECT]
+    strb    w2, [x9, #VIN_CFG_SUBSEL]
+    dsb     sy
+    ldrb    w0, [x9, #VIN_CFG_SIZE]
+    ret
+
 virtio_input_read_abs:
-    ladr    x9, virtio_input_base
-    ldr     x9, [x9]
+    ladr    x9, vin_tablet
+    ldr     x9, [x9, #VIN_BASE]
     cbz     x9, virtio_input_read_abs_none
     add     x9, x9, #VIRTIO_REG_CONFIG
     mov     w10, #VIN_CFG_ABS_INFO
@@ -5939,20 +6043,20 @@ virtio_input_init_abs:
     ldp     x29, x30, [sp], #32
     ret
 
+
 virtio_input_poll:
     stp     x29, x30, [sp, #-64]!
     stp     x19, x20, [sp, #16]
-    str     x21, [sp, #32]
-    ladr    x0, virtio_input_base
-    ldr     x19, [x0]
+    stp     x21, x22, [sp, #32]
+    mov     x22, x0
+    ldr     x19, [x22, #VIN_BASE]
     cbz     x19, virtio_input_poll_end
     ldr     w0, [x19, #VIRTIO_REG_INT_STATUS]
     str     w0, [x19, #VIRTIO_REG_INT_ACK]
-    ladr    x0, virtio_used
+    add     x0, x22, #VIN_USED
     ldrh    w20, [x0, #VRING_USED_IDX]
     dmb     ishld
-    ladr    x0, virtio_last_used
-    ldrh    w21, [x0]
+    ldrh    w21, [x22, #VIN_LAST]
     sub     w1, w20, w21
     and     w1, w1, #VRING_IDX_MASK
     cmp     w1, #VIRTIO_QUEUE_SIZE
@@ -5962,7 +6066,7 @@ virtio_input_poll_loop:
     cmp     w21, w20
     b.eq    virtio_input_poll_kick
     and     w0, w21, #VIRTIO_QUEUE_MASK
-    ladr    x1, virtio_used
+    add     x1, x22, #VIN_USED
     add     x1, x1, #VRING_USED_RING
     add     x1, x1, x0, lsl #3
     ldr     w2, [x1, #4]
@@ -5971,12 +6075,12 @@ virtio_input_poll_loop:
     ldr     w0, [x1]
     cmp     w0, #VIRTIO_QUEUE_SIZE
     b.hs    virtio_input_poll_baddesc
-    ladr    x1, virtio_events
+    add     x1, x22, #VIN_EVENTS
     add     x1, x1, x0, lsl #3
     ldrh    w6, [x1]
     ldrh    w7, [x1, #2]
     ldr     w8, [x1, #4]
-    ladr    x1, virtio_avail
+    add     x1, x22, #VIN_AVAIL
     ldrh    w2, [x1, #VRING_AVAIL_IDX]
     and     w3, w2, #VIRTIO_QUEUE_MASK
     add     x4, x1, x3, lsl #1
@@ -5987,7 +6091,16 @@ virtio_input_poll_loop:
     mov     w0, w6
     mov     w1, w7
     mov     w2, w8
+    ldrb    w3, [x22, #VIN_KIND]
+    cmp     w3, #VIN_KIND_KEYBOARD
+    b.eq    virtio_input_poll_key
     bl      mouse_apply
+    b       virtio_input_poll_next
+
+virtio_input_poll_key:
+    bl      keyboard_apply
+
+virtio_input_poll_next:
     add     w21, w21, #1
     and     w21, w21, #VRING_IDX_MASK
     b       virtio_input_poll_loop
@@ -5995,22 +6108,19 @@ virtio_input_poll_loop:
 virtio_input_poll_baddesc:
     mov     x0, x19
     bl      virtio_reset
-    ladr    x0, virtio_input_base
-    str     xzr, [x0]
-    ladr    x0, virtio_input_intid
-    str     wzr, [x0]
+    str     xzr, [x22, #VIN_BASE]
+    str     wzr, [x22, #VIN_INTID]
     ladr    x0, virtio_baddesc_msg
     bl      uart_puts
     b       virtio_input_poll_end
 
 virtio_input_poll_kick:
-    ladr    x0, virtio_last_used
-    strh    w21, [x0]
+    strh    w21, [x22, #VIN_LAST]
     dsb     sy
     str     wzr, [x19, #VIRTIO_REG_QUEUE_NOTIFY]
 
 virtio_input_poll_end:
-    ldr     x21, [sp, #32]
+    ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #64
     ret
@@ -6179,9 +6289,9 @@ mouse_apply_done:
     ret
 
 virtio_input_fill:
-    ladr    x0, virtio_desc
-    ladr    x1, virtio_events
-    ladr    x2, virtio_avail
+    add     x1, x0, #VIN_EVENTS
+    add     x2, x0, #VIN_AVAIL
+    add     x0, x0, #VIN_DESC
     mov     w3, #0
 
 virtio_input_fill_loop:
@@ -7647,9 +7757,17 @@ console_drain_rx:
 console_drain_overflow:
     ladr    x0, uart_rx_overflow
     bl      console_take_flag
-    cbz     w0, console_drain_click
+    cbz     w0, console_drain_keys
     ladr    x0, console_overflow_msg
     bl      uart_puts
+
+console_drain_keys:
+    bl      key_get
+    cmn     w0, #1
+    b.eq    console_drain_click
+    bl      term_feed
+    b       console_drain_keys
+
 console_drain_click:
     bl      click_take
     cbz     w0, console_drain_release
@@ -7695,9 +7813,14 @@ console_drain_mouse_flag:
 console_drain_anim:
     ladr    x0, anim_pending
     bl      console_take_flag
-    cbz     w0, console_drain_repaint
+    cbz     w0, console_drain_gui
     bl      anim_tick
     mov     w19, #1
+
+console_drain_gui:
+    bl      gui_refresh
+    orr     w19, w19, w0
+
 console_drain_repaint:
     cbz     w19, console_drain_blink
     bl      cursor_hide
@@ -7770,10 +7893,14 @@ irq_entry_id:
     b.eq    irq_timer
     cmp     w0, #UART_INTID
     b.eq    irq_uart
-    ladr    x1, virtio_input_intid
-    ldr     w1, [x1]
+    ladr    x1, vin_tablet
+    ldr     w1, [x1, #VIN_INTID]
     cmp     w0, w1
     b.eq    irq_virtio
+    ladr    x1, vin_keyboard
+    ldr     w1, [x1, #VIN_INTID]
+    cmp     w0, w1
+    b.eq    irq_virtio_keyboard
     b       irq_other
 
 irq_timer:
@@ -7785,6 +7912,12 @@ irq_uart:
     b       irq_eoi
 
 irq_virtio:
+    ladr    x0, vin_tablet
+    bl      virtio_input_poll
+    b       irq_eoi
+
+irq_virtio_keyboard:
+    ladr    x0, vin_keyboard
     bl      virtio_input_poll
 
 irq_eoi:
@@ -7862,6 +7995,36 @@ uart_init:
     ret
 
 uart_putc:
+    ladr    x3, gui_line_len
+    ldr     w4, [x3]
+    cmp     w0, #ASCII_BS
+    b.eq    uart_putc_capture_bs
+    cmp     w0, #ASCII_LF
+    b.eq    uart_putc_capture_lf
+    cmp     w0, #ASCII_SPACE
+    b.lo    uart_putc_emit
+    cmp     w4, #(GUI_LINE_MAX - 1)
+    b.hs    uart_putc_emit
+    ladr    x5, gui_line
+    strb    w0, [x5, x4]
+    add     w4, w4, #1
+    str     w4, [x3]
+    b       uart_putc_emit
+
+uart_putc_capture_bs:
+    cbz     w4, uart_putc_emit
+    sub     w4, w4, #1
+    str     w4, [x3]
+    b       uart_putc_emit
+
+uart_putc_capture_lf:
+    stp     x29, x30, [sp, #-32]!
+    stp     x0, x1, [sp, #16]
+    bl      gui_line_end
+    ldp     x0, x1, [sp, #16]
+    ldp     x29, x30, [sp], #32
+
+uart_putc_emit:
     mov     x1, #UART_BASE
 
 uart_putc_wait:
@@ -14103,6 +14266,474 @@ tls_cert_verify_done:
     ldp     x29, x30, [sp], #256
     ret
 
+
+keyboard_apply:
+    cmp     w0, #EV_KEY
+    b.ne    keyboard_apply_done
+    cmp     w1, #KEY_LEFTSHIFT
+    b.eq    keyboard_apply_shift
+    cmp     w1, #KEY_RIGHTSHIFT
+    b.eq    keyboard_apply_shift
+    cbz     w2, keyboard_apply_done
+    cmp     w1, #KEY_CODE_MAX
+    b.hs    keyboard_apply_done
+    ladr    x3, key_shift
+    ldrb    w3, [x3]
+    ladr    x4, key_table_lower
+    ladr    x5, key_table_upper
+    cmp     w3, #0
+    csel    x4, x4, x5, eq
+    ldrb    w0, [x4, w1, uxtw]
+    cbz     w0, keyboard_apply_done
+    b       key_put
+
+keyboard_apply_shift:
+    cmp     w2, #0
+    cset    w2, ne
+    ladr    x3, key_shift
+    strb    w2, [x3]
+
+keyboard_apply_done:
+    ret
+
+key_put:
+    ladr    x1, key_head
+    ldr     w2, [x1]
+    ladr    x3, key_tail
+    ldr     w3, [x3]
+    add     w4, w2, #1
+    and     w4, w4, #KEY_RING_MASK
+    cmp     w4, w3
+    b.eq    key_put_full
+    ladr    x5, key_ring
+    strb    w0, [x5, w2, uxtw]
+    str     w4, [x1]
+
+key_put_full:
+    ret
+
+key_get:
+    ladr    x1, key_tail
+    ldr     w2, [x1]
+    ladr    x3, key_head
+    ldr     w3, [x3]
+    cmp     w2, w3
+    b.eq    key_get_empty
+    ladr    x4, key_ring
+    ldrb    w0, [x4, w2, uxtw]
+    add     w2, w2, #1
+    and     w2, w2, #KEY_RING_MASK
+    str     w2, [x1]
+    ret
+
+key_get_empty:
+    mov     w0, #-1
+    ret
+
+win_top_kind:
+    ladr    x9, win_count
+    ldr     w9, [x9]
+    cbz     w9, win_top_kind_none
+    sub     w9, w9, #1
+    ladr    x10, win_list
+    mov     x11, #WIN_SIZE
+    madd    x10, x9, x11, x10
+    ldr     w0, [x10, #WIN_KIND]
+    ret
+
+win_top_kind_none:
+    mov     w0, #-1
+    ret
+
+win_find_kind:
+    ladr    x9, win_count
+    ldr     w9, [x9]
+    ladr    x10, win_list
+    mov     w1, #0
+
+win_find_kind_loop:
+    cmp     w1, w9
+    b.hs    win_find_kind_none
+    ldr     w2, [x10, #WIN_KIND]
+    cmp     w2, w0
+    b.eq    win_find_kind_hit
+    add     x10, x10, #WIN_SIZE
+    add     w1, w1, #1
+    b       win_find_kind_loop
+
+win_find_kind_hit:
+    mov     w0, w1
+    ret
+
+win_find_kind_none:
+    mov     w0, #-1
+    ret
+
+win_mark_kind:
+    stp     x29, x30, [sp, #-16]!
+    bl      win_find_kind
+    tbnz    w0, #31, win_mark_kind_done
+    ladr    x10, win_list
+    mov     x11, #WIN_SIZE
+    madd    x10, x0, x11, x10
+    mov     w1, #1
+    strb    w1, [x10, #WIN_BUF_DIRTY]
+    bl      win_dirty_rect
+
+win_mark_kind_done:
+    ldp     x29, x30, [sp], #16
+    ret
+
+gui_refresh:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     w19, #0
+    bl      win_top_kind
+    ladr    x1, gui_top_kind
+    ldrb    w2, [x1]
+    cmp     w0, w2
+    b.eq    gui_refresh_flags
+    strb    w0, [x1]
+    ladr    x0, term_dirty
+    mov     w1, #1
+    strb    w1, [x0]
+
+gui_refresh_flags:
+    ladr    x0, term_dirty
+    bl      console_take_flag
+    cbz     w0, gui_refresh_net
+    mov     w0, #WIN_KIND_TERM
+    bl      win_mark_kind
+    mov     w19, #1
+
+gui_refresh_net:
+    ladr    x0, netlog_dirty
+    bl      console_take_flag
+    cbz     w0, gui_refresh_done
+    mov     w0, #WIN_KIND_NET
+    bl      win_mark_kind
+    mov     w19, #1
+
+gui_refresh_done:
+    mov     w0, w19
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+term_init:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, term_buf
+    mov     w1, #(TERM_ROWS * TERM_STRIDE)
+    bl      mem_wipe
+    ladr    x0, term_row
+    str     wzr, [x0]
+    bl      term_prompt
+    ldp     x29, x30, [sp], #16
+    ret
+
+term_line:
+    ladr    x0, term_row
+    ldr     w0, [x0]
+    ladr    x1, term_buf
+    mov     w2, #TERM_STRIDE
+    madd    x0, x0, x2, x1
+    ret
+
+term_prompt:
+    stp     x29, x30, [sp, #-16]!
+    bl      term_line
+    mov     x1, x0
+    ladr    x0, term_prompt_text
+    mov     w2, #TERM_PROMPT_LEN
+    bl      mem_copy
+    ladr    x0, term_col
+    mov     w1, #TERM_PROMPT_LEN
+    str     w1, [x0]
+    ldp     x29, x30, [sp], #16
+    ret
+
+term_feed:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     w19, w0
+    bl      win_top_kind
+    cmp     w0, #WIN_KIND_TERM
+    b.ne    term_feed_done
+    mov     w0, w19
+    bl      term_input
+
+term_feed_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+term_input:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     w19, w0
+    cmp     w19, #ASCII_BS
+    b.eq    term_input_back
+    cmp     w19, #ASCII_DEL
+    b.eq    term_input_back
+    cmp     w19, #ASCII_LF
+    b.eq    term_input_enter
+    cmp     w19, #ASCII_CR
+    b.eq    term_input_enter
+    cmp     w19, #ASCII_SPACE
+    b.lo    term_input_done
+    cmp     w19, #ASCII_DEL
+    b.hs    term_input_done
+    ladr    x1, term_col
+    ldr     w2, [x1]
+    cmp     w2, #(TERM_COLS - 1)
+    b.hs    term_input_done
+    bl      term_line
+    ladr    x1, term_col
+    ldr     w2, [x1]
+    strb    w19, [x0, x2]
+    add     w2, w2, #1
+    strb    wzr, [x0, x2]
+    str     w2, [x1]
+    b       term_input_mark
+
+term_input_back:
+    ladr    x1, term_col
+    ldr     w2, [x1]
+    cmp     w2, #TERM_PROMPT_LEN
+    b.ls    term_input_done
+    sub     w2, w2, #1
+    str     w2, [x1]
+    bl      term_line
+    ladr    x1, term_col
+    ldr     w2, [x1]
+    strb    wzr, [x0, x2]
+    b       term_input_mark
+
+term_input_enter:
+    ladr    x1, term_row
+    ldr     w2, [x1]
+    add     w2, w2, #1
+    cmp     w2, #TERM_ROWS
+    b.lo    term_input_enter_row
+    ladr    x0, term_buf
+    add     x0, x0, #TERM_STRIDE
+    ladr    x1, term_buf
+    mov     w2, #((TERM_ROWS - 1) * TERM_STRIDE)
+    bl      mem_copy
+    mov     w2, #(TERM_ROWS - 1)
+    ladr    x1, term_row
+
+term_input_enter_row:
+    str     w2, [x1]
+    bl      term_line
+    mov     w1, #TERM_STRIDE
+    bl      mem_wipe
+    bl      term_prompt
+
+term_input_mark:
+    ladr    x0, term_dirty
+    mov     w1, #1
+    strb    w1, [x0]
+
+term_input_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+term_draw:
+    stp     x29, x30, [sp, #-192]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    mov     w19, w0
+    mov     w20, w1
+    mov     w21, w2
+    mov     x22, x3
+    mov     w26, w4
+    bl      win_top_kind
+    cmp     w0, #WIN_KIND_TERM
+    cset    w23, eq
+    ladr    x0, term_row
+    ldr     w25, [x0]
+    mov     w24, #0
+
+term_draw_loop:
+    cmp     w24, #TERM_ROWS
+    b.hs    term_draw_done
+    mov     w9, #FILES_LINE_H
+    madd    w0, w24, w9, w20
+    add     w0, w0, #FILES_PAD_Y
+    add     w9, w20, w21
+    cmp     w0, w9
+    b.gt    term_draw_done
+    mov     w1, w0
+    ladr    x2, term_buf
+    mov     w9, #TERM_STRIDE
+    madd    x2, x24, x9, x2
+    cmp     w24, w25
+    b.ne    term_draw_text
+    cbz     w23, term_draw_text
+    mov     x0, x2
+    add     x1, sp, #80
+    mov     w2, #TERM_STRIDE
+    stp     x1, x1, [sp, #-16]!
+    bl      mem_copy
+    ldp     x1, x2, [sp], #16
+    ladr    x0, term_col
+    ldr     w0, [x0]
+    mov     w3, #ASCII_UNDERSCORE
+    strb    w3, [x2, x0]
+    add     w0, w0, #1
+    strb    wzr, [x2, x0]
+    mov     w9, #FILES_LINE_H
+    madd    w1, w24, w9, w20
+    add     w1, w1, #FILES_PAD_Y
+
+term_draw_text:
+    add     w0, w19, #FILES_PAD_X
+    mov     w3, #FILES_TEXT_SIZE
+    mov     x4, x22
+    bl      font_text
+    add     w24, w24, #1
+    b       term_draw_loop
+
+term_draw_done:
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #192
+    ret
+
+netlog_init:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, netlog_count
+    str     wzr, [x0]
+    ladr    x0, netlog_intro_1
+    bl      netlog_add
+    ladr    x0, netlog_intro_2
+    bl      netlog_add
+    ladr    x0, netlog_dirty
+    strb    wzr, [x0]
+    ldp     x29, x30, [sp], #16
+    ret
+
+netlog_add:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     x19, x0
+    ladr    x0, netlog_count
+    ldr     w1, [x0]
+    cmp     w1, #NETLOG_ROWS
+    b.lo    netlog_add_row
+    ladr    x0, netlog_buf
+    add     x0, x0, #TERM_STRIDE
+    ladr    x1, netlog_buf
+    mov     w2, #((NETLOG_ROWS - 1) * TERM_STRIDE)
+    bl      mem_copy
+    mov     w1, #(NETLOG_ROWS - 1)
+
+netlog_add_row:
+    ladr    x0, netlog_count
+    add     w2, w1, #1
+    str     w2, [x0]
+    ladr    x0, netlog_buf
+    mov     w2, #TERM_STRIDE
+    madd    x0, x1, x2, x0
+    mov     w1, #TERM_STRIDE
+    str     x0, [sp, #-16]!
+    bl      mem_wipe
+    ldr     x1, [sp], #16
+    mov     x0, x19
+    mov     w2, #(TERM_COLS - 1)
+    bl      string_copy_bounded
+    ladr    x0, netlog_dirty
+    mov     w1, #1
+    strb    w1, [x0]
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+string_copy_bounded:
+    cbz     w2, string_copy_bounded_done
+    ldrb    w3, [x0], #1
+    cbz     w3, string_copy_bounded_done
+    strb    w3, [x1], #1
+    sub     w2, w2, #1
+    b       string_copy_bounded
+
+string_copy_bounded_done:
+    strb    wzr, [x1]
+    ret
+
+netlog_draw:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     w19, w0
+    mov     w20, w1
+    mov     w21, w2
+    mov     x22, x3
+    ladr    x0, netlog_count
+    ldr     w23, [x0]
+    mov     w24, #0
+
+netlog_draw_loop:
+    cmp     w24, w23
+    b.hs    netlog_draw_done
+    mov     w9, #FILES_LINE_H
+    madd    w1, w24, w9, w20
+    add     w1, w1, #FILES_PAD_Y
+    add     w9, w20, w21
+    cmp     w1, w9
+    b.gt    netlog_draw_done
+    add     w0, w19, #FILES_PAD_X
+    ladr    x2, netlog_buf
+    mov     w9, #TERM_STRIDE
+    madd    x2, x24, x9, x2
+    mov     w3, #FILES_TEXT_SIZE
+    mov     x4, x22
+    bl      font_text
+    add     w24, w24, #1
+    b       netlog_draw_loop
+
+netlog_draw_done:
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+    ret
+
+gui_line_end:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    ladr    x19, gui_line
+    ladr    x0, gui_line_len
+    ldr     w1, [x0]
+    str     wzr, [x0]
+    cmp     w1, #GUI_LINE_MAX
+    b.hs    gui_line_end_done
+    strb    wzr, [x19, x1]
+    cmp     w1, #4
+    b.lo    gui_line_end_done
+    ladr    x20, gui_prefixes
+    ldr     w2, [x19]
+
+gui_line_end_loop:
+    ldr     w3, [x20], #4
+    cbz     w3, gui_line_end_done
+    cmp     w2, w3
+    b.ne    gui_line_end_loop
+    mov     x0, x19
+    bl      netlog_add
+
+gui_line_end_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
 .section .text.vectors
 .balign VEC_TABLE_ALIGN
 .global vec_table
@@ -14450,11 +15081,11 @@ virtio_ver_label:
 win_pixels_label:
     .asciz  "\r\nREPAINT pixel="
 win_title_1:
-    .asciz  "Fenster A"
+    .asciz  "Terminal"
 win_title_2:
     .asciz  "Dateien"
 win_title_3:
-    .asciz  "asmOS"
+    .asciz  "Netzwerk"
 
     vec_entry 15, panic_entry
 
@@ -15277,6 +15908,35 @@ x509_test_cert:
     .byte   0x32,0x80,0xdb,0xea,0x86,0xe4,0xbf,0xe4,0xd6,0xd8,0xb9,0x83,0x8a,0xe4,0xdd,0x68
     .byte   0x89,0x53,0x45,0x1b,0xbe,0x95,0x06,0x2c,0xa2,0xaf
 x509_test_cert_end:
+term_prompt_text:
+    .ascii  "asmOS> "
+netlog_intro_1:
+    .asciz  "Schnittstelle virtio-net, Kabel (kein WLAN unter QEMU)"
+netlog_intro_2:
+    .asciz  "Netztest beim Start gegen example.com, Port 80 und 443:"
+virtio_keyboard_msg:
+    .asciz  "VIRTIO KEYBOARD OK\r\n"
+.balign 4
+gui_prefixes:
+    .ascii  "NET "
+    .ascii  "DHCP"
+    .ascii  "ARP "
+    .ascii  "PING"
+    .ascii  "DNS "
+    .ascii  "TCP "
+    .ascii  "HTTP"
+    .ascii  "TLS "
+    .word   0
+key_table_lower:
+    .byte   0x00,0x00,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x30,0x2d,0x3d,0x08,0x09
+    .byte   0x71,0x77,0x65,0x72,0x74,0x79,0x75,0x69,0x6f,0x70,0x5b,0x5d,0x0a,0x00,0x61,0x73
+    .byte   0x64,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x3b,0x27,0x60,0x00,0x5c,0x7a,0x78,0x63,0x76
+    .byte   0x62,0x6e,0x6d,0x2c,0x2e,0x2f,0x00,0x2a,0x00,0x20
+key_table_upper:
+    .byte   0x00,0x00,0x21,0x40,0x23,0x24,0x25,0x5e,0x26,0x2a,0x28,0x29,0x5f,0x2b,0x08,0x09
+    .byte   0x51,0x57,0x45,0x52,0x54,0x59,0x55,0x49,0x4f,0x50,0x7b,0x7d,0x0a,0x00,0x41,0x53
+    .byte   0x44,0x46,0x47,0x48,0x4a,0x4b,0x4c,0x3a,0x22,0x7e,0x00,0x7c,0x5a,0x58,0x43,0x56
+    .byte   0x42,0x4e,0x4d,0x3c,0x3e,0x3f,0x00,0x2a,0x00,0x20
 .section .bss
 
 .balign 8
@@ -15382,8 +16042,6 @@ dirty_list:
     .space  (DIRTY_SIZE * DIRTY_MAX)
 
 .balign 16
-virtio_input_base:
-    .space  8
 
 .balign 8
 fdt_base:
@@ -15451,20 +16109,12 @@ mmu_l2_table:
     .space  4096
 
 .balign 16
-virtio_desc:
-    .space  (VRING_DESC_SIZE * VIRTIO_QUEUE_SIZE)
 
 .balign 16
-virtio_avail:
-    .space  (VRING_AVAIL_RING + VIRTIO_QUEUE_SIZE * 2 + 2)
 
 .balign 16
-virtio_used:
-    .space  (VRING_USED_RING + VIRTIO_QUEUE_SIZE * VRING_USED_ELEM_SIZE + 2)
 
 .balign 16
-virtio_events:
-    .space  (VIRTIO_EVENT_SIZE * VIRTIO_QUEUE_SIZE)
 
 .balign 16
 blk_base:
@@ -15560,6 +16210,40 @@ tls_hs_buf:
     .space  TLS_HS_SIZE
 tls_cert_buf:
     .space  TLS_CERT_SIZE
+.balign 16
+vin_tablet:
+    .space  VIN_SIZE
+vin_keyboard:
+    .space  VIN_SIZE
+key_ring:
+    .space  KEY_RING_SIZE
+key_head:
+    .space  4
+key_tail:
+    .space  4
+key_shift:
+    .space  1
+term_dirty:
+    .space  1
+netlog_dirty:
+    .space  1
+gui_top_kind:
+    .space  1
+.balign 4
+term_row:
+    .space  4
+term_col:
+    .space  4
+netlog_count:
+    .space  4
+gui_line_len:
+    .space  4
+gui_line:
+    .space  GUI_LINE_MAX
+term_buf:
+    .space  (TERM_ROWS * TERM_STRIDE)
+netlog_buf:
+    .space  (NETLOG_ROWS * TERM_STRIDE)
 dns_id:
     .space  2
 
@@ -15675,10 +16359,6 @@ fat_buffer:
     .space  BLK_SECTOR_SIZE
 
 .balign 4
-virtio_input_intid:
-    .space  4
-virtio_last_used:
-    .space  2
 
 .balign 4
 mouse_abs_max_x:

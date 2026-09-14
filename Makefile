@@ -17,7 +17,7 @@ FONT_STORE    := $(HOME)/.asmos/fonts/$(FONT_NAME)
 FONT_ALT      := $(HOME)/Desktop/asmos-assets/$(FONT_NAME)
 FONT_SRC      := $(firstword $(wildcard $(FONT_STORE) $(FONT_ALT)))
 
-DEVICES := -m 256M -device ramfb -device virtio-tablet-device -netdev user,id=n0 -device virtio-net-device,netdev=n0 -global virtio-mmio.force-legacy=false -drive file=$(DISK),if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
+DEVICES := -m 256M -device ramfb -device virtio-tablet-device -device virtio-keyboard-device -netdev user,id=n0 -device virtio-net-device,netdev=n0 -global virtio-mmio.force-legacy=false -drive file=$(DISK),if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 
 DISPLAY_OPT := -display cocoa,zoom-interpolation=on
 
