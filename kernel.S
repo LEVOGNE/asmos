@@ -4906,8 +4906,8 @@ virtio_find_from:
     sub     x3, x1, x3
     lsr     x3, x3, #9
     mov     w5, #VIRTIO_MMIO_COUNT
-    sub     w3, w5, w3
-    cbz     w3, virtio_find_none
+    subs    w3, w5, w3
+    b.le    virtio_find_none
 
 virtio_find_loop:
     ldr     w0, [x2, #VIRTIO_REG_MAGIC]
@@ -8385,6 +8385,12 @@ console_pending:
     ladr    x1, net_tick_pending
     ldrb    w2, [x1]
     cbnz    w2, console_pending_yes
+    ladr    x1, key_head
+    ldr     w2, [x1]
+    ladr    x1, key_tail
+    ldr     w3, [x1]
+    cmp     w2, w3
+    b.ne    console_pending_yes
     mov     w0, #0
     ret
 

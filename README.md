@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-58.912%20Byte-brightgreen?style=flat-square" alt="58912 Byte">
+<img src="https://img.shields.io/badge/Kernel-58.944%20Byte-brightgreen?style=flat-square" alt="58944 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>58.912&nbsp;Byte</b> groß, also <b>57&nbsp;KB</b>.<br>
+Das fertige System ist <b>58.944&nbsp;Byte</b> groß, also <b>57&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -180,7 +180,7 @@ In `kernel.S` stecken **1651 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **58.912 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **58.944 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -353,7 +353,7 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 | Eigener Quelltext | 408 KB in drei Dateien |
 | Zeilen Assembler | 16423 |
 | Sprungmarken | 1651 |
-| **Fertiges Betriebssystem** | **58.912 Byte** |
+| **Fertiges Betriebssystem** | **58.944 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -662,11 +662,13 @@ Das Netzwerkfenster ist der Beweis, dass das Netz läuft: Es schreibt jede Netzm
 
 | Kennzahl | vorher | nachher |
 |---|---|---|
-| Größe des fertigen Systems | 56.749 Byte | **58.912 Byte** (+2.163) |
+| Größe des fertigen Systems | 56.749 Byte | **58.944 Byte** (+2.195) |
 | Befehle bis Ruhe, 6 s | 508,9 Mio. | 565,1 Mio.; die 56 Mio. mehr sind fast vollständig das Netzwerkfenster, das bei jeder eintreffenden Zeile alle 24 Textzeilen neu rastert |
 | Fenster | 1240×840, 1400×800, 1600×1040 | dreimal 1180×1160 nebeneinander, alle drei im 16-MiB-Fensterpuffer |
 
 Nachgewiesen headless über die QEMU-Steuerung: "hi Aasm", Eingabetaste, "123" getippt, Bild; Klick auf die Titelleiste von Netzwerk, "xyz" getippt, Bild (kein Cursor, nichts erscheint); Klick zurück auf Terminal, "ok" getippt, Bild (`asmOS> 123ok_`). Der Bildvergleich gegen das Referenzbild blendet seither das Innere des Netzwerkfensters aus, weil dessen Zeilen zeitabhängig eintreffen; außerhalb davon ist das Bild byteweise gleich.
+
+**Fehlersuche danach.** Stresstest per QEMU-Steuerung: fünfmal Löschen vor dem Prompt, 120 Zeichen in eine Zeile (Grenze 95), 30 Zeilen hintereinander (Bildlauf), Umschalttaste mit Ziffern und Satzzeichen (`!@#AB_<>?`), schnelles Tippen mit 5 ms Abstand. Keine Panik, Netzkette unverändert, Bild wie erwartet. Durchsicht aller Aufrufer von `uart_putc`, das jetzt mehr Register benutzt: kein Aufrufer hält dort etwas über den Aufruf hinweg. Zwei Funde beim Lesen, beide behoben: Die Gerätesuche ab einer Startadresse hätte bei einer Adresse hinter dem Ende einen negativen Zähler bekommen und über den Gerätebereich hinaus gelesen (tritt heute nicht ein, ist jetzt abgefangen); und der Tastenring war der Schlafprüfung der Hauptschleife unbekannt, ein Tastendruck im falschen Moment wäre bis zum nächsten Zeitgeber-Interrupt liegen geblieben, höchstens 33 ms, jetzt wird der Ring mitgeprüft.
 
 Benannt, nicht angefasst: Die Neuzeichnung je Zeile ist verschwenderisch. Eine Teilaktualisierung nur der neuen Zeile oder ein Glyphenspeicher würde die 56 Mio. auf einen Bruchteil bringen; im laufenden Betrieb kostet das Fenster nichts, nur beim Start.
 
