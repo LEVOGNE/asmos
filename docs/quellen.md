@@ -1594,3 +1594,23 @@ Gemessen im QEMU-Nutzermodus: `DHCP ip 10.0.2.15 gw 10.0.2.2 dns 10.0.2.3 mask 2
 | `DNS_RETRY_TICKS` `90`, `DNS_RETRY_MAX` `3` | Wiederholung nach drei Sekunden, drei Versuche, dann `DNS KEINE ANTWORT` |
 
 Der Nutzermodus von QEMU leitet Anfragen an `10.0.2.3` an den Resolver des Hosts weiter. Gemessen: `DNS example.com = 104.20.23.154`. Der Wert hängt vom Resolver ab und ist kein Beleg für eine Adresse, nur dafür, dass Anfrage und Antwort korrekt gebaut und ausgewertet werden. Alle Längen werden gegen das Ende des empfangenen Pakets geprüft, bevor gelesen wird.
+
+## Netzwerk, Stufe 6: TCP-Client (14.09.2026)
+
+| Symbol im Code | Wert | Beleg |
+|---|---|---|
+| `IP_PROTO_TCP` | `6` | RFC 791 / IANA Protocol Numbers |
+| TCP-Kopf: Quellport 0, Zielport 2, Sequenz 4, Bestätigung 8, Datenoffset und Flags 12, Fenster 14, Prüfsumme 16, Dringend 18 | 20 Byte ohne Optionen; Datenoffset in 32-Bit-Wörtern in den oberen 4 Bit des Worts bei Offset 12 | RFC 793, Abschnitt 3.1 |
+| Flags `FIN` 1, `SYN` 2, `RST` 4, `PSH` 8, `ACK` 16 | untere 6 Bit des Worts bei Offset 12 | RFC 793, Abschnitt 3.1 |
+| `TCP_OPT_MSS` `2`, Länge 4, `TCP_MSS` `1460` | Option nur im SYN; 1460 = 1500 MTU − 20 IP − 20 TCP | RFC 793 Abschnitt 3.1, RFC 879 |
+| Prüfsumme über Pseudokopf (Quell-IP, Ziel-IP, 0, Protokoll 6, TCP-Länge) und Segment | Nutzt `net_checksum_seed` mit der Summe des Pseudokopfs als Startwert | RFC 793, Abschnitt 3.1 "Checksum" |
+| `TCP_LOCAL_PORT` `49152` | erster Port des dynamischen Bereichs | RFC 6335, Abschnitt 6 |
+| `TCP_WINDOW_SIZE` `4096` | angebotenes Empfangsfenster, bewusst klein, da Daten sofort verarbeitet werden | Festlegung |
+| `TCP_RETRY_TICKS` `45`, `TCP_RETRY_MAX` `4` | SYN und unbestätigte Daten werden nach 1,5 s neu gesendet, vier Versuche, dann `TCP KEINE ANTWORT` | Festlegung, RFC 6298 empfiehlt ab 1 s mit Verdopplung |
+| `HTTP_PORT` `80`, Anfrage `GET / HTTP/1.0` mit `Host` | | RFC 1945, RFC 2616 |
+
+Zustandsautomat (Ausschnitt aus RFC 793, Abschnitt 3.2): `CLOSED` → SYN gesendet → `SYN_SENT`; SYN+ACK mit Bestätigung ISS+1 → ACK gesendet → `ESTABLISHED`, sofort die Anfrage; Daten in Reihenfolge (Sequenz gleich `rcv_nxt`) werden übernommen und bestätigt, andere nur bestätigt (Duplikat-ACK, der Server sendet neu); FIN des Servers in Reihenfolge → FIN+ACK gesendet → `LAST_ACK`; Bestätigung des eigenen FIN → `CLOSED`. RST in jedem Zustand → `CLOSED`. Die Sequenznummer beginnt mit den unteren 32 Bit von `cntvct_el0` (RFC 793 verlangt einen taktbasierten Startwert; RFC 6528 empfiehlt zusätzlich einen geheimen Anteil, offen).
+
+**Gefundener Fehler beim Bau:** Die Nutzlastlänge wurde aus der Rahmenlänge statt aus der IP-Gesamtlänge abgeleitet. Ein reines ACK ist per Ethernet auf 60 Byte aufgefüllt, die 6 Füllbytes wurden als Daten übernommen. Behoben in `net_ip_handle`: die verarbeitete Länge ist das Minimum aus Rahmenlänge und IP-Gesamtlänge (RFC 791, "Total Length"; RFC 894, Auffüllung auf Mindestlänge).
+
+Nicht enthalten: Fenstersteuerung beim Senden (die Anfrage ist kleiner als jedes Fenster), Sendepuffer für mehr als ein Segment, gleichzeitige Verbindungen, `TIME_WAIT`, Optionen jenseits MSS, Prüfung eingehender Prüfsummen. Gemessen: `TCP SYN an 104.20.23.154:80`, `TCP VERBUNDEN, sende GET`, `HTTP HTTP/1.1 200 OK`, `TCP GESCHLOSSEN`.

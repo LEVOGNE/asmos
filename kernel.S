@@ -282,6 +282,35 @@
 .equ DNS_STATE_NONE,        0
 .equ DNS_STATE_SENT,        1
 .equ DNS_STATE_DONE,        2
+.equ IP_PROTO_TCP,          6
+.equ TCP_SRC,               0
+.equ TCP_DST,               2
+.equ TCP_SEQ,               4
+.equ TCP_ACK,               8
+.equ TCP_OFFSET_FLAGS,      12
+.equ TCP_WINDOW,            14
+.equ TCP_CHECKSUM,          16
+.equ TCP_URGENT,            18
+.equ TCP_HDR_SIZE,          20
+.equ TCP_HDR_SYN_SIZE,      24
+.equ TCP_FLAG_FIN,          1
+.equ TCP_FLAG_SYN,          2
+.equ TCP_FLAG_RST,          4
+.equ TCP_FLAG_PSH,          8
+.equ TCP_FLAG_ACK,          16
+.equ TCP_FLAG_MASK,         0x3f
+.equ TCP_OPT_MSS,           2
+.equ TCP_MSS,               1460
+.equ TCP_WINDOW_SIZE,       4096
+.equ TCP_LOCAL_PORT,        49152
+.equ TCP_STATE_CLOSED,      0
+.equ TCP_STATE_SYN_SENT,    1
+.equ TCP_STATE_ESTABLISHED, 2
+.equ TCP_STATE_LAST_ACK,    3
+.equ TCP_RETRY_TICKS,       45
+.equ TCP_RETRY_MAX,         4
+.equ TCP_LINE_MAX,          96
+.equ HTTP_PORT,             80
 .equ NET_STATE_IDLE,        0
 .equ NET_STATE_ARP_SENT,    1
 .equ NET_STATE_ARP_OK,      2
@@ -7871,6 +7900,7 @@ net_poll:
     stp     x19, x20, [sp, #16]
     bl      dhcp_tick
     bl      dns_tick
+    bl      tcp_tick
 
 net_poll_loop:
     ladr    x19, net_rx_used
@@ -8145,6 +8175,7 @@ net_arp_handle_ret:
 net_checksum:
     mov     w2, #0
 
+net_checksum_seed:
 net_checksum_loop:
     cmp     w1, #2
     b.lo    net_checksum_tail
@@ -8321,6 +8352,11 @@ net_ip_handle:
     lsl     w21, w21, #2
     cmp     w21, #IP_HDR_SIZE
     b.lo    net_ip_handle_done
+    mov     x0, x19
+    mov     x1, #IP_TOTAL_LEN
+    bl      mem_read16be
+    cmp     w0, w20
+    csel    w20, w0, w20, lo
     cmp     w20, w21
     b.lo    net_ip_handle_done
     mov     x0, x19
@@ -8336,9 +8372,16 @@ net_ip_handle:
     b.ne    net_ip_handle_done
 
 net_ip_handle_proto:
+    mov     x0, x19
+    mov     x1, #IP_SRC
+    bl      mem_read32be
+    ladr    x1, net_last_src
+    str     w0, [x1]
     ldrb    w0, [x19, #IP_PROTO]
     cmp     w0, #IP_PROTO_UDP
     b.eq    net_ip_handle_udp
+    cmp     w0, #IP_PROTO_TCP
+    b.eq    net_ip_handle_tcp
     cmp     w0, #IP_PROTO_ICMP
     b.ne    net_ip_handle_done
     sub     w0, w20, w21
@@ -8363,6 +8406,12 @@ net_ip_handle_udp:
     add     x0, x19, x21
     sub     w1, w20, w21
     bl      net_udp_handle
+    b       net_ip_handle_done
+
+net_ip_handle_tcp:
+    add     x0, x19, x21
+    sub     w1, w20, w21
+    bl      tcp_handle
 
 net_ip_handle_done:
     ldr     x21, [sp, #32]
@@ -8919,6 +8968,9 @@ dns_handle_answers:
     bl      net_put_ip
     ladr    x0, uart_newline
     bl      uart_puts
+    mov     w0, w21
+    mov     w1, #HTTP_PORT
+    bl      tcp_connect
     b       dns_handle_done
 
 dns_handle_answer_next:
@@ -8982,6 +9034,440 @@ dns_tick_done:
     ldp     x29, x30, [sp], #16
 
 dns_tick_ret:
+    ret
+
+
+tcp_connect:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x2, tcp_remote_ip
+    str     w0, [x2]
+    ladr    x2, tcp_remote_port
+    str     w1, [x2]
+    mrs     x2, cntvct_el0
+    ladr    x3, tcp_iss
+    str     w2, [x3]
+    ladr    x3, tcp_snd_nxt
+    str     w2, [x3]
+    ladr    x3, tcp_snd_una
+    str     w2, [x3]
+    ladr    x3, tcp_rcv_nxt
+    str     wzr, [x3]
+    ladr    x3, tcp_seen_data
+    strb    wzr, [x3]
+    ladr    x3, tcp_tries
+    strb    wzr, [x3]
+    ladr    x0, tcp_syn_msg
+    bl      uart_puts
+    ladr    x0, tcp_remote_ip
+    ldr     w0, [x0]
+    bl      net_put_ip
+    ladr    x0, tcp_colon
+    bl      uart_puts
+    ladr    x0, tcp_remote_port
+    ldr     w0, [x0]
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+    bl      tcp_send_syn
+    ldp     x29, x30, [sp], #16
+    ret
+
+tcp_send_syn:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, tcp_iss
+    ldr     w0, [x0]
+    ladr    x1, tcp_snd_nxt
+    str     w0, [x1]
+    mov     w0, #TCP_FLAG_SYN
+    mov     x1, #0
+    mov     w2, #0
+    bl      tcp_send
+    ladr    x0, tcp_state
+    mov     w1, #TCP_STATE_SYN_SENT
+    strb    w1, [x0]
+    ldp     x29, x30, [sp], #16
+    ret
+
+tcp_send_request:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, tcp_snd_una
+    ldr     w0, [x0]
+    ladr    x1, tcp_snd_nxt
+    str     w0, [x1]
+    mov     w0, #(TCP_FLAG_PSH | TCP_FLAG_ACK)
+    ladr    x1, http_request
+    mov     w2, #(http_request_end - http_request)
+    bl      tcp_send
+    ladr    x0, tcp_snd_una
+    ldr     w0, [x0]
+    add     w0, w0, #(http_request_end - http_request)
+    ladr    x1, tcp_snd_nxt
+    str     w0, [x1]
+    ldp     x29, x30, [sp], #16
+    ret
+
+tcp_send:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     w19, w0
+    mov     x20, x1
+    mov     w21, w2
+    mov     w22, #TCP_HDR_SIZE
+    tst     w19, #TCP_FLAG_SYN
+    b.eq    tcp_send_size
+    mov     w22, #TCP_HDR_SYN_SIZE
+
+tcp_send_size:
+    ladr    x0, net_gw_mac
+    ladr    x1, tcp_remote_ip
+    ldr     w1, [x1]
+    mov     w2, #IP_PROTO_TCP
+    add     w3, w22, w21
+    bl      net_ip_begin
+    mov     x23, x0
+    mov     w24, w1
+    mov     x0, x23
+    mov     x1, #TCP_SRC
+    mov     w2, #TCP_LOCAL_PORT
+    bl      mem_write16be
+    mov     x0, x23
+    mov     x1, #TCP_DST
+    ladr    x2, tcp_remote_port
+    ldr     w2, [x2]
+    bl      mem_write16be
+    mov     x0, x23
+    mov     x1, #TCP_SEQ
+    ladr    x2, tcp_snd_nxt
+    ldr     w2, [x2]
+    bl      mem_write32be
+    mov     x0, x23
+    mov     x1, #TCP_ACK
+    ladr    x2, tcp_rcv_nxt
+    ldr     w2, [x2]
+    bl      mem_write32be
+    lsr     w2, w22, #2
+    lsl     w2, w2, #12
+    orr     w2, w2, w19
+    mov     x0, x23
+    mov     x1, #TCP_OFFSET_FLAGS
+    bl      mem_write16be
+    mov     x0, x23
+    mov     x1, #TCP_WINDOW
+    mov     w2, #TCP_WINDOW_SIZE
+    bl      mem_write16be
+    strh    wzr, [x23, #TCP_CHECKSUM]
+    strh    wzr, [x23, #TCP_URGENT]
+    tst     w19, #TCP_FLAG_SYN
+    b.eq    tcp_send_payload
+    mov     w0, #TCP_OPT_MSS
+    strb    w0, [x23, #TCP_HDR_SIZE]
+    mov     w0, #4
+    strb    w0, [x23, #(TCP_HDR_SIZE + 1)]
+    mov     x0, x23
+    mov     x1, #(TCP_HDR_SIZE + 2)
+    mov     w2, #TCP_MSS
+    bl      mem_write16be
+
+tcp_send_payload:
+    cbz     w21, tcp_send_sum
+    add     x0, x23, x22
+    mov     x1, x20
+    mov     w2, w21
+
+tcp_send_copy:
+    ldrb    w3, [x1], #1
+    strb    w3, [x0], #1
+    subs    w2, w2, #1
+    b.ne    tcp_send_copy
+
+tcp_send_sum:
+    ladr    x0, net_ip
+    ldr     w0, [x0]
+    lsr     w2, w0, #16
+    and     w0, w0, #0xffff
+    add     w2, w2, w0
+    ladr    x0, tcp_remote_ip
+    ldr     w0, [x0]
+    lsr     w1, w0, #16
+    add     w2, w2, w1
+    and     w0, w0, #0xffff
+    add     w2, w2, w0
+    add     w2, w2, #IP_PROTO_TCP
+    add     w1, w22, w21
+    add     w2, w2, w1
+    mov     x0, x23
+    bl      net_checksum_seed
+    mov     w2, w0
+    mov     x0, x23
+    mov     x1, #TCP_CHECKSUM
+    bl      mem_write16be
+    mov     w0, w24
+    bl      net_send
+    ladr    x0, tcp_timer
+    str     wzr, [x0]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+    ret
+
+tcp_handle:
+    cmp     w1, #TCP_HDR_SIZE
+    b.lo    tcp_handle_ret
+    ladr    x2, tcp_state
+    ldrb    w2, [x2]
+    cbz     w2, tcp_handle_ret
+    stp     x29, x30, [sp, #-80]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    mov     x19, x0
+    mov     w20, w1
+    ladr    x0, net_last_src
+    ldr     w0, [x0]
+    ladr    x1, tcp_remote_ip
+    ldr     w1, [x1]
+    cmp     w0, w1
+    b.ne    tcp_handle_done
+    mov     x0, x19
+    mov     x1, #TCP_DST
+    bl      mem_read16be
+    mov     w1, #TCP_LOCAL_PORT
+    cmp     w0, w1
+    b.ne    tcp_handle_done
+    mov     x0, x19
+    mov     x1, #TCP_SRC
+    bl      mem_read16be
+    ladr    x1, tcp_remote_port
+    ldr     w1, [x1]
+    cmp     w0, w1
+    b.ne    tcp_handle_done
+    mov     x0, x19
+    mov     x1, #TCP_SEQ
+    bl      mem_read32be
+    mov     w21, w0
+    mov     x0, x19
+    mov     x1, #TCP_ACK
+    bl      mem_read32be
+    mov     w22, w0
+    mov     x0, x19
+    mov     x1, #TCP_OFFSET_FLAGS
+    bl      mem_read16be
+    and     w23, w0, #TCP_FLAG_MASK
+    lsr     w24, w0, #12
+    lsl     w24, w24, #2
+    cmp     w24, #TCP_HDR_SIZE
+    b.lo    tcp_handle_done
+    cmp     w24, w20
+    b.hi    tcp_handle_done
+    sub     w25, w20, w24
+    tst     w23, #TCP_FLAG_RST
+    b.ne    tcp_handle_rst
+    ladr    x0, tcp_state
+    ldrb    w0, [x0]
+    cmp     w0, #TCP_STATE_SYN_SENT
+    b.eq    tcp_handle_syn_sent
+    cmp     w0, #TCP_STATE_ESTABLISHED
+    b.eq    tcp_handle_established
+    cmp     w0, #TCP_STATE_LAST_ACK
+    b.eq    tcp_handle_last_ack
+    b       tcp_handle_done
+
+tcp_handle_syn_sent:
+    mov     w1, #(TCP_FLAG_SYN | TCP_FLAG_ACK)
+    and     w0, w23, w1
+    cmp     w0, w1
+    b.ne    tcp_handle_done
+    ladr    x0, tcp_iss
+    ldr     w0, [x0]
+    add     w0, w0, #1
+    cmp     w22, w0
+    b.ne    tcp_handle_done
+    ladr    x1, tcp_snd_nxt
+    str     w0, [x1]
+    ladr    x1, tcp_snd_una
+    str     w0, [x1]
+    add     w1, w21, #1
+    ladr    x2, tcp_rcv_nxt
+    str     w1, [x2]
+    ladr    x0, tcp_state
+    mov     w1, #TCP_STATE_ESTABLISHED
+    strb    w1, [x0]
+    ladr    x0, tcp_tries
+    strb    wzr, [x0]
+    ladr    x0, tcp_open_msg
+    bl      uart_puts
+    bl      tcp_send_request
+    b       tcp_handle_done
+
+tcp_handle_established:
+    tst     w23, #TCP_FLAG_ACK
+    b.eq    tcp_handle_est_data
+    ladr    x0, tcp_snd_una
+    ldr     w1, [x0]
+    sub     w2, w22, w1
+    cmp     w2, #0
+    b.le    tcp_handle_est_data
+    str     w22, [x0]
+
+tcp_handle_est_data:
+    cbz     w25, tcp_handle_est_fin
+    ladr    x0, tcp_rcv_nxt
+    ldr     w0, [x0]
+    cmp     w21, w0
+    b.ne    tcp_handle_est_ack
+    add     w0, w0, w25
+    ladr    x1, tcp_rcv_nxt
+    str     w0, [x1]
+    ladr    x0, tcp_seen_data
+    ldrb    w1, [x0]
+    cbnz    w1, tcp_handle_est_fin
+    mov     w1, #1
+    strb    w1, [x0]
+    ladr    x0, tcp_data_msg
+    bl      uart_puts
+    add     x0, x19, x24
+    mov     w1, w25
+    bl      tcp_put_line
+    ladr    x0, uart_newline
+    bl      uart_puts
+
+tcp_handle_est_fin:
+    tst     w23, #TCP_FLAG_FIN
+    b.eq    tcp_handle_est_ack
+    add     w0, w21, w25
+    ladr    x1, tcp_rcv_nxt
+    ldr     w1, [x1]
+    cmp     w0, w1
+    b.ne    tcp_handle_est_ack
+    add     w1, w1, #1
+    ladr    x0, tcp_rcv_nxt
+    str     w1, [x0]
+    mov     w0, #(TCP_FLAG_FIN | TCP_FLAG_ACK)
+    mov     x1, #0
+    mov     w2, #0
+    bl      tcp_send
+    ladr    x0, tcp_snd_nxt
+    ldr     w1, [x0]
+    add     w1, w1, #1
+    str     w1, [x0]
+    ladr    x0, tcp_state
+    mov     w1, #TCP_STATE_LAST_ACK
+    strb    w1, [x0]
+    b       tcp_handle_done
+
+tcp_handle_est_ack:
+    cbz     w25, tcp_handle_done
+    mov     w0, #TCP_FLAG_ACK
+    mov     x1, #0
+    mov     w2, #0
+    bl      tcp_send
+    b       tcp_handle_done
+
+tcp_handle_last_ack:
+    tst     w23, #TCP_FLAG_ACK
+    b.eq    tcp_handle_done
+    ladr    x0, tcp_snd_nxt
+    ldr     w0, [x0]
+    cmp     w22, w0
+    b.ne    tcp_handle_done
+    ladr    x0, tcp_state
+    strb    wzr, [x0]
+    ladr    x0, tcp_close_msg
+    bl      uart_puts
+    b       tcp_handle_done
+
+tcp_handle_rst:
+    ladr    x0, tcp_state
+    strb    wzr, [x0]
+    ladr    x0, tcp_rst_msg
+    bl      uart_puts
+
+tcp_handle_done:
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #80
+
+tcp_handle_ret:
+    ret
+
+tcp_put_line:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, w1
+    mov     w0, #TCP_LINE_MAX
+    cmp     w20, w0
+    csel    w20, w0, w20, hi
+
+tcp_put_line_loop:
+    cbz     w20, tcp_put_line_done
+    ldrb    w0, [x19], #1
+    cmp     w0, #ASCII_CR
+    b.eq    tcp_put_line_done
+    cmp     w0, #ASCII_LF
+    b.eq    tcp_put_line_done
+    bl      uart_putc
+    sub     w20, w20, #1
+    b       tcp_put_line_loop
+
+tcp_put_line_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+tcp_tick:
+    ladr    x0, tcp_state
+    ldrb    w1, [x0]
+    cbz     w1, tcp_tick_ret
+    cmp     w1, #TCP_STATE_LAST_ACK
+    b.eq    tcp_tick_ret
+    cmp     w1, #TCP_STATE_ESTABLISHED
+    b.ne    tcp_tick_count
+    ladr    x2, tcp_snd_una
+    ldr     w2, [x2]
+    ladr    x3, tcp_snd_nxt
+    ldr     w3, [x3]
+    cmp     w2, w3
+    b.eq    tcp_tick_ret
+
+tcp_tick_count:
+    ladr    x2, tcp_timer
+    ldr     w3, [x2]
+    add     w3, w3, #1
+    str     w3, [x2]
+    cmp     w3, #TCP_RETRY_TICKS
+    b.lo    tcp_tick_ret
+    stp     x29, x30, [sp, #-16]!
+    ladr    x2, tcp_tries
+    ldrb    w3, [x2]
+    add     w3, w3, #1
+    strb    w3, [x2]
+    cmp     w3, #TCP_RETRY_MAX
+    b.hs    tcp_tick_giveup
+    cmp     w1, #TCP_STATE_SYN_SENT
+    b.ne    tcp_tick_resend_data
+    bl      tcp_send_syn
+    b       tcp_tick_done
+
+tcp_tick_resend_data:
+    bl      tcp_send_request
+    b       tcp_tick_done
+
+tcp_tick_giveup:
+    strb    wzr, [x0]
+    ladr    x0, tcp_timeout_msg
+    bl      uart_puts
+
+tcp_tick_done:
+    ldp     x29, x30, [sp], #16
+
+tcp_tick_ret:
     ret
 
 .section .text.vectors
@@ -9422,6 +9908,23 @@ dns_noanswer_msg:
     .asciz  "DNS OHNE A-RECORD\r\n"
 dns_test_name:
     .asciz  "example.com"
+tcp_syn_msg:
+    .asciz  "TCP SYN an "
+tcp_open_msg:
+    .asciz  "TCP VERBUNDEN, sende GET\r\n"
+tcp_data_msg:
+    .asciz  "HTTP "
+tcp_close_msg:
+    .asciz  "TCP GESCHLOSSEN\r\n"
+tcp_rst_msg:
+    .asciz  "TCP RST VOM SERVER\r\n"
+tcp_timeout_msg:
+    .asciz  "TCP KEINE ANTWORT\r\n"
+tcp_colon:
+    .asciz  ":"
+http_request:
+    .ascii  "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n"
+http_request_end:
 net_mac_broadcast:
     .byte   0xff, 0xff, 0xff, 0xff, 0xff, 0xff
 
@@ -9844,6 +10347,29 @@ dns_state:
     .space  1
 dns_tries:
     .space  1
+tcp_state:
+    .space  1
+tcp_tries:
+    .space  1
+tcp_seen_data:
+    .space  1
+.balign 4
+tcp_remote_ip:
+    .space  4
+tcp_remote_port:
+    .space  4
+tcp_iss:
+    .space  4
+tcp_snd_nxt:
+    .space  4
+tcp_snd_una:
+    .space  4
+tcp_rcv_nxt:
+    .space  4
+tcp_timer:
+    .space  4
+net_last_src:
+    .space  4
 
 .balign 16
 net_rx_desc:
