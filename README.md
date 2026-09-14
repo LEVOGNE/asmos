@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-44.568%20Byte-brightgreen?style=flat-square" alt="44568 Byte">
+<img src="https://img.shields.io/badge/Kernel-49.106%20Byte-brightgreen?style=flat-square" alt="49106 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>44.568&nbsp;Byte</b> groß, also <b>44&nbsp;KB</b>.<br>
+Das fertige System ist <b>49.106&nbsp;Byte</b> groß, also <b>48&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>310 KB · 12989 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>339 KB · 14149 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,15 +146,17 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 12989 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 14149 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1326 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1437 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
 | `net_` `tcp_` `dhcp_` `dns_` `http_` | 241 | **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP mit Verbindungstabelle |
+| `tls_` | 111 | **TLS 1.3**: ClientHello, ServerHello, Schlüsselableitung, Record-Schicht, Finished, verschlüsselte Anwendungsdaten |
+ **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP mit Verbindungstabelle |
 | `font_` `glyph_` | 117 | TrueType auswerten und über die Vektor-Engine zeichnen |
 | `win_` `dirty_` | 110 | Fenster, Stapelreihenfolge, Ziehen, Teilaktualisierung, Fensterpuffer |
 | `fb_` `cursor_` | 86 | Bildschirm, Bildpunkte, Mauszeiger |
@@ -177,7 +179,7 @@ In `kernel.S` stecken **1326 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **44.568 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **49.106 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -288,7 +290,7 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 8. Datenträger und FAT32 lesend | ✅ |
 | 9. Fenstersystem | ✅ inklusive erstem Fensterinhalt |
 | 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP, DNS, TCP-Client mit Verbindungstabelle, eingehende Prüfsummen, zufällige Kennungen und Ports, Härtung Block 1 abgeschlossen |
-| 11. Verschlüsselte Verbindungen | 🔧 in Arbeit: alle fünf Rechenbausteine fertig (SHA-256, HMAC, HKDF, AES-128-GCM, X25519), 22 Testvektoren beim Start geprüft, es fehlt der Handshake |
+| 11. Verschlüsselte Verbindungen | ✅ TLS 1.3 gegen example.com: `HTTPS HTTP/1.1 200 OK`. Offen: Zertifikatsprüfung |
 | 12. Vektorgrafik | ✅ Schrift, Zeiger und Icons, offen als Zeichenfläche für Anwendungen |
 | 13. Animationsschicht und Compositor | ✅ Animationen, Fensterpuffer als Ebenen, Gruppendeckkraft; Zoom und Drehung offen |
 | 14. Portierung auf Raspberry Pi 5 | offen |
@@ -347,10 +349,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 319 KB in drei Dateien |
-| Zeilen Assembler | 12989 |
-| Sprungmarken | 1326 |
-| **Fertiges Betriebssystem** | **44.568 Byte** |
+| Eigener Quelltext | 348 KB in drei Dateien |
+| Zeilen Assembler | 14149 |
+| Sprungmarken | 1437 |
+| **Fertiges Betriebssystem** | **49.106 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -614,6 +616,23 @@ Der Selbsttest prüft sechs Vektoren aus RFC 7748: die beiden Einzelrechnungen a
 | Geprüft auf | TCG und hvf | TCG und hvf |
 
 Das Bild ist byteweise gleich der Referenz. Alle sechs Vektoren stimmten im ersten Lauf; der einzige Baufehler war ein Stackrahmen von 576 Byte, den der Befehl `stp` mit Vorabzug nicht anlegen kann (Grenze 512), also Abzug und Speichern getrennt.
+
+### Stand 14.09.2026, fünfzehnte Runde: TLS 1.3, die erste verschlüsselte Verbindung
+
+Die fünf Bausteine sind zusammengesetzt. Das System öffnet beim Start neben der Klartextverbindung auf Port 80 eine zweite auf Port 443, handelt mit example.com eine TLS-1.3-Sitzung aus und holt darüber dieselbe erste Zeile: `HTTPS HTTP/1.1 200 OK`. Ablauf, wie RFC 8446 ihn vorschreibt: ClientHello mit Servername, X25519-Schlüsselanteil und dem einen angebotenen Verfahren AES-128-GCM mit SHA-256; ServerHello mit dem Gegenanteil; daraus über X25519 das gemeinsame Geheimnis, über HKDF die Handshake-Schlüssel; die verschlüsselten Nachrichten des Servers (Erweiterungen, Zertifikat, Signatur, Finished) entschlüsseln, den Finished-Wert über HMAC gegen den Gesprächsverlauf prüfen, den eigenen Finished-Wert senden, auf die Anwendungsschlüssel wechseln, GET senden, Antwort entschlüsseln. Am Ende schickt der Server den regulären Abschieds-Alert (`TLS ALERT 1 0`, close_notify).
+
+Was bewusst noch fehlt: Das Zertifikat wird empfangen (3.682 Byte) und in den Gesprächsverlauf gerechnet, aber nicht geprüft. Die serielle Ausgabe sagt das jedes Mal deutlich: `TLS ZERTIFIKAT 3682 Byte, NICHT GEPRUEFT`. Bis die Prüfung eingebaut ist, schützt die Verbindung gegen Mitlesen, aber nicht gegen einen Angreifer, der sich als example.com ausgibt.
+
+| Kennzahl | vorher | nachher |
+|---|---|---|
+| Größe des fertigen Systems | 44.568 Byte | **49.106 Byte** (+4.538 für den gesamten Handshake, Record-Schicht und Meldungen) |
+| Arbeitsspeicher | 64,6 MB | 64,6 MB plus 35 KB für Sitzungszustand, Record-Puffer (16,6 KB) und Handshake-Puffer (16 KB) |
+| Befehle bis Ruhe, 8 s, mit Handshake | 479,3 Mio. | 480,5 Mio.; der ganze Handshake mit Schlüsseltausch, Ableitung und Entschlüsselung des Zertifikats kostet rund 1,2 Mio. |
+| Zeilen Assembler | 12.989 | 14.149 |
+
+Zwei Läufe hintereinander, beide durchgängig, das Bild byteweise gleich der Referenz. Dass alles im ersten Anlauf lief, verdankt sich den Testvektoren der Bausteine: Der Handshake selbst enthält keine neue Rechnung, nur Buchführung über Zustände, Längen und Puffer.
+
+**Ein Nebenbefund, unabhängig von TLS.** Unter `hvf` (Apple Silicon direkt statt Emulation) bleibt die Netzwerkkette nach `NET MAC` stehen, DHCP bekommt keine Antwort verarbeitet. Das war schon vor dem Handshake so, geprüft am Stand davor, und ist unter der Emulation nicht zu sehen. Vermutlich Speicherordnung oder Interruptzustellung auf echter Hardware, also genau die Art Fehler, die vor der Portierung auf den Raspberry Pi gefunden werden muss. Benannt, noch nicht gesucht.
 
 **Fehlersuche im X25519-Block, kein Fund.** Sechs Vektoren aus dem RFC prüfen die Leiter, aber nicht die Ränder der Zahlenarithmetik. Ein Testbau hat deshalb 42 weitere Fälle gerechnet und gegen die Referenz des Entwicklungsrechners verglichen: 32 Schlüsselvereinbarungen mit Mustereingaben, zwei absichtlich unsaubere Kodierungen der Basiszahl 9 (einmal um die Primzahl vergrößert, einmal mit gesetztem oberstem Bit, beide müssen den Alice-Schlüssel ergeben) und acht Rechnungen der Feldarithmetik mit dem größtmöglichen Wert 2²⁵⁶−1: Quadrat, Summe, `0−1`, `a−a`, die Normierung selbst, `1−a`, die Multiplikation mit 121665 und die Inversion. Genau diese Extremwerte treiben die Überlaufbehandlung in ihre zweite Runde. **0 Abweichungen.** Dazu nachgerechnet: Nach jeder Faltung des Überlaufs mit 38 ist höchstens noch ein zweiter Übertrag möglich, ein dritter nicht; die zweite Runde im Code ist also ausreichend, nicht nur vorsichtig.
 

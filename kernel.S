@@ -334,6 +334,66 @@
 .equ TCP_RETRY_MAX,         4
 .equ TCP_LINE_MAX,          96
 .equ HTTP_PORT,             80
+.equ HTTPS_PORT,            443
+.equ TLS_REC_HANDSHAKE,     22
+.equ TLS_REC_CCS,           20
+.equ TLS_REC_ALERT,         21
+.equ TLS_REC_APPDATA,       23
+.equ TLS_HS_CLIENT_HELLO,   1
+.equ TLS_HS_SERVER_HELLO,   2
+.equ TLS_HS_TICKET,         4
+.equ TLS_HS_ENCRYPTED_EXT,  8
+.equ TLS_HS_CERTIFICATE,    11
+.equ TLS_HS_CERT_VERIFY,    15
+.equ TLS_HS_FINISHED,       20
+.equ TLS_EXT_SERVER_NAME,   0x0000
+.equ TLS_EXT_GROUPS,        0x000a
+.equ TLS_EXT_SIG_ALGS,      0x000d
+.equ TLS_EXT_VERSIONS,      0x002b
+.equ TLS_EXT_KEY_SHARE,     0x0033
+.equ TLS_GROUP_X25519,      0x001d
+.equ TLS_SUITE_AES128_SHA256, 0x1301
+.equ TLS_VERSION_12,        0x0303
+.equ TLS_VERSION_13,        0x0304
+.equ TLS_REC_MAX,           (16384 + 256)
+.equ TLS_RX_SIZE,           (TLS_REC_MAX + 5)
+.equ TLS_HS_SIZE,           16384
+.equ TLS_OUT_SIZE,          512
+.equ TLS_STATE_IDLE,        0
+.equ TLS_STATE_HELLO_SENT,  1
+.equ TLS_STATE_HANDSHAKE,   2
+.equ TLS_STATE_CONNECTED,   3
+.equ TLS_STATE_CLOSED,      4
+.equ TLS_TCB,               0
+.equ TLS_STATE,             8
+.equ TLS_SEEN,              9
+.equ TLS_PRIV,              16
+.equ TLS_PUB,               48
+.equ TLS_RANDOM,            80
+.equ TLS_SERVER_PUB,        112
+.equ TLS_SHARED,            144
+.equ TLS_HS_SECRET,         176
+.equ TLS_C_HS,              208
+.equ TLS_S_HS,              240
+.equ TLS_MASTER,            272
+.equ TLS_C_AP,              304
+.equ TLS_S_AP,              336
+.equ TLS_WKEY,              368
+.equ TLS_WIV,               384
+.equ TLS_RKEY,              400
+.equ TLS_RIV,               416
+.equ TLS_WSEQ,              432
+.equ TLS_RSEQ,              440
+.equ TLS_TRANSCRIPT,        448
+.equ TLS_HASH,              560
+.equ TLS_TMP,               592
+.equ TLS_NONCE,             656
+.equ TLS_RX_LEN,            672
+.equ TLS_HS_LEN,            676
+.equ TLS_AES_R,             688
+.equ TLS_AES_W,             880
+.equ TLS_FINKEY,            1072
+.equ TLS_CTX_SIZE,          1104
 .equ NET_STATE_IDLE,        0
 .equ NET_STATE_ARP_SENT,    1
 .equ NET_STATE_ARP_OK,      2
@@ -9273,6 +9333,9 @@ dns_handle_answers:
     ladr    x1, http_request
     mov     w2, #(http_request_end - http_request)
     bl      tcp_write
+    mov     w0, w21
+    mov     w1, #HTTPS_PORT
+    bl      tls_connect
     b       dns_handle_done
 
 dns_handle_answer_next:
@@ -11594,6 +11657,1014 @@ x25519_selftest_done:
     ldp     x29, x30, [sp], #32
     ret
 
+
+tls_fail:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     x19, x0
+    ladr    x0, tls_fail_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_puts
+    ladr    x0, uart_newline
+    bl      uart_puts
+    ladr    x9, tls_ctx
+    mov     w0, #TLS_STATE_CLOSED
+    strb    w0, [x9, #TLS_STATE]
+    ldr     x0, [x9, #TLS_TCB]
+    cbz     x0, tls_fail_done
+    bl      tcp_close
+
+tls_fail_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+tls_transcript_update:
+    stp     x29, x30, [sp, #-16]!
+    mov     x2, x1
+    mov     x1, x0
+    ladr    x0, tls_ctx
+    add     x0, x0, #TLS_TRANSCRIPT
+    bl      sha256_update
+    ldp     x29, x30, [sp], #16
+    ret
+
+tls_transcript_hash:
+    stp     x29, x30, [sp, #-144]!
+    str     x19, [sp, #16]
+    mov     x19, x0
+    ladr    x0, tls_ctx
+    add     x0, x0, #TLS_TRANSCRIPT
+    add     x1, sp, #32
+    mov     w2, #SHA_CTX_SIZE
+    bl      mem_copy
+    add     x0, sp, #32
+    mov     x1, x19
+    bl      sha256_final
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #144
+    ret
+
+tls_expand_label:
+    stp     x29, x30, [sp, #-80]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    mov     x19, x0
+    mov     x20, x1
+    mov     w21, w2
+    mov     x22, x3
+    mov     w23, w4
+    mov     x24, x5
+    mov     w25, w6
+    ladr    x26, tls_ctx
+    add     x26, x26, #TLS_TMP
+    lsr     w0, w25, #8
+    strb    w0, [x26]
+    strb    w25, [x26, #1]
+    strb    w21, [x26, #2]
+    mov     x0, x20
+    add     x1, x26, #3
+    mov     w2, w21
+    bl      mem_copy
+    add     x1, x26, #3
+    add     x1, x1, x21
+    strb    w23, [x1], #1
+    mov     x0, x22
+    mov     w2, w23
+    bl      mem_copy
+    add     w2, w21, w23
+    add     w2, w2, #4
+    mov     x0, x19
+    mov     x1, x26
+    mov     x3, x24
+    mov     x4, x25
+    bl      hkdf_expand
+    mov     x0, x26
+    mov     w1, #64
+    bl      mem_wipe
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #80
+    ret
+
+tls_derive_secret:
+    mov     x5, x4
+    mov     w4, #SHA_DIGEST_SIZE
+    mov     w6, #SHA_DIGEST_SIZE
+    b       tls_expand_label
+
+tls_set_keys:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    mov     x22, x3
+    mov     x0, x19
+    ladr    x1, tls_label_key
+    mov     w2, #(tls_label_key_end - tls_label_key)
+    mov     x3, #0
+    mov     w4, #0
+    mov     x5, x21
+    mov     w6, #AES_KEY_SIZE
+    bl      tls_expand_label
+    mov     x0, x19
+    ladr    x1, tls_label_iv
+    mov     w2, #(tls_label_iv_end - tls_label_iv)
+    mov     x3, #0
+    mov     w4, #0
+    mov     x5, x22
+    mov     w6, #GCM_IV_SIZE
+    bl      tls_expand_label
+    mov     x0, x20
+    mov     x1, x21
+    bl      aes_gcm_setkey
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+tls_nonce:
+    ldr     w3, [x0]
+    ldr     x4, [x0, #4]
+    rev     x1, x1
+    eor     x4, x4, x1
+    str     w3, [x2]
+    str     x4, [x2, #4]
+    ret
+
+tls_finished_key:
+    ladr    x1, tls_label_finished
+    mov     w2, #(tls_label_finished_end - tls_label_finished)
+    mov     x3, #0
+    mov     w4, #0
+    mov     w6, #SHA_DIGEST_SIZE
+    b       tls_expand_label
+
+tls_connect:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     w20, w0
+    mov     w21, w1
+    ladr    x19, tls_ctx
+    mov     x0, x19
+    mov     w1, #TLS_CTX_SIZE
+    bl      mem_wipe
+    add     x22, x19, #TLS_PRIV
+    mov     w0, #24
+
+tls_connect_random:
+    str     w0, [sp, #-16]!
+    bl      net_random
+    str     w0, [x22], #4
+    ldr     w0, [sp], #16
+    subs    w0, w0, #1
+    b.ne    tls_connect_random
+    add     x0, x19, #TLS_PUB
+    add     x1, x19, #TLS_PRIV
+    bl      x25519_base
+    add     x0, x19, #TLS_TRANSCRIPT
+    bl      sha256_init
+    mov     w0, w20
+    mov     w1, w21
+    ladr    x2, tls_on_data
+    bl      tcp_open
+    cbz     x0, tls_connect_done
+    str     x0, [x19, #TLS_TCB]
+    bl      tls_build_client_hello
+    mov     w20, w0
+    ladr    x0, tls_out_buf
+    add     x0, x0, #5
+    sub     w1, w20, #5
+    bl      tls_transcript_update
+    ldr     x0, [x19, #TLS_TCB]
+    ladr    x1, tls_out_buf
+    mov     w2, w20
+    bl      tcp_write
+    mov     w0, #TLS_STATE_HELLO_SENT
+    strb    w0, [x19, #TLS_STATE]
+    ladr    x0, tls_hello_msg
+    bl      uart_puts
+
+tls_connect_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+.macro tls_put8 val
+    mov     w0, #\val
+    strb    w0, [x19], #1
+.endm
+
+.macro tls_put16 val
+    mov     w0, #\val
+    lsr     w1, w0, #8
+    strb    w1, [x19], #1
+    strb    w0, [x19], #1
+.endm
+
+tls_build_client_hello:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    ladr    x20, tls_out_buf
+    ladr    x22, tls_ctx
+    mov     x19, x20
+    tls_put8 TLS_REC_HANDSHAKE
+    tls_put16 0x0301
+    add     x19, x19, #2
+    tls_put8 TLS_HS_CLIENT_HELLO
+    add     x19, x19, #3
+    tls_put16 TLS_VERSION_12
+    add     x0, x22, #TLS_RANDOM
+    mov     x1, x19
+    mov     w2, #32
+    bl      mem_copy
+    add     x19, x19, #32
+    tls_put8 0
+    tls_put16 2
+    tls_put16 TLS_SUITE_AES128_SHA256
+    tls_put8 1
+    tls_put8 0
+    mov     x21, x19
+    add     x19, x19, #2
+    tls_put16 TLS_EXT_SERVER_NAME
+    tls_put16 (tls_host_end - tls_host + 5)
+    tls_put16 (tls_host_end - tls_host + 3)
+    tls_put8 0
+    tls_put16 (tls_host_end - tls_host)
+    ladr    x0, tls_host
+    mov     x1, x19
+    mov     w2, #(tls_host_end - tls_host)
+    bl      mem_copy
+    add     x19, x19, #(tls_host_end - tls_host)
+    tls_put16 TLS_EXT_GROUPS
+    tls_put16 4
+    tls_put16 2
+    tls_put16 TLS_GROUP_X25519
+    tls_put16 TLS_EXT_SIG_ALGS
+    tls_put16 10
+    tls_put16 8
+    tls_put16 0x0403
+    tls_put16 0x0804
+    tls_put16 0x0401
+    tls_put16 0x0807
+    tls_put16 TLS_EXT_VERSIONS
+    tls_put16 3
+    tls_put8 2
+    tls_put16 TLS_VERSION_13
+    tls_put16 TLS_EXT_KEY_SHARE
+    tls_put16 38
+    tls_put16 36
+    tls_put16 TLS_GROUP_X25519
+    tls_put16 32
+    add     x0, x22, #TLS_PUB
+    mov     x1, x19
+    mov     w2, #32
+    bl      mem_copy
+    add     x19, x19, #32
+    sub     x0, x19, x21
+    sub     x0, x0, #2
+    mov     x1, #0
+    stp     x0, x21, [sp, #-16]!
+    mov     w2, w0
+    mov     x0, x21
+    bl      mem_write16be
+    ldp     x0, x21, [sp], #16
+    sub     x0, x19, x20
+    sub     w1, w0, #9
+    lsr     w2, w1, #16
+    strb    w2, [x20, #6]
+    lsr     w2, w1, #8
+    strb    w2, [x20, #7]
+    strb    w1, [x20, #8]
+    sub     w1, w0, #5
+    lsr     w2, w1, #8
+    strb    w2, [x20, #3]
+    strb    w1, [x20, #4]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+tls_send_record:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     w19, w0
+    mov     x20, x1
+    mov     w21, w2
+    ladr    x22, tls_out_buf
+    mov     w0, #TLS_REC_APPDATA
+    strb    w0, [x22]
+    mov     w0, #0x03
+    strb    w0, [x22, #1]
+    strb    w0, [x22, #2]
+    add     w0, w21, #(GCM_TAG_SIZE + 1)
+    lsr     w1, w0, #8
+    strb    w1, [x22, #3]
+    strb    w0, [x22, #4]
+    mov     x0, x20
+    add     x1, x22, #5
+    mov     w2, w21
+    bl      mem_copy
+    add     x1, x22, #5
+    strb    w19, [x1, x21]
+    ladr    x9, tls_ctx
+    add     x0, x9, #TLS_WIV
+    ldr     x1, [x9, #TLS_WSEQ]
+    add     x2, x9, #TLS_NONCE
+    bl      tls_nonce
+    ladr    x9, tls_ctx
+    ldr     x1, [x9, #TLS_WSEQ]
+    add     x1, x1, #1
+    str     x1, [x9, #TLS_WSEQ]
+    add     x0, x9, #TLS_AES_W
+    add     x1, x9, #TLS_NONCE
+    mov     x2, x22
+    mov     x3, #5
+    add     x4, x22, #5
+    add     x5, x21, #1
+    add     x6, x22, #5
+    add     x7, x6, x5
+    bl      aes_gcm_encrypt
+    ladr    x9, tls_ctx
+    ldr     x0, [x9, #TLS_TCB]
+    mov     x1, x22
+    add     w2, w21, #(5 + 1 + GCM_TAG_SIZE)
+    bl      tcp_write
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+tls_on_data:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    ladr    x19, tls_ctx
+    mov     x20, x1
+    mov     w21, w2
+    cbnz    w21, tls_on_data_append
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_CLOSED
+    b.eq    tls_on_data_done
+    mov     w0, #TLS_STATE_CLOSED
+    strb    w0, [x19, #TLS_STATE]
+    str     xzr, [x19, #TLS_TCB]
+    ladr    x0, tls_closed_msg
+    bl      uart_puts
+    b       tls_on_data_done
+
+tls_on_data_append:
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_CLOSED
+    b.eq    tls_on_data_done
+    ldr     w0, [x19, #TLS_RX_LEN]
+    add     w1, w0, w21
+    mov     w2, #TLS_RX_SIZE
+    cmp     w1, w2
+    b.hi    tls_on_data_overflow
+    ladr    x1, tls_rx_buf
+    add     x1, x1, x0
+    mov     x0, x20
+    mov     w2, w21
+    bl      mem_copy
+    ldr     w0, [x19, #TLS_RX_LEN]
+    add     w0, w0, w21
+    str     w0, [x19, #TLS_RX_LEN]
+
+tls_on_data_records:
+    ldr     w0, [x19, #TLS_RX_LEN]
+    cmp     w0, #5
+    b.lo    tls_on_data_done
+    ladr    x20, tls_rx_buf
+    ldrb    w1, [x20, #3]
+    ldrb    w2, [x20, #4]
+    orr     w21, w2, w1, lsl #8
+    mov     w2, #TLS_REC_MAX
+    cmp     w21, w2
+    b.hi    tls_on_data_toolong
+    add     w22, w21, #5
+    cmp     w0, w22
+    b.lo    tls_on_data_done
+    mov     x0, x20
+    mov     w1, w21
+    bl      tls_process_record
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_CLOSED
+    b.eq    tls_on_data_done
+    ldr     w0, [x19, #TLS_RX_LEN]
+    sub     w2, w0, w22
+    str     w2, [x19, #TLS_RX_LEN]
+    add     x0, x20, x22
+    mov     x1, x20
+    bl      mem_copy
+    b       tls_on_data_records
+
+tls_on_data_overflow:
+    ladr    x0, tls_overflow_msg
+    bl      tls_fail
+    b       tls_on_data_done
+
+tls_on_data_toolong:
+    ladr    x0, tls_toolong_msg
+    bl      tls_fail
+
+tls_on_data_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+tls_process_record:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x20, x0
+    mov     w21, w1
+    ladr    x19, tls_ctx
+    ldrb    w0, [x20]
+    cmp     w0, #TLS_REC_CCS
+    b.eq    tls_process_record_done
+    cmp     w0, #TLS_REC_ALERT
+    b.eq    tls_process_record_alert
+    cmp     w0, #TLS_REC_HANDSHAKE
+    b.eq    tls_process_record_plain
+    cmp     w0, #TLS_REC_APPDATA
+    b.eq    tls_process_record_encrypted
+    ladr    x0, tls_badtype_msg
+    bl      tls_fail
+    b       tls_process_record_done
+
+tls_process_record_alert:
+    add     x0, x20, #5
+    mov     w1, w21
+    bl      tls_alert
+    b       tls_process_record_done
+
+tls_process_record_plain:
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_HELLO_SENT
+    b.ne    tls_process_record_unexpected
+    add     x0, x20, #5
+    mov     w1, w21
+    bl      tls_handshake_append
+    b       tls_process_record_done
+
+tls_process_record_encrypted:
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_HANDSHAKE
+    b.lo    tls_process_record_unexpected
+    cmp     w21, #(GCM_TAG_SIZE + 1)
+    b.lo    tls_process_record_unexpected
+    add     x0, x19, #TLS_RIV
+    ldr     x1, [x19, #TLS_RSEQ]
+    add     x2, x19, #TLS_NONCE
+    bl      tls_nonce
+    ldr     x1, [x19, #TLS_RSEQ]
+    add     x1, x1, #1
+    str     x1, [x19, #TLS_RSEQ]
+    sub     w22, w21, #GCM_TAG_SIZE
+    add     x0, x19, #TLS_AES_R
+    add     x1, x19, #TLS_NONCE
+    mov     x2, x20
+    mov     x3, #5
+    add     x4, x20, #5
+    mov     x5, x22
+    add     x6, x20, #5
+    add     x7, x6, x5
+    bl      aes_gcm_decrypt
+    cbnz    w0, tls_process_record_badtag
+    add     x1, x20, #5
+
+tls_process_record_strip:
+    cbz     w22, tls_process_record_empty
+    sub     w22, w22, #1
+    ldrb    w0, [x1, x22]
+    cbz     w0, tls_process_record_strip
+    cmp     w0, #TLS_REC_HANDSHAKE
+    b.eq    tls_process_record_inner_hs
+    cmp     w0, #TLS_REC_APPDATA
+    b.eq    tls_process_record_inner_app
+    cmp     w0, #TLS_REC_ALERT
+    b.eq    tls_process_record_inner_alert
+    b       tls_process_record_done
+
+tls_process_record_inner_hs:
+    add     x0, x20, #5
+    mov     w1, w22
+    bl      tls_handshake_append
+    b       tls_process_record_done
+
+tls_process_record_inner_alert:
+    add     x0, x20, #5
+    mov     w1, w22
+    bl      tls_alert
+    b       tls_process_record_done
+
+tls_process_record_inner_app:
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_CONNECTED
+    b.ne    tls_process_record_done
+    cbz     w22, tls_process_record_done
+    ldrb    w0, [x19, #TLS_SEEN]
+    cbnz    w0, tls_process_record_done
+    mov     w0, #1
+    strb    w0, [x19, #TLS_SEEN]
+    ladr    x0, tls_https_msg
+    bl      uart_puts
+    add     x0, x20, #5
+    mov     w1, w22
+    bl      tcp_put_line
+    ladr    x0, uart_newline
+    bl      uart_puts
+    b       tls_process_record_done
+
+tls_process_record_empty:
+    ladr    x0, tls_empty_msg
+    bl      tls_fail
+    b       tls_process_record_done
+
+tls_process_record_badtag:
+    ladr    x0, tls_badtag_msg
+    bl      tls_fail
+    b       tls_process_record_done
+
+tls_process_record_unexpected:
+    ladr    x0, tls_unexpected_msg
+    bl      tls_fail
+
+tls_process_record_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+tls_alert:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, w1
+    ladr    x0, tls_alert_msg
+    bl      uart_puts
+    cmp     w20, #2
+    b.lo    tls_alert_close
+    ldrb    w0, [x19]
+    bl      uart_putdec
+    mov     w0, #0x20
+    bl      uart_putc
+    ldrb    w0, [x19, #1]
+    bl      uart_putdec
+
+tls_alert_close:
+    ladr    x0, uart_newline
+    bl      uart_puts
+    ladr    x9, tls_ctx
+    mov     w0, #TLS_STATE_CLOSED
+    strb    w0, [x9, #TLS_STATE]
+    ldr     x0, [x9, #TLS_TCB]
+    cbz     x0, tls_alert_done
+    bl      tcp_close
+
+tls_alert_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+tls_handshake_append:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    ladr    x19, tls_ctx
+    mov     x20, x0
+    mov     w21, w1
+    ldr     w0, [x19, #TLS_HS_LEN]
+    add     w1, w0, w21
+    mov     w2, #TLS_HS_SIZE
+    cmp     w1, w2
+    b.hi    tls_handshake_overflow
+    ladr    x1, tls_hs_buf
+    add     x1, x1, x0
+    mov     x0, x20
+    mov     w2, w21
+    bl      mem_copy
+    ldr     w0, [x19, #TLS_HS_LEN]
+    add     w0, w0, w21
+    str     w0, [x19, #TLS_HS_LEN]
+
+tls_handshake_loop:
+    ldr     w0, [x19, #TLS_HS_LEN]
+    cmp     w0, #4
+    b.lo    tls_handshake_done
+    ladr    x20, tls_hs_buf
+    ldrb    w1, [x20, #1]
+    ldrb    w2, [x20, #2]
+    ldrb    w3, [x20, #3]
+    lsl     w1, w1, #16
+    orr     w1, w1, w2, lsl #8
+    orr     w21, w1, w3
+    add     w22, w21, #4
+    cmp     w0, w22
+    b.lo    tls_handshake_done
+    mov     x0, x20
+    mov     w1, w21
+    bl      tls_handshake_message
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_CLOSED
+    b.eq    tls_handshake_done
+    ldr     w0, [x19, #TLS_HS_LEN]
+    sub     w2, w0, w22
+    str     w2, [x19, #TLS_HS_LEN]
+    add     x0, x20, x22
+    mov     x1, x20
+    bl      mem_copy
+    b       tls_handshake_loop
+
+tls_handshake_overflow:
+    ladr    x0, tls_overflow_msg
+    bl      tls_fail
+
+tls_handshake_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+tls_handshake_message:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    ladr    x19, tls_ctx
+    mov     x20, x0
+    mov     w21, w1
+    ldrb    w22, [x20]
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_CONNECTED
+    b.eq    tls_handshake_message_done
+    cmp     w22, #TLS_HS_SERVER_HELLO
+    b.eq    tls_handshake_message_hello
+    cmp     w22, #TLS_HS_FINISHED
+    b.eq    tls_handshake_message_finished
+    cmp     w22, #TLS_HS_CERTIFICATE
+    b.ne    tls_handshake_message_hash
+    ladr    x0, tls_cert_msg
+    bl      uart_puts
+    mov     x0, x21
+    bl      uart_putdec
+    ladr    x0, tls_cert_tail
+    bl      uart_puts
+
+tls_handshake_message_hash:
+    cmp     w22, #TLS_HS_ENCRYPTED_EXT
+    b.eq    tls_handshake_message_hash_do
+    cmp     w22, #TLS_HS_CERTIFICATE
+    b.eq    tls_handshake_message_hash_do
+    cmp     w22, #TLS_HS_CERT_VERIFY
+    b.eq    tls_handshake_message_hash_do
+    ladr    x0, tls_badmsg_msg
+    bl      tls_fail
+    b       tls_handshake_message_done
+
+tls_handshake_message_hash_do:
+    mov     x0, x20
+    add     w1, w21, #4
+    bl      tls_transcript_update
+    b       tls_handshake_message_done
+
+tls_handshake_message_hello:
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_HELLO_SENT
+    b.ne    tls_handshake_message_bad
+    add     x0, x20, #4
+    mov     w1, w21
+    bl      tls_parse_server_hello
+    cbnz    w0, tls_handshake_message_done
+    mov     x0, x20
+    add     w1, w21, #4
+    bl      tls_transcript_update
+    bl      tls_keys_handshake
+    mov     w0, #TLS_STATE_HANDSHAKE
+    strb    w0, [x19, #TLS_STATE]
+    ladr    x0, tls_server_hello_msg
+    bl      uart_puts
+    b       tls_handshake_message_done
+
+tls_handshake_message_finished:
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_HANDSHAKE
+    b.ne    tls_handshake_message_bad
+    cmp     w21, #SHA_DIGEST_SIZE
+    b.ne    tls_handshake_message_bad
+    add     x0, x19, #TLS_HASH
+    bl      tls_transcript_hash
+    add     x0, x19, #TLS_S_HS
+    add     x5, x19, #TLS_FINKEY
+    bl      tls_finished_key
+    add     x0, x19, #TLS_FINKEY
+    mov     x1, #SHA_DIGEST_SIZE
+    add     x2, x19, #TLS_HASH
+    mov     x3, #SHA_DIGEST_SIZE
+    ladr    x4, sha_digest
+    bl      hmac_compute
+    ladr    x0, sha_digest
+    add     x1, x20, #4
+    bl      sha_compare
+    cbnz    w0, tls_handshake_message_badfin
+    mov     x0, x20
+    add     w1, w21, #4
+    bl      tls_transcript_update
+    bl      tls_keys_finish
+    b       tls_handshake_message_done
+
+tls_handshake_message_badfin:
+    ladr    x0, tls_badfin_msg
+    bl      tls_fail
+    b       tls_handshake_message_done
+
+tls_handshake_message_bad:
+    ladr    x0, tls_badmsg_msg
+    bl      tls_fail
+
+tls_handshake_message_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+tls_parse_server_hello:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    ladr    x19, tls_ctx
+    mov     x20, x0
+    add     x21, x20, x1
+    mov     w22, #0
+    add     x0, x20, #38
+    cmp     x0, x21
+    b.hi    tls_parse_sh_short
+    add     x0, x20, #2
+    ladr    x1, tls_hrr_random
+    mov     w2, #32
+    bl      mem_equal
+    cbnz    w0, tls_parse_sh_hrr
+    ldrb    w0, [x20, #34]
+    add     x20, x20, #35
+    add     x20, x20, x0
+    add     x0, x20, #5
+    cmp     x0, x21
+    b.hi    tls_parse_sh_short
+    ldrb    w0, [x20]
+    ldrb    w1, [x20, #1]
+    orr     w0, w1, w0, lsl #8
+    mov     w1, #TLS_SUITE_AES128_SHA256
+    cmp     w0, w1
+    b.ne    tls_parse_sh_suite
+    ldrb    w0, [x20, #3]
+    ldrb    w1, [x20, #4]
+    orr     w0, w1, w0, lsl #8
+    add     x20, x20, #5
+    add     x1, x20, x0
+    cmp     x1, x21
+    b.hi    tls_parse_sh_short
+    mov     x21, x1
+
+tls_parse_sh_ext:
+    add     x0, x20, #4
+    cmp     x0, x21
+    b.hi    tls_parse_sh_end
+    ldrb    w0, [x20]
+    ldrb    w1, [x20, #1]
+    orr     w0, w1, w0, lsl #8
+    ldrb    w1, [x20, #2]
+    ldrb    w2, [x20, #3]
+    orr     w1, w2, w1, lsl #8
+    add     x20, x20, #4
+    add     x2, x20, x1
+    cmp     x2, x21
+    b.hi    tls_parse_sh_short
+    cmp     w0, #TLS_EXT_VERSIONS
+    b.eq    tls_parse_sh_versions
+    cmp     w0, #TLS_EXT_KEY_SHARE
+    b.eq    tls_parse_sh_key_share
+    b       tls_parse_sh_next
+
+tls_parse_sh_versions:
+    cmp     w1, #2
+    b.ne    tls_parse_sh_short
+    ldrb    w0, [x20]
+    ldrb    w2, [x20, #1]
+    orr     w0, w2, w0, lsl #8
+    mov     w2, #TLS_VERSION_13
+    cmp     w0, w2
+    b.ne    tls_parse_sh_version
+    orr     w22, w22, #1
+    b       tls_parse_sh_next
+
+tls_parse_sh_key_share:
+    cmp     w1, #36
+    b.ne    tls_parse_sh_short
+    ldrb    w0, [x20]
+    ldrb    w2, [x20, #1]
+    orr     w0, w2, w0, lsl #8
+    cmp     w0, #TLS_GROUP_X25519
+    b.ne    tls_parse_sh_group
+    add     x0, x20, #4
+    add     x1, x19, #TLS_SERVER_PUB
+    mov     w2, #32
+    stp     x1, x20, [sp, #-16]!
+    bl      mem_copy
+    ldp     x1, x20, [sp], #16
+    orr     w22, w22, #2
+
+tls_parse_sh_next:
+    ldrb    w1, [x20, #-2]
+    ldrb    w2, [x20, #-1]
+    orr     w1, w2, w1, lsl #8
+    add     x20, x20, x1
+    b       tls_parse_sh_ext
+
+tls_parse_sh_end:
+    cmp     w22, #3
+    b.ne    tls_parse_sh_missing
+    mov     w0, #0
+    b       tls_parse_sh_done
+
+tls_parse_sh_hrr:
+    ladr    x0, tls_hrr_msg
+    b       tls_parse_sh_fail
+
+tls_parse_sh_suite:
+    ladr    x0, tls_suite_msg
+    b       tls_parse_sh_fail
+
+tls_parse_sh_version:
+    ladr    x0, tls_version_msg
+    b       tls_parse_sh_fail
+
+tls_parse_sh_group:
+    ladr    x0, tls_group_msg
+    b       tls_parse_sh_fail
+
+tls_parse_sh_missing:
+    ladr    x0, tls_missing_msg
+    b       tls_parse_sh_fail
+
+tls_parse_sh_short:
+    ladr    x0, tls_short_msg
+
+tls_parse_sh_fail:
+    bl      tls_fail
+    mov     w0, #1
+
+tls_parse_sh_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+tls_keys_handshake:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x19, tls_ctx
+    ladr    x0, tls_zero32
+    mov     x1, #SHA_DIGEST_SIZE
+    ladr    x2, tls_zero32
+    mov     x3, #SHA_DIGEST_SIZE
+    add     x4, x19, #TLS_HS_SECRET
+    bl      hkdf_extract
+    add     x0, x19, #TLS_HS_SECRET
+    ladr    x1, tls_label_derived
+    mov     w2, #(tls_label_derived_end - tls_label_derived)
+    ladr    x3, sha_expect_empty
+    add     x4, x19, #TLS_MASTER
+    bl      tls_derive_secret
+    add     x0, x19, #TLS_SHARED
+    add     x1, x19, #TLS_PRIV
+    add     x2, x19, #TLS_SERVER_PUB
+    bl      x25519
+    add     x0, x19, #TLS_MASTER
+    mov     x1, #SHA_DIGEST_SIZE
+    add     x2, x19, #TLS_SHARED
+    mov     x3, #SHA_DIGEST_SIZE
+    add     x4, x19, #TLS_HS_SECRET
+    bl      hkdf_extract
+    add     x0, x19, #TLS_HASH
+    bl      tls_transcript_hash
+    add     x0, x19, #TLS_HS_SECRET
+    ladr    x1, tls_label_c_hs
+    mov     w2, #(tls_label_c_hs_end - tls_label_c_hs)
+    add     x3, x19, #TLS_HASH
+    add     x4, x19, #TLS_C_HS
+    bl      tls_derive_secret
+    add     x0, x19, #TLS_HS_SECRET
+    ladr    x1, tls_label_s_hs
+    mov     w2, #(tls_label_s_hs_end - tls_label_s_hs)
+    add     x3, x19, #TLS_HASH
+    add     x4, x19, #TLS_S_HS
+    bl      tls_derive_secret
+    add     x0, x19, #TLS_HS_SECRET
+    ladr    x1, tls_label_derived
+    mov     w2, #(tls_label_derived_end - tls_label_derived)
+    ladr    x3, sha_expect_empty
+    add     x4, x19, #TLS_MASTER
+    bl      tls_derive_secret
+    add     x0, x19, #TLS_MASTER
+    mov     x1, #SHA_DIGEST_SIZE
+    ladr    x2, tls_zero32
+    mov     x3, #SHA_DIGEST_SIZE
+    add     x4, x19, #TLS_MASTER
+    bl      hkdf_extract
+    add     x0, x19, #TLS_S_HS
+    add     x1, x19, #TLS_AES_R
+    add     x2, x19, #TLS_RKEY
+    add     x3, x19, #TLS_RIV
+    bl      tls_set_keys
+    add     x0, x19, #TLS_C_HS
+    add     x1, x19, #TLS_AES_W
+    add     x2, x19, #TLS_WKEY
+    add     x3, x19, #TLS_WIV
+    bl      tls_set_keys
+    str     xzr, [x19, #TLS_RSEQ]
+    str     xzr, [x19, #TLS_WSEQ]
+    add     x0, x19, #TLS_SHARED
+    mov     w1, #SHA_DIGEST_SIZE
+    bl      mem_wipe
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+tls_keys_finish:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x19, tls_ctx
+    add     x0, x19, #TLS_HASH
+    bl      tls_transcript_hash
+    add     x0, x19, #TLS_MASTER
+    ladr    x1, tls_label_c_ap
+    mov     w2, #(tls_label_c_ap_end - tls_label_c_ap)
+    add     x3, x19, #TLS_HASH
+    add     x4, x19, #TLS_C_AP
+    bl      tls_derive_secret
+    add     x0, x19, #TLS_MASTER
+    ladr    x1, tls_label_s_ap
+    mov     w2, #(tls_label_s_ap_end - tls_label_s_ap)
+    add     x3, x19, #TLS_HASH
+    add     x4, x19, #TLS_S_AP
+    bl      tls_derive_secret
+    add     x0, x19, #TLS_C_HS
+    add     x5, x19, #TLS_FINKEY
+    bl      tls_finished_key
+    add     x0, x19, #TLS_FINKEY
+    mov     x1, #SHA_DIGEST_SIZE
+    add     x2, x19, #TLS_HASH
+    mov     x3, #SHA_DIGEST_SIZE
+    ladr    x4, tls_fin_buf
+    add     x4, x4, #4
+    bl      hmac_compute
+    ladr    x0, tls_fin_buf
+    mov     w1, #TLS_HS_FINISHED
+    strb    w1, [x0]
+    strb    wzr, [x0, #1]
+    strb    wzr, [x0, #2]
+    mov     w1, #SHA_DIGEST_SIZE
+    strb    w1, [x0, #3]
+    mov     w0, #TLS_REC_HANDSHAKE
+    ladr    x1, tls_fin_buf
+    mov     w2, #(SHA_DIGEST_SIZE + 4)
+    bl      tls_send_record
+    add     x0, x19, #TLS_C_AP
+    add     x1, x19, #TLS_AES_W
+    add     x2, x19, #TLS_WKEY
+    add     x3, x19, #TLS_WIV
+    bl      tls_set_keys
+    add     x0, x19, #TLS_S_AP
+    add     x1, x19, #TLS_AES_R
+    add     x2, x19, #TLS_RKEY
+    add     x3, x19, #TLS_RIV
+    bl      tls_set_keys
+    str     xzr, [x19, #TLS_RSEQ]
+    str     xzr, [x19, #TLS_WSEQ]
+    mov     w0, #TLS_STATE_CONNECTED
+    strb    w0, [x19, #TLS_STATE]
+    ladr    x0, tls_done_msg
+    bl      uart_puts
+    mov     w0, #TLS_REC_APPDATA
+    ladr    x1, http_request
+    mov     w2, #(http_request_end - http_request)
+    bl      tls_send_record
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
 .section .text.vectors
 .balign VEC_TABLE_ALIGN
 .global vec_table
@@ -12538,6 +13609,84 @@ x25519_u_6:
 x25519_e_6:
     .byte   0x42,0x2c,0x8e,0x7a,0x62,0x27,0xd7,0xbc,0xa1,0x35,0x0b,0x3e,0x2b,0xb7,0x27,0x9f
     .byte   0x78,0x97,0xb8,0x7b,0xb6,0x85,0x4b,0x78,0x3c,0x60,0xe8,0x03,0x11,0xae,0x30,0x79
+tls_host:
+    .ascii  "example.com"
+tls_host_end:
+tls_label_derived:
+    .ascii  "tls13 derived"
+tls_label_derived_end:
+tls_label_c_hs:
+    .ascii  "tls13 c hs traffic"
+tls_label_c_hs_end:
+tls_label_s_hs:
+    .ascii  "tls13 s hs traffic"
+tls_label_s_hs_end:
+tls_label_c_ap:
+    .ascii  "tls13 c ap traffic"
+tls_label_c_ap_end:
+tls_label_s_ap:
+    .ascii  "tls13 s ap traffic"
+tls_label_s_ap_end:
+tls_label_key:
+    .ascii  "tls13 key"
+tls_label_key_end:
+tls_label_iv:
+    .ascii  "tls13 iv"
+tls_label_iv_end:
+tls_label_finished:
+    .ascii  "tls13 finished"
+tls_label_finished_end:
+tls_hello_msg:
+    .asciz  "TLS CLIENT HELLO an Port 443\r\n"
+tls_server_hello_msg:
+    .asciz  "TLS SERVER HELLO, TLS 1.3, AES-128-GCM, X25519\r\n"
+tls_cert_msg:
+    .asciz  "TLS ZERTIFIKAT "
+tls_cert_tail:
+    .asciz  " Byte, NICHT GEPRUEFT\r\n"
+tls_done_msg:
+    .asciz  "TLS HANDSHAKE FERTIG, sende GET\r\n"
+tls_https_msg:
+    .asciz  "HTTPS "
+tls_closed_msg:
+    .asciz  "TLS GESCHLOSSEN\r\n"
+tls_alert_msg:
+    .asciz  "TLS ALERT "
+tls_fail_msg:
+    .asciz  "TLS FEHLER: "
+tls_overflow_msg:
+    .asciz  "Puffer voll"
+tls_toolong_msg:
+    .asciz  "Record zu lang"
+tls_badtype_msg:
+    .asciz  "unbekannter Record-Typ"
+tls_unexpected_msg:
+    .asciz  "Record im falschen Zustand"
+tls_badtag_msg:
+    .asciz  "Tag falsch"
+tls_empty_msg:
+    .asciz  "leerer Record"
+tls_badmsg_msg:
+    .asciz  "unerwartete Handshake-Nachricht"
+tls_badfin_msg:
+    .asciz  "Finished des Servers falsch"
+tls_hrr_msg:
+    .asciz  "Hello Retry Request"
+tls_suite_msg:
+    .asciz  "Cipher Suite abgelehnt"
+tls_version_msg:
+    .asciz  "keine TLS 1.3"
+tls_group_msg:
+    .asciz  "Key Share nicht X25519"
+tls_missing_msg:
+    .asciz  "Server Hello ohne Version oder Key Share"
+tls_short_msg:
+    .asciz  "Server Hello zu kurz"
+tls_hrr_random:
+    .byte   0xcf,0x21,0xad,0x74,0xe5,0x9a,0x61,0x11,0xbe,0x1d,0x8c,0x02,0x1e,0x65,0xb8,0x91
+    .byte   0xc2,0xa2,0x11,0x16,0x7a,0xbb,0x8c,0x5e,0x07,0x9e,0x09,0xe2,0xc8,0xa8,0x33,0x9c
+tls_zero32:
+    .space  32
 .section .bss
 
 .balign 8
@@ -12806,6 +13955,17 @@ aes_buf:
     .space  AES_TEST_MAX
 aes_tag:
     .space  GCM_TAG_SIZE
+.balign 16
+tls_ctx:
+    .space  TLS_CTX_SIZE
+tls_out_buf:
+    .space  TLS_OUT_SIZE
+tls_fin_buf:
+    .space  48
+tls_rx_buf:
+    .space  TLS_RX_SIZE
+tls_hs_buf:
+    .space  TLS_HS_SIZE
 dns_id:
     .space  2
 
