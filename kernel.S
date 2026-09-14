@@ -373,17 +373,19 @@
 
 .equ FB_WIDTH,              3840
 .equ FB_HEIGHT,             1600
-.equ FB_BPP,                8
+.equ FB_BPP,                4
 .equ FB_STRIDE,             (FB_WIDTH * FB_BPP)
 .equ FB_SIZE,               (FB_STRIDE * FB_HEIGHT)
 .equ OUT_BPP,               4
 .equ OUT_STRIDE,            (FB_WIDTH * OUT_BPP)
 .equ OUT_SIZE,              (OUT_STRIDE * FB_HEIGHT)
 .equ OUT_BLOCKS,            ((OUT_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE)
-.equ CH_SHIFT_R,            0
-.equ CH_SHIFT_G,            16
-.equ CH_SHIFT_B,            32
-.equ CH_SHIFT_A,            48
+.equ CH_SHIFT_B,            0
+.equ CH_SHIFT_G,            8
+.equ CH_SHIFT_R,            16
+.equ CH_SHIFT_A,            24
+.equ CH_MAX,                0xff
+.equ CH_ROUND,              0x80
 .equ FB_FOURCC_XR24,        0x34325258
 
 .equ FB_CFG_ADDR,           0
@@ -419,7 +421,6 @@
 .equ CURSOR_PRESSED_PCT,    96
 .equ CURSOR_PRESSED_OFFSET, ((CURSOR_W - (CURSOR_W * CURSOR_PRESSED_PCT) / 100) / 2)
 .equ ALPHA_MAX,             0xffff
-.equ ALPHA_ROUND,           0x8000
 .equ CURSOR_STRIDE,         (CURSOR_W * FB_BPP)
 .equ CURSOR_BACKING_SIZE,   (CURSOR_W * CURSOR_H * FB_BPP)
 .equ CURSOR_SPRITE_SIZE,    CURSOR_BACKING_SIZE
@@ -482,19 +483,19 @@
 .equ FB_COUNT_PIXELS,       0
 .equ WIN_SELFTEST,          0
 
-.equ COLOR_WIN_BORDER,      0xffff303028282020
-.equ COLOR_WIN_TITLE,       0xffff585848483838
-.equ COLOR_WIN_TITLE_ACT,   0xffff909060602020
-.equ COLOR_WIN_BODY,        0xffffd0d0ccccc8c8
-.equ COLOR_WIN_TEXT,        0xffffffffffffffff
-.equ COLOR_FILES_TEXT,      0xffff282824241c1c
+.equ COLOR_WIN_BORDER,      0xff202830
+.equ COLOR_WIN_TITLE,       0xff384858
+.equ COLOR_WIN_TITLE_ACT,   0xff206090
+.equ COLOR_WIN_BODY,        0xffc8ccd0
+.equ COLOR_WIN_TEXT,        0xffffffff
+.equ COLOR_FILES_TEXT,      0xff1c2428
 
-.equ COLOR_CURSOR,          0xffffffffffffffff
-.equ COLOR_CURSOR_DARK,     0xffff000000000000
-.equ COLOR_BACKGROUND,      0xffff303020201010
-.equ COLOR_RED,             0xffff00000000ffff
-.equ COLOR_GREEN,           0xffff0000ffff0000
-.equ COLOR_BLUE,            0xffffffff00000000
+.equ COLOR_CURSOR,          0xffffffff
+.equ COLOR_CURSOR_DARK,     0xff000000
+.equ COLOR_BACKGROUND,      0xff102030
+.equ COLOR_RED,             0xffff0000
+.equ COLOR_GREEN,           0xff00ff00
+.equ COLOR_BLUE,            0xff0000ff
 
 .equ ANIM_MAX,              64
 .equ ANIM_ENTRY_SIZE,       80
@@ -546,8 +547,8 @@
 .equ POWER_MARGIN,          28
 .equ POWER_CX,              (FB_WIDTH - POWER_MARGIN - POWER_R)
 .equ POWER_CY,              (POWER_MARGIN + POWER_R)
-.equ COLOR_POWER,           0xffff20202020d8d8
-.equ COLOR_POWER_SYMBOL,    0xffffffffffffffff
+.equ COLOR_POWER,           0xffd82020
+.equ COLOR_POWER_SYMBOL,    0xffffffff
 .equ PSCI_SYSTEM_OFF,       0x84000008
 
 .equ DAIF_I,                2
@@ -1005,14 +1006,12 @@ fb_present:
     mov     x9, #OUT_STRIDE
     ladr    x6, fb_render
     madd    x6, x1, x8, x6
-    add     x6, x6, x0, lsl #3
+    add     x6, x6, x0, lsl #2
     ladr    x7, fb_output
     madd    x7, x1, x9, x7
     add     x7, x7, x0, lsl #2
     ladr    x10, fb_fade
     ldr     w10, [x10]
-    ladr    x4, fb_present_shuffle
-    ld1     {v7.16b}, [x4]
     dup     v6.8h, w10
 fb_present_row:
     mov     x11, x6
@@ -1020,68 +1019,58 @@ fb_present_row:
     mov     w13, w2
     mov     w4, #FADE_ONE
     cmp     w10, w4
-    b.ne    fb_present_fade8
-fb_present_col8:
-    cmp     w13, #8
+    b.ne    fb_present_fade4
+fb_present_col16:
+    cmp     w13, #16
     b.lo    fb_present_col
     ld1     {v0.2d, v1.2d, v2.2d, v3.2d}, [x11], #64
-    shrn    v4.8b, v0.8h, #8
-    shrn2   v4.16b, v1.8h, #8
-    shrn    v5.8b, v2.8h, #8
-    shrn2   v5.16b, v3.8h, #8
-    tbl     v4.16b, {v4.16b}, v7.16b
-    tbl     v5.16b, {v5.16b}, v7.16b
-    st1     {v4.16b, v5.16b}, [x12], #32
-    sub     w13, w13, #8
-    b       fb_present_col8
+    st1     {v0.2d, v1.2d, v2.2d, v3.2d}, [x12], #64
+    sub     w13, w13, #16
+    b       fb_present_col16
 fb_present_col:
     cbz     w13, fb_present_next
-    ldr     x14, [x11], #FB_BPP
-    ubfx    x4, x14, #(CH_SHIFT_B + 8), #8
-    ubfx    x5, x14, #(CH_SHIFT_G + 8), #8
-    orr     w4, w4, w5, lsl #8
-    ubfx    x5, x14, #(CH_SHIFT_R + 8), #8
-    orr     w4, w4, w5, lsl #16
+    ldr     w4, [x11], #FB_BPP
     str     w4, [x12], #OUT_BPP
     subs    w13, w13, #1
     b.ne    fb_present_col
     b       fb_present_next
-fb_present_fade8:
+fb_present_fade4:
     cmp     w13, #4
     b.lo    fb_present_col_fade
-    ld1     {v0.2d, v1.2d}, [x11], #32
-    shrn    v2.8b, v0.8h, #8
-    shrn2   v2.16b, v1.8h, #8
-    ushll   v3.8h, v2.8b, #0
-    ushll2  v4.8h, v2.16b, #0
-    umull   v5.4s, v3.4h, v6.4h
-    umull2  v3.4s, v3.8h, v6.8h
-    umull   v2.4s, v4.4h, v6.4h
-    umull2  v4.4s, v4.8h, v6.8h
-    shrn    v5.4h, v5.4s, #16
-    shrn2   v5.8h, v3.4s, #16
-    shrn    v2.4h, v2.4s, #16
-    shrn2   v2.8h, v4.4s, #16
-    xtn     v5.8b, v5.8h
-    xtn2    v5.16b, v2.8h
-    tbl     v5.16b, {v5.16b}, v7.16b
-    st1     {v5.16b}, [x12], #16
+    ld1     {v0.16b}, [x11], #16
+    ushll   v1.8h, v0.8b, #0
+    ushll2  v2.8h, v0.16b, #0
+    umull   v3.4s, v1.4h, v6.4h
+    umull2  v1.4s, v1.8h, v6.8h
+    umull   v4.4s, v2.4h, v6.4h
+    umull2  v2.4s, v2.8h, v6.8h
+    shrn    v3.4h, v3.4s, #16
+    shrn2   v3.8h, v1.4s, #16
+    shrn    v4.4h, v4.4s, #16
+    shrn2   v4.8h, v2.4s, #16
+    xtn     v3.8b, v3.8h
+    xtn2    v3.16b, v4.8h
+    st1     {v3.16b}, [x12], #16
     sub     w13, w13, #4
-    b       fb_present_fade8
+    b       fb_present_fade4
 fb_present_col_fade:
     cbz     w13, fb_present_next
-    ldr     x14, [x11], #FB_BPP
-    ubfx    x4, x14, #(CH_SHIFT_B + 8), #8
+    ldr     w14, [x11], #FB_BPP
+    ubfx    w4, w14, #0, #8
     mul     w4, w4, w10
     lsr     w4, w4, #16
-    ubfx    x5, x14, #(CH_SHIFT_G + 8), #8
+    ubfx    w5, w14, #8, #8
     mul     w5, w5, w10
     lsr     w5, w5, #16
     orr     w4, w4, w5, lsl #8
-    ubfx    x5, x14, #(CH_SHIFT_R + 8), #8
+    ubfx    w5, w14, #16, #8
     mul     w5, w5, w10
     lsr     w5, w5, #16
     orr     w4, w4, w5, lsl #16
+    ubfx    w5, w14, #24, #8
+    mul     w5, w5, w10
+    lsr     w5, w5, #16
+    orr     w4, w4, w5, lsl #24
     str     w4, [x12], #OUT_BPP
     subs    w13, w13, #1
     b.ne    fb_present_col_fade
@@ -1191,7 +1180,7 @@ fb_pixel_addr:
     ladr    x10, fb_target
     ldp     x10, x9, [x10]
     madd    x9, x1, x9, x10
-    add     x0, x9, x0, lsl #3
+    add     x0, x9, x0, lsl #2
     ret
 
 out_pixel_addr:
@@ -1218,7 +1207,7 @@ fb_fill_rect:
 .endif
     bl      fb_pixel_addr
     mov     x5, x0
-    dup     v0.2d, x4
+    dup     v0.4s, w4
     mov     v1.16b, v0.16b
     mov     v2.16b, v0.16b
     mov     v3.16b, v0.16b
@@ -1227,15 +1216,15 @@ fb_fill_rect_row:
     cbz     w3, fb_fill_rect_done
     mov     w6, w2
     mov     x7, x5
-fb_fill_rect_col8:
-    cmp     w6, #8
+fb_fill_rect_col16:
+    cmp     w6, #16
     b.lo    fb_fill_rect_rest
     st1     {v0.2d, v1.2d, v2.2d, v3.2d}, [x7], #64
-    sub     w6, w6, #8
-    b       fb_fill_rect_col8
+    sub     w6, w6, #16
+    b       fb_fill_rect_col16
 fb_fill_rect_rest:
     cbz     w6, fb_fill_rect_next
-    str     x4, [x7], #FB_BPP
+    str     w4, [x7], #FB_BPP
     sub     w6, w6, #1
     b       fb_fill_rect_rest
 
@@ -1329,18 +1318,18 @@ cursor_copy_row:
     mov     x7, x0
     mov     x8, x1
 
-cursor_copy_col8:
-    cmp     w6, #8
+cursor_copy_col16:
+    cmp     w6, #16
     b.lo    cursor_copy_col
     ld1     {v0.2d, v1.2d, v2.2d, v3.2d}, [x8], #64
     st1     {v0.2d, v1.2d, v2.2d, v3.2d}, [x7], #64
-    sub     w6, w6, #8
-    b       cursor_copy_col8
+    sub     w6, w6, #16
+    b       cursor_copy_col16
 
 cursor_copy_col:
     cbz     w6, cursor_copy_next
-    ldr     x9, [x8], #FB_BPP
-    str     x9, [x7], #FB_BPP
+    ldr     w9, [x8], #FB_BPP
+    str     w9, [x7], #FB_BPP
     sub     w6, w6, #1
     b       cursor_copy_col
 
@@ -1442,51 +1431,43 @@ cursor_show_draw_row:
 cursor_show_draw_col:
     cmp     w4, w22
     b.hs    cursor_show_draw_next
-    ldr     x10, [x7], #FB_BPP
-    lsr     x12, x10, #CH_SHIFT_A
-    cbz     x12, cursor_show_draw_skip
+    ldr     w10, [x7], #FB_BPP
+    lsr     w12, w10, #CH_SHIFT_A
+    cbz     w12, cursor_show_draw_skip
 
 cursor_show_draw_blend:
-    mov     x13, #ALPHA_MAX
-    cmp     x12, x13
+    cmp     w12, #CH_MAX
     b.eq    cursor_show_draw_put
-    sub     x12, x13, x12
-    ldr     x11, [x5]
-    and     x14, x11, #0xffff
-    mul     x14, x14, x12
-    add     x14, x14, #ALPHA_ROUND
-    lsr     x15, x14, #16
-    add     x14, x14, x15
-    lsr     x14, x14, #16
-    and     x15, x10, #0xffff
-    add     x14, x14, x15
-    lsr     x16, x11, #CH_SHIFT_G
-    and     x16, x16, #0xffff
-    mul     x16, x16, x12
-    add     x16, x16, #ALPHA_ROUND
-    lsr     x17, x16, #16
-    add     x16, x16, x17
-    lsr     x16, x16, #16
-    lsr     x17, x10, #CH_SHIFT_G
-    and     x17, x17, #0xffff
-    add     x16, x16, x17
-    orr     x14, x14, x16, lsl #CH_SHIFT_G
-    lsr     x16, x11, #CH_SHIFT_B
-    and     x16, x16, #0xffff
-    mul     x16, x16, x12
-    add     x16, x16, #ALPHA_ROUND
-    lsr     x17, x16, #16
-    add     x16, x16, x17
-    lsr     x16, x16, #16
-    lsr     x17, x10, #CH_SHIFT_B
-    and     x17, x17, #0xffff
-    add     x16, x16, x17
-    orr     x14, x14, x16, lsl #CH_SHIFT_B
-    mov     x16, #ALPHA_MAX
-    orr     x10, x14, x16, lsl #CH_SHIFT_A
+    mov     w13, #CH_MAX
+    sub     w12, w13, w12
+    ldr     w11, [x5]
+    ubfx    w14, w11, #CH_SHIFT_B, #8
+    mul     w14, w14, w12
+    add     w14, w14, #CH_ROUND
+    add     w14, w14, w14, lsr #8
+    lsr     w14, w14, #8
+    ubfx    w15, w10, #CH_SHIFT_B, #8
+    add     w14, w14, w15
+    ubfx    w16, w11, #CH_SHIFT_G, #8
+    mul     w16, w16, w12
+    add     w16, w16, #CH_ROUND
+    add     w16, w16, w16, lsr #8
+    lsr     w16, w16, #8
+    ubfx    w17, w10, #CH_SHIFT_G, #8
+    add     w16, w16, w17
+    orr     w14, w14, w16, lsl #CH_SHIFT_G
+    ubfx    w16, w11, #CH_SHIFT_R, #8
+    mul     w16, w16, w12
+    add     w16, w16, #CH_ROUND
+    add     w16, w16, w16, lsr #8
+    lsr     w16, w16, #8
+    ubfx    w17, w10, #CH_SHIFT_R, #8
+    add     w16, w16, w17
+    orr     w14, w14, w16, lsl #CH_SHIFT_R
+    orr     w10, w14, #0xff000000
 
 cursor_show_draw_put:
-    str     x10, [x5]
+    str     w10, [x5]
 
 cursor_show_draw_skip:
     add     x5, x5, #FB_BPP
@@ -1529,25 +1510,23 @@ cursor_sprite_opacity:
     mov     w2, #(CURSOR_W * CURSOR_H)
 
 cursor_sprite_opacity_px:
-    ldr     x8, [x0]
-    lsr     x12, x8, #CH_SHIFT_A
-    mul     x12, x12, x1
-    lsr     x12, x12, #16
-    and     x10, x8, #0xffff
-    mul     x10, x10, x1
-    lsr     x10, x10, #16
-    lsr     x13, x8, #CH_SHIFT_G
-    and     x13, x13, #0xffff
-    mul     x13, x13, x1
-    lsr     x13, x13, #16
-    orr     x10, x10, x13, lsl #CH_SHIFT_G
-    lsr     x13, x8, #CH_SHIFT_B
-    and     x13, x13, #0xffff
-    mul     x13, x13, x1
-    lsr     x13, x13, #16
-    orr     x10, x10, x13, lsl #CH_SHIFT_B
-    orr     x10, x10, x12, lsl #CH_SHIFT_A
-    str     x10, [x0], #FB_BPP
+    ldr     w8, [x0]
+    ubfx    w10, w8, #0, #8
+    mul     w10, w10, w1
+    lsr     w10, w10, #16
+    ubfx    w13, w8, #8, #8
+    mul     w13, w13, w1
+    lsr     w13, w13, #16
+    orr     w10, w10, w13, lsl #8
+    ubfx    w13, w8, #16, #8
+    mul     w13, w13, w1
+    lsr     w13, w13, #16
+    orr     w10, w10, w13, lsl #16
+    ubfx    w13, w8, #24, #8
+    mul     w13, w13, w1
+    lsr     w13, w13, #16
+    orr     w10, w10, w13, lsl #24
+    str     w10, [x0], #FB_BPP
     subs    w2, w2, #1
     b.ne    cursor_sprite_opacity_px
     ret
@@ -3060,15 +3039,15 @@ win_add_full:
 win_mix_color:
     mov     x3, #0
     mov     w4, #0
-    mov     x7, #0xffff
+    mov     x7, #CH_MAX
 
 win_mix_loop:
-    cmp     w4, #64
+    cmp     w4, #32
     b.hs    win_mix_done
     lsr     x5, x0, x4
-    and     x5, x5, #0xffff
+    and     x5, x5, #CH_MAX
     lsr     x6, x1, x4
-    and     x6, x6, #0xffff
+    and     x6, x6, #CH_MAX
     sub     x6, x6, x5
     mul     x6, x6, x2
     asr     x6, x6, #16
@@ -3079,7 +3058,7 @@ win_mix_loop:
     csel    x5, x7, x5, gt
     lsl     x5, x5, x4
     orr     x3, x3, x5
-    add     w4, w4, #16
+    add     w4, w4, #8
     b       win_mix_loop
 
 win_mix_done:
@@ -6297,73 +6276,40 @@ font_build_end:
     ldp     x29, x30, [sp], #128
     ret
 
+.macro blend_ch shift
+    ubfx    w7, w2, #\shift, #8
+    mul     w7, w7, w5
+    ubfx    w8, w3, #\shift, #8
+    madd    w7, w8, w6, w7
+    add     w7, w7, #CH_ROUND
+    add     w7, w7, w7, lsr #8
+    lsr     w7, w7, #8
+    orr     w9, w9, w7, lsl #\shift
+.endm
+
 fb_blend_pixel:
     cbz     x1, fb_blend_done
-    mov     x4, #ALPHA_MAX
-    cmp     x1, x4
+    mov     w4, #ALPHA_MAX
+    cmp     w1, w4
     b.eq    fb_blend_opaque
-    ldr     x3, [x0]
-    mov     x4, #ALPHA_MAX
-    sub     x5, x4, x1
-    and     x6, x2, #0xffff
-    mul     x6, x6, x1
-    add     x6, x6, #ALPHA_ROUND
-    lsr     x7, x6, #16
-    add     x6, x6, x7
-    lsr     x6, x6, #16
-    and     x7, x3, #0xffff
-    mul     x7, x7, x5
-    add     x7, x7, #ALPHA_ROUND
-    lsr     x8, x7, #16
-    add     x7, x7, x8
-    lsr     x7, x7, #16
-    add     x6, x6, x7
-    lsr     x9, x2, #CH_SHIFT_G
-    and     x9, x9, #0xffff
-    mul     x9, x9, x1
-    add     x9, x9, #ALPHA_ROUND
-    lsr     x10, x9, #16
-    add     x9, x9, x10
-    lsr     x9, x9, #16
-    lsr     x10, x3, #CH_SHIFT_G
-    and     x10, x10, #0xffff
-    mul     x10, x10, x5
-    add     x10, x10, #ALPHA_ROUND
-    lsr     x11, x10, #16
-    add     x10, x10, x11
-    lsr     x10, x10, #16
-    add     x9, x9, x10
-    orr     x6, x6, x9, lsl #CH_SHIFT_G
-    lsr     x9, x2, #CH_SHIFT_B
-    and     x9, x9, #0xffff
-    mul     x9, x9, x1
-    add     x9, x9, #ALPHA_ROUND
-    lsr     x10, x9, #16
-    add     x9, x9, x10
-    lsr     x9, x9, #16
-    lsr     x10, x3, #CH_SHIFT_B
-    and     x10, x10, #0xffff
-    mul     x10, x10, x5
-    add     x10, x10, #ALPHA_ROUND
-    lsr     x11, x10, #16
-    add     x10, x10, x11
-    lsr     x10, x10, #16
-    add     x9, x9, x10
-    orr     x6, x6, x9, lsl #CH_SHIFT_B
-    lsr     x10, x3, #CH_SHIFT_A
-    mul     x10, x10, x5
-    add     x10, x10, #ALPHA_ROUND
-    lsr     x11, x10, #16
-    add     x10, x10, x11
-    lsr     x10, x10, #16
-    add     x10, x10, x1
-    orr     x6, x6, x10, lsl #CH_SHIFT_A
-    str     x6, [x0]
+    ldr     w3, [x0]
+    add     w5, w1, #CH_ROUND
+    lsr     w5, w5, #8
+    mov     w6, #CH_MAX
+    cmp     w5, w6
+    csel    w5, w6, w5, hi
+    sub     w6, w6, w5
+    mov     w9, #0
+    blend_ch CH_SHIFT_B
+    blend_ch CH_SHIFT_G
+    blend_ch CH_SHIFT_R
+    blend_ch CH_SHIFT_A
+    str     w9, [x0]
 fb_blend_done:
     ret
 fb_blend_opaque:
-    orr     x2, x2, #0xffff000000000000
-    str     x2, [x0]
+    orr     w2, w2, #0xff000000
+    str     w2, [x0]
     ret
 
 vg_cov_span:
@@ -7648,10 +7594,6 @@ win_title_3:
     vec_entry 15, panic_entry
 
 .section .rodata
-
-.balign 16
-fb_present_shuffle:
-    .byte   2, 1, 0, 255, 6, 5, 4, 255, 10, 9, 8, 255, 14, 13, 12, 255
 
 files_error_msg:
     .asciz  "FILES SCAN FAIL\r\n"

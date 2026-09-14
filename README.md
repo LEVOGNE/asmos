@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-25.608%20Byte-brightgreen?style=flat-square" alt="25608 Byte">
+<img src="https://img.shields.io/badge/Kernel-25.432%20Byte-brightgreen?style=flat-square" alt="25432 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>25.608&nbsp;Byte</b> groß, also <b>25&nbsp;KB</b>.<br>
+Das fertige System ist <b>25.432&nbsp;Byte</b> groß, also <b>25&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -36,7 +36,7 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Reden</b></td><td>Serielle Schnittstelle in beide Richtungen: Textausgabe und Tastatureingabe</td></tr>
 <tr><td><b>Sich melden</b></td><td>Bei einem Prozessorfehler keine stille Endlosschleife, sondern eine Diagnose mit Ursache, Adresse und Prozessorzustand</td></tr>
 <tr><td><b>Zeit messen</b></td><td>Hardware-Zeitgeber mit echten Unterbrechungen. Die Taktfrequenz wird ausgelesen, nicht angenommen</td></tr>
-<tr><td><b>Ein Bild malen</b></td><td><b>3840 × 1600</b> Bildpunkte, intern 64 Bit je Punkt mit Alphakanal, Rechtecke, Text und Transparenz</td></tr>
+<tr><td><b>Ein Bild malen</b></td><td><b>3840 × 1600</b> Bildpunkte, intern 32 Bit je Punkt mit Alphakanal in der Byte-Reihenfolge der Ausgabe, Rechtecke, Text und Transparenz</td></tr>
 <tr><td><b>Schreiben</b></td><td><b>Eigener TrueType-Renderer.</b> Der Kernel liest eine Schriftdatei vom Datenträger, wertet ihre Tabellen aus, zerlegt die Bézierkurven, füllt die Flächen nach der Umlaufregel und glättet die Kanten. Jede Größe scharf, keine eingebauten Glyphen</td></tr>
 <tr><td><b>Eine Maus führen</b></td><td>Zeiger bewegt sich, überdeckter Hintergrund wird gesichert und sauber wiederhergestellt. Einfach-, Doppel- und Dreifachklick werden unterschieden</td></tr>
 <tr><td><b>Fenster zeigen</b></td><td>Fenster mit Titelleiste und TrueType-Beschriftung. Anklicken holt sie nach vorn, an der Titelleiste lassen sie sich ziehen. Neu gezeichnet wird nur, was sich wirklich geändert hat</td></tr>
@@ -116,7 +116,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>192 KB · 8215 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>188 KB · 8157 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -145,11 +145,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 8215 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 8157 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **829 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **828 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -174,7 +174,7 @@ In `kernel.S` stecken **829 Sprungmarken**. Jede gehört zu einem Zuständigkeit
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **25.608 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **25.432 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -184,7 +184,7 @@ In `kernel.S` stecken **829 Sprungmarken**. Jede gehört zu einem Zuständigkeit
 
 Keine dieser Dateien liegt in der Versionsverwaltung, sie entstehen alle neu aus dem Quelltext.
 
-Im Betrieb belegt der Kernel zusätzlich **70 MB** Arbeitsspeicher: 46,9 MB interner Bildpuffer mit 64 Bit je Punkt, 23,4 MB Ausgabepuffer mit 32 Bit. Beim Start genullt wird davon nur der Ausgabepuffer, denn der interne wird ohnehin in der ersten Bildausgabe vollständig überschrieben. Das verkürzt die Nullung von 71,5 auf 24,2 MB und den Start um **81 %** im emulierten Betrieb.
+Im Betrieb belegt der Kernel zusätzlich **47 MB** Arbeitsspeicher: 23,4 MB interner Bildpuffer und 23,4 MB Ausgabepuffer, beide mit 32 Bit je Punkt. Bis zum 14.09.2026 hatte der interne Puffer 64 Bit je Punkt und 46,9 MB, siehe Messwerte. Beim Start genullt wird davon nur der Ausgabepuffer, denn der interne wird ohnehin in der ersten Bildausgabe vollständig überschrieben. Das verkürzte die Nullung damals von 71,5 auf 24,2 MB und den Start um **81 %** im emulierten Betrieb.
 
 ---
 
@@ -345,10 +345,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 | | |
 |---|---|
 | Eigener Quelltext | 204 KB in drei Dateien |
-| Zeilen Assembler | 8215 |
-| Sprungmarken | 829 |
-| **Fertiges Betriebssystem** | **25.608 Byte** |
-| Speicherbedarf im Betrieb | 70 MB, fast vollständig Bildspeicher |
+| Zeilen Assembler | 8157 |
+| Sprungmarken | 828 |
+| **Fertiges Betriebssystem** | **25.432 Byte** |
+| Speicherbedarf im Betrieb | 49,9 MB, davon 99,5 % die beiden Bildpuffer |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
 | Entwicklungsziel | QEMU `virt` |
@@ -398,3 +398,31 @@ Ein Ziehschritt kostet emuliert jetzt rund 3 statt 10 Millisekunden. Das Ziehen 
 - *Was sich nicht lohnt.* Die Vektor-Engine beschleunigen: sie ist beim Start 1,5 % und fällt beim Ziehen mit dem Fensterpuffer ganz weg. Das Löschen des Ausgabepuffers beim Start: 3 ms, einmalig.
 
 **Nebenbei bestätigt.** Die Animation rechnet zeitbasiert (13 Bilder in 450 ms entsprechen dem 30-Hz-Zeitgeber, keine Bildzählung). Nach dem Ende jeder Animation führt das System bis zur nächsten Eingabe exakt null Instruktionen aus. Die Reihenfolge beim Zeichnen des Mauszeigers (entfernen, Fenster rendern, Zeiger zeichnen, dann ausgeben) ist maschinell bestätigt. In allen Messläufen mit Mausbewegung, Drücken, Ziehen und Loslassen: kein einziger `PANIC`.
+
+### Stand 14.09.2026, zweite Runde: internes Bild auf 32 Bit je Bildpunkt
+
+**Die Entscheidung.** Bis hierher rechnete der Kernel intern mit 16 Bit je Farbkanal (64 Bit je Bildpunkt), die Ausgabe hat 8 Bit je Kanal. Die zusätzlichen 8 Bit erreichten den Bildschirm nie, sie halfen nur als Zwischenpräzision, wenn ein Bildpunkt mehrfach halbtransparent überlagert wird. Jeder Desktop, jede Grafikkarte rechnet in 8 Bit je Kanal, und `ramfb` kann kein HDR. Also wurde das interne Bild auf 32 Bit je Bildpunkt umgestellt, und zwar in genau der Byte-Reihenfolge, die die Ausgabe erwartet. Damit ist `fb_present` keine Formatwandlung mehr, sondern eine Kopie.
+
+**Der Beweis ohne Byte-Identität.** Ein byteweiser Vergleich kann hier nicht mehr gelten, weil 8-Bit-Rundung an Kanten um 1 abweichen darf. Deshalb ein Toleranzvergleich: Jeder Farbkanal jedes Bildpunkts wurde mit der 64-Bit-Referenz verglichen, und für jede Abweichung wurde geprüft, ob sie auf einer Fläche liegt (alle vier Nachbarn gleich) oder an einer Kante.
+
+| Bild | Kanalwerte | abweichend | Betrag | davon auf Flächen |
+|---|---|---|---|---|
+| Desktop nach dem Start | 18.432.000 | 5.046 (0,027 %) | alle genau 1 | **0** |
+| mit gedrücktem Mauszeiger | 18.432.000 | 5.832 (0,032 %) | 5.678 mal 1, 154 mal 2 | 243, alle im Inneren des 46-px-Pfeils, gleichmäßig um 1 verschoben |
+
+Die zweite Zeile ist die erwartete doppelte Rundung: Die 91 % Deckkraft des gedrückten Zeigers werden erst ins Sprite gerechnet und dann gemischt, beides jetzt in 8 Bit. Nichts davon ist mit dem Auge zu unterscheiden.
+
+**Ergebnis der zweiten Runde, verglichen mit der ersten.**
+
+| Lastfall | Runde 1 | Runde 2 | Ersparnis | seit Beginn |
+|---|---|---|---|---|
+| ein Ziehschritt des Dateifensters | 5.797.771 | 4.052.089 | −30 % | **−79 %** |
+| eine Mausbewegung | 41.988 | 34.778 | −17 % | **−65 %** |
+| ein Vollbild ausgeben (ohne Einblenden) | rund 27 Mio. | rund 2,3 Mio. | −91 % | −97 % gegenüber 83 Mio. |
+| Start bis Ruhe | 416 Mio. | 457 Mio. | siehe unten | −62 % |
+| Arbeitsspeicher | 74,55 MB | 49,93 MB | **−33 %** | −33 % |
+| Größe des fertigen Systems | 25.608 Byte | 25.432 Byte | −176 Byte | −544 Byte |
+
+Zum Start: Die Zahl schwankt von Lauf zu Lauf um rund 10 %, weil die Anzahl der Teilausgaben des hereingleitenden Fensters vom Zeitgeber abhängt. Der Start besteht jetzt fast nur noch aus dem Einblenden: 13 Vollbilder mal 6,1 Mio. Bildpunkte, jeder mit dem Einblendfaktor multipliziert, 4,5 Befehle je Bildpunkt. Das ist die einzige Vollbild-Animation im System und läuft nur einmal.
+
+Beim Ziehschritt bleibt als größter Posten die Schrift (1,24 Mio., 31 %), dann Füllen (0,56 Mio.) und die Ausgabe (0,48 Mio.). Der nächste Schritt wäre der Fensterpuffer, der jetzt 4,3 MB je Fenster kostet statt 8,5.

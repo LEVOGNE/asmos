@@ -269,7 +269,7 @@ Gesamtgröße **28 Byte**, aus den Feldern gerechnet (8 + fünf mal 4). Eine Zus
 
 ### Pixelformat
 
-`FB_FOURCC_XR24` = `0x34325258`. Beleg: Linux `include/uapi/drm/drm_fourcc.h`, `DRM_FORMAT_XRGB8888 = fourcc_code('X','R','2','4')` mit `fourcc_code(a,b,c,d) = a | b<<8 | c<<16 | d<<24`. Der Kommentar dort lautet `[31:0] x:R:G:B 8:8:8:8 little endian`, ein Pixel ist also ein 32-Bit-Wort der Form `0x00RRGGBB`.
+`FB_FOURCC_XR24` = `0x34325258`. Beleg: Linux `include/uapi/drm/drm_fourcc.h`, `DRM_FORMAT_XRGB8888 = fourcc_code('X','R','2','4')` mit `fourcc_code(a,b,c,d) = a | b<<8 | c<<16 | d<<24`. Der Kommentar dort lautet `[31:0] x:R:G:B 8:8:8:8 little endian`, ein Pixel ist also ein 32-Bit-Wort der Form `0x00RRGGBB`. Seit dem 14.09.2026 hat der interne Renderpuffer dieselbe Anordnung mit dem Alphakanal im obersten Byte (`0xAARRGGBB`, Konstanten `CH_SHIFT_B` 0, `CH_SHIFT_G` 8, `CH_SHIFT_R` 16, `CH_SHIFT_A` 24), so dass `fb_present` eine reine Kopie ist. Die Ausgabe ignoriert das X-Byte, deshalb darf dort das Alpha stehen.
 
 Auflösung 640 mal 480, Stride 2560 Byte, Gesamtgröße 1.228.800 Byte, also `0x12c000`. `fb_memory` liegt seit Einführung der MMU auf einer 2-MB-Grenze, die konkrete Adresse verschiebt sich mit dem Codeumfang und ist über `aarch64-elf-nm` nachprüfbar.
 
