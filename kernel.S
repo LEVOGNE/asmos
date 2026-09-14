@@ -171,6 +171,62 @@
 
 .equ VIRTIO_ID_INPUT,       18
 .equ VIRTIO_ID_BLOCK,       2
+.equ VIRTIO_ID_NET,         1
+.equ VIRTIO_NET_F_MAC,      (1 << 5)
+.equ NET_HDR_SIZE,          12
+.equ NET_QUEUE_SIZE,        8
+.equ NET_QUEUE_MASK,        7
+.equ NET_BUF_SIZE,          2048
+.equ NET_QUEUE_RX,          0
+.equ NET_QUEUE_TX,          1
+.equ NET_TIMEOUT,           0x1000000
+.equ ETH_DST,               0
+.equ ETH_SRC,               6
+.equ ETH_TYPE,              12
+.equ ETH_HDR_SIZE,          14
+.equ ETH_TYPE_IP,           0x0800
+.equ ETH_TYPE_ARP,          0x0806
+.equ ARP_HTYPE,             0
+.equ ARP_PTYPE,             2
+.equ ARP_HLEN,              4
+.equ ARP_PLEN,              5
+.equ ARP_OPER,              6
+.equ ARP_SHA,               8
+.equ ARP_SPA,               14
+.equ ARP_THA,               18
+.equ ARP_TPA,               24
+.equ ARP_SIZE,              28
+.equ ARP_OP_REQUEST,        1
+.equ ARP_OP_REPLY,          2
+.equ IP_VER_IHL,            0
+.equ IP_TOTAL_LEN,          2
+.equ IP_ID,                 4
+.equ IP_FLAGS,              6
+.equ IP_TTL,                8
+.equ IP_PROTO,              9
+.equ IP_CHECKSUM,           10
+.equ IP_SRC,                12
+.equ IP_DST,                16
+.equ IP_HDR_SIZE,           20
+.equ IP_VERSION_4,          0x45
+.equ IP_TTL_DEFAULT,        64
+.equ IP_PROTO_ICMP,         1
+.equ ICMP_TYPE,             0
+.equ ICMP_CODE,             1
+.equ ICMP_CHECKSUM,         2
+.equ ICMP_ID,               4
+.equ ICMP_SEQ,              6
+.equ ICMP_HDR_SIZE,         8
+.equ ICMP_ECHO_REPLY,       0
+.equ ICMP_ECHO_REQUEST,     8
+.equ ICMP_PAYLOAD,          32
+.equ NET_IP_SELF,           0x0a00020f
+.equ NET_IP_GATEWAY,        0x0a000202
+.equ NET_STATE_IDLE,        0
+.equ NET_STATE_ARP_SENT,    1
+.equ NET_STATE_ARP_OK,      2
+.equ NET_STATE_PING_SENT,   3
+.equ NET_STATE_PING_OK,     4
 
 .equ BLK_T_IN,              0
 .equ BLK_T_OUT,             1
@@ -798,6 +854,7 @@ boot_fade_ok:
 .endif
     bl      timer_init
     msr     daifclr, #DAIF_I
+    bl      net_init
 
 .if BOOT_SELFTEST
     brk     #0
@@ -2955,6 +3012,11 @@ power_device_off:
 power_device_blk:
     ladr    x0, blk_base
     ldr     x0, [x0]
+    cbz     x0, power_device_net
+    bl      virtio_reset
+power_device_net:
+    ladr    x0, net_base
+    ldr     x0, [x0]
     cbz     x0, power_device_done
     bl      virtio_reset
 power_device_done:
@@ -4544,48 +4606,26 @@ virtio_reset_done:
 virtio_setup:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
-    str     x21, [sp, #32]
+    stp     x21, x22, [sp, #32]
     mov     x19, x0
-    mov     x20, x4
-    bl      virtio_reset
-    mov     w0, #VIRTIO_STATUS_ACK
-    str     w0, [x19, #VIRTIO_REG_STATUS]
-    mov     w0, #(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER)
-    str     w0, [x19, #VIRTIO_REG_STATUS]
-    mov     w0, #1
-    str     w0, [x19, #VIRTIO_REG_DEV_FEAT_SEL]
-    ldr     w0, [x19, #VIRTIO_REG_DEV_FEAT]
-    tst     w0, #VIRTIO_FEAT_VERSION_1_BIT
-    b.eq    virtio_setup_fail
-    mov     w0, #1
-    str     w0, [x19, #VIRTIO_REG_DRV_FEAT_SEL]
-    mov     w0, #VIRTIO_FEAT_VERSION_1_BIT
-    str     w0, [x19, #VIRTIO_REG_DRV_FEAT]
-    str     wzr, [x19, #VIRTIO_REG_DRV_FEAT_SEL]
-    str     wzr, [x19, #VIRTIO_REG_DRV_FEAT]
-    mov     w0, #(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK)
-    str     w0, [x19, #VIRTIO_REG_STATUS]
-    ldr     w0, [x19, #VIRTIO_REG_STATUS]
-    tst     w0, #VIRTIO_STATUS_FEATURES_OK
-    b.eq    virtio_setup_fail
-    str     wzr, [x19, #VIRTIO_REG_QUEUE_SEL]
-    ldr     w0, [x19, #VIRTIO_REG_QUEUE_NUM_MAX]
-    cmp     w0, w20
-    b.lo    virtio_setup_fail
-    str     w20, [x19, #VIRTIO_REG_QUEUE_NUM]
-    str     w1, [x19, #VIRTIO_REG_DESC_LOW]
-    lsr     x21, x1, #32
-    str     w21, [x19, #VIRTIO_REG_DESC_HIGH]
-    str     w2, [x19, #VIRTIO_REG_AVAIL_LOW]
-    lsr     x21, x2, #32
-    str     w21, [x19, #VIRTIO_REG_AVAIL_HIGH]
-    str     w3, [x19, #VIRTIO_REG_USED_LOW]
-    lsr     x21, x3, #32
-    str     w21, [x19, #VIRTIO_REG_USED_HIGH]
-    mov     w0, #1
-    str     w0, [x19, #VIRTIO_REG_QUEUE_READY]
+    mov     x20, x1
+    mov     x21, x2
+    mov     x22, x3
+    stp     x4, x5, [sp, #-16]!
+    mov     w1, #0
+    bl      virtio_negotiate
+    ldp     x4, x5, [sp], #16
+    cbnz    w0, virtio_setup_fail
+    mov     w5, w4
+    mov     x0, x19
+    mov     w1, #0
+    mov     x2, x20
+    mov     x3, x21
+    mov     x4, x22
+    bl      virtio_queue_setup
+    cbnz    w0, virtio_setup_fail
     mov     w0, #0
-    ldr     x21, [sp, #32]
+    ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
     ret
@@ -4595,9 +4635,74 @@ virtio_setup_fail:
     str     w0, [x19, #VIRTIO_REG_STATUS]
     dsb     sy
     mov     w0, #1
-    ldr     x21, [sp, #32]
+    ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
+    ret
+
+virtio_negotiate:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, w1
+    bl      virtio_reset
+    mov     w0, #VIRTIO_STATUS_ACK
+    str     w0, [x19, #VIRTIO_REG_STATUS]
+    mov     w0, #(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER)
+    str     w0, [x19, #VIRTIO_REG_STATUS]
+    mov     w0, #1
+    str     w0, [x19, #VIRTIO_REG_DEV_FEAT_SEL]
+    ldr     w0, [x19, #VIRTIO_REG_DEV_FEAT]
+    tst     w0, #VIRTIO_FEAT_VERSION_1_BIT
+    b.eq    virtio_negotiate_fail
+    str     wzr, [x19, #VIRTIO_REG_DEV_FEAT_SEL]
+    ldr     w0, [x19, #VIRTIO_REG_DEV_FEAT]
+    and     w20, w20, w0
+    mov     w0, #1
+    str     w0, [x19, #VIRTIO_REG_DRV_FEAT_SEL]
+    mov     w0, #VIRTIO_FEAT_VERSION_1_BIT
+    str     w0, [x19, #VIRTIO_REG_DRV_FEAT]
+    str     wzr, [x19, #VIRTIO_REG_DRV_FEAT_SEL]
+    str     w20, [x19, #VIRTIO_REG_DRV_FEAT]
+    mov     w0, #(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK)
+    str     w0, [x19, #VIRTIO_REG_STATUS]
+    ldr     w0, [x19, #VIRTIO_REG_STATUS]
+    tst     w0, #VIRTIO_STATUS_FEATURES_OK
+    b.eq    virtio_negotiate_fail
+    mov     w0, #0
+    mov     w1, w20
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+virtio_negotiate_fail:
+    mov     w0, #1
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+virtio_queue_setup:
+    str     w1, [x0, #VIRTIO_REG_QUEUE_SEL]
+    ldr     w9, [x0, #VIRTIO_REG_QUEUE_NUM_MAX]
+    cmp     w9, w5
+    b.lo    virtio_queue_setup_fail
+    str     w5, [x0, #VIRTIO_REG_QUEUE_NUM]
+    str     w2, [x0, #VIRTIO_REG_DESC_LOW]
+    lsr     x9, x2, #32
+    str     w9, [x0, #VIRTIO_REG_DESC_HIGH]
+    str     w3, [x0, #VIRTIO_REG_AVAIL_LOW]
+    lsr     x9, x3, #32
+    str     w9, [x0, #VIRTIO_REG_AVAIL_HIGH]
+    str     w4, [x0, #VIRTIO_REG_USED_LOW]
+    lsr     x9, x4, #32
+    str     w9, [x0, #VIRTIO_REG_USED_HIGH]
+    mov     w9, #1
+    str     w9, [x0, #VIRTIO_REG_QUEUE_READY]
+    mov     w0, #0
+    ret
+
+virtio_queue_setup_fail:
+    mov     w0, #1
     ret
 
 virtio_driver_ok:
@@ -4658,6 +4763,46 @@ mem_read16:
     add     x3, x1, #1
     ldrb    w3, [x0, x3]
     orr     w0, w2, w3, lsl #8
+    ret
+
+mem_read16be:
+    ldrb    w2, [x0, x1]
+    add     x3, x1, #1
+    ldrb    w3, [x0, x3]
+    orr     w0, w3, w2, lsl #8
+    ret
+
+mem_read32be:
+    ldrb    w2, [x0, x1]
+    add     x3, x1, #1
+    ldrb    w4, [x0, x3]
+    orr     w2, w4, w2, lsl #8
+    add     x3, x1, #2
+    ldrb    w4, [x0, x3]
+    orr     w2, w4, w2, lsl #8
+    add     x3, x1, #3
+    ldrb    w4, [x0, x3]
+    orr     w0, w4, w2, lsl #8
+    ret
+
+mem_write16be:
+    lsr     w3, w2, #8
+    strb    w3, [x0, x1]
+    add     x3, x1, #1
+    strb    w2, [x0, x3]
+    ret
+
+mem_write32be:
+    lsr     w3, w2, #24
+    strb    w3, [x0, x1]
+    add     x3, x1, #1
+    lsr     w4, w2, #16
+    strb    w4, [x0, x3]
+    add     x3, x1, #2
+    lsr     w4, w2, #8
+    strb    w4, [x0, x3]
+    add     x3, x1, #3
+    strb    w2, [x0, x3]
     ret
 
 mem_read32:
@@ -7247,6 +7392,7 @@ console_drain_release:
     cbz     w0, console_drain_mouse
     bl      power_off
 console_drain_mouse:
+    bl      net_poll
     ladr    x0, mouse_dirty
     bl      console_take_flag
     cbz     w0, console_drain_anim
@@ -7486,11 +7632,18 @@ uart_putdec_out:
     ret
 
 uart_puthex:
+    mov     w1, #HEX_START_SHIFT
+    b       uart_puthex_from
+
+uart_puthex8:
+    mov     w1, #HEX_SHIFT_STEP
+
+uart_puthex_from:
     stp     x29, x30, [sp, #-48]!
     str     x19, [sp, #16]
     str     x20, [sp, #24]
     mov     x19, x0
-    mov     w20, #HEX_START_SHIFT
+    mov     w20, w1
 
 uart_puthex_loop:
     lsr     x0, x19, x20
@@ -7510,6 +7663,559 @@ uart_puthex_digit:
     ret
 
 .ltorg
+
+
+net_init:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x0, #VIRTIO_ID_NET
+    bl      virtio_find
+    cbz     x0, net_init_missing
+    mov     x19, x0
+    ladr    x1, net_base
+    str     x19, [x1]
+    mov     w1, #VIRTIO_NET_F_MAC
+    bl      virtio_negotiate
+    cbnz    w0, net_init_fail
+    tst     w1, #VIRTIO_NET_F_MAC
+    b.eq    net_init_fail
+    mov     x0, x19
+    mov     w1, #NET_QUEUE_RX
+    ladr    x2, net_rx_desc
+    ladr    x3, net_rx_avail
+    ladr    x4, net_rx_used
+    mov     w5, #NET_QUEUE_SIZE
+    bl      virtio_queue_setup
+    cbnz    w0, net_init_fail
+    mov     x0, x19
+    mov     w1, #NET_QUEUE_TX
+    ladr    x2, net_tx_desc
+    ladr    x3, net_tx_avail
+    ladr    x4, net_tx_used
+    mov     w5, #NET_QUEUE_SIZE
+    bl      virtio_queue_setup
+    cbnz    w0, net_init_fail
+    ladr    x1, net_mac
+    mov     w2, #0
+
+net_init_mac:
+    add     x3, x19, #VIRTIO_REG_CONFIG
+    ldrb    w4, [x3, x2]
+    strb    w4, [x1, x2]
+    add     w2, w2, #1
+    cmp     w2, #6
+    b.lo    net_init_mac
+    mov     x0, x19
+    bl      virtio_driver_ok
+    bl      net_rx_fill
+    ladr    x0, net_ready_msg
+    bl      uart_puts
+    ladr    x0, net_mac
+    bl      net_put_mac
+    ladr    x0, uart_newline
+    bl      uart_puts
+    bl      net_arp_request
+    b       net_init_done
+
+net_init_fail:
+    mov     w0, #VIRTIO_STATUS_FAILED
+    str     w0, [x19, #VIRTIO_REG_STATUS]
+    dsb     sy
+    ladr    x0, net_base
+    str     xzr, [x0]
+    ladr    x0, net_fail_msg
+    bl      uart_puts
+    b       net_init_done
+
+net_init_missing:
+    ladr    x0, net_missing_msg
+    bl      uart_puts
+
+net_init_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+net_put_mac:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, #0
+
+net_put_mac_loop:
+    ldrb    w0, [x19, x20]
+    bl      uart_puthex8
+    add     w20, w20, #1
+    cmp     w20, #6
+    b.hs    net_put_mac_done
+    mov     w0, #0x3a
+    bl      uart_putc
+    b       net_put_mac_loop
+
+net_put_mac_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+net_rx_fill:
+    ladr    x0, net_rx_desc
+    ladr    x1, net_rx_avail
+    ladr    x2, net_rx_buf
+    mov     w3, #0
+
+net_rx_fill_loop:
+    mov     x4, #VRING_DESC_SIZE
+    madd    x4, x3, x4, x0
+    mov     x5, #NET_BUF_SIZE
+    madd    x6, x3, x5, x2
+    str     x6, [x4, #VRING_DESC_ADDR]
+    str     w5, [x4, #VRING_DESC_LEN]
+    mov     w6, #VRING_DESC_F_WRITE
+    strh    w6, [x4, #VRING_DESC_FLAGS]
+    strh    wzr, [x4, #VRING_DESC_NEXT]
+    add     x4, x1, #VRING_AVAIL_RING
+    strh    w3, [x4, x3, lsl #1]
+    add     w3, w3, #1
+    cmp     w3, #NET_QUEUE_SIZE
+    b.lo    net_rx_fill_loop
+    dsb     sy
+    strh    w3, [x1, #VRING_AVAIL_IDX]
+    dsb     sy
+    ladr    x0, net_base
+    ldr     x0, [x0]
+    mov     w1, #NET_QUEUE_RX
+    str     w1, [x0, #VIRTIO_REG_QUEUE_NOTIFY]
+    ret
+
+net_rx_requeue:
+    ladr    x1, net_rx_avail
+    ldrh    w2, [x1, #VRING_AVAIL_IDX]
+    and     w3, w2, #NET_QUEUE_MASK
+    add     x4, x1, #VRING_AVAIL_RING
+    strh    w0, [x4, x3, lsl #1]
+    dsb     sy
+    add     w2, w2, #1
+    strh    w2, [x1, #VRING_AVAIL_IDX]
+    dsb     sy
+    ladr    x0, net_base
+    ldr     x0, [x0]
+    mov     w1, #NET_QUEUE_RX
+    str     w1, [x0, #VIRTIO_REG_QUEUE_NOTIFY]
+    ret
+
+net_poll:
+    ladr    x0, net_base
+    ldr     x0, [x0]
+    cbz     x0, net_poll_none
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+
+net_poll_loop:
+    ladr    x19, net_rx_used
+    dsb     sy
+    ldrh    w0, [x19, #VRING_USED_IDX]
+    ladr    x1, net_rx_last
+    ldrh    w1, [x1]
+    cmp     w0, w1
+    b.eq    net_poll_done
+    and     w2, w1, #NET_QUEUE_MASK
+    add     x3, x19, #VRING_USED_RING
+    add     x3, x3, x2, lsl #3
+    ldr     w20, [x3]
+    ldr     w2, [x3, #4]
+    add     w1, w1, #1
+    ladr    x3, net_rx_last
+    strh    w1, [x3]
+    cmp     w20, #NET_QUEUE_SIZE
+    b.hs    net_poll_bad
+    subs    w2, w2, #NET_HDR_SIZE
+    b.le    net_poll_requeue
+    ladr    x0, net_rx_buf
+    mov     x1, #NET_BUF_SIZE
+    madd    x0, x20, x1, x0
+    add     x0, x0, #NET_HDR_SIZE
+    mov     w1, w2
+    bl      net_receive
+
+net_poll_requeue:
+    mov     w0, w20
+    bl      net_rx_requeue
+    b       net_poll_loop
+
+net_poll_bad:
+    ladr    x0, virtio_baddesc_msg
+    bl      uart_puts
+
+net_poll_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+
+net_poll_none:
+    ret
+
+net_send:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    add     w19, w0, #NET_HDR_SIZE
+    ladr    x0, net_tx_buf
+    str     xzr, [x0]
+    str     wzr, [x0, #8]
+    ladr    x1, net_tx_desc
+    str     x0, [x1, #VRING_DESC_ADDR]
+    str     w19, [x1, #VRING_DESC_LEN]
+    strh    wzr, [x1, #VRING_DESC_FLAGS]
+    strh    wzr, [x1, #VRING_DESC_NEXT]
+    ladr    x1, net_tx_avail
+    ldrh    w2, [x1, #VRING_AVAIL_IDX]
+    add     x3, x1, #VRING_AVAIL_RING
+    and     w4, w2, #NET_QUEUE_MASK
+    strh    wzr, [x3, x4, lsl #1]
+    dsb     sy
+    add     w2, w2, #1
+    strh    w2, [x1, #VRING_AVAIL_IDX]
+    dsb     sy
+    ladr    x0, net_base
+    ldr     x0, [x0]
+    mov     w1, #NET_QUEUE_TX
+    str     w1, [x0, #VIRTIO_REG_QUEUE_NOTIFY]
+    ladr    x3, net_tx_used
+    mov     x4, #NET_TIMEOUT
+
+net_send_wait:
+    dsb     sy
+    ldrh    w5, [x3, #VRING_USED_IDX]
+    cmp     w5, w2
+    b.eq    net_send_done
+    subs    x4, x4, #1
+    b.ne    net_send_wait
+    ladr    x0, net_tx_timeout_msg
+    bl      uart_puts
+
+net_send_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+net_frame_begin:
+    ladr    x2, net_tx_buf
+    add     x2, x2, #NET_HDR_SIZE
+    ldr     w3, [x0]
+    str     w3, [x2, #ETH_DST]
+    ldrh    w3, [x0, #4]
+    strh    w3, [x2, #(ETH_DST + 4)]
+    ladr    x3, net_mac
+    ldr     w4, [x3]
+    str     w4, [x2, #ETH_SRC]
+    ldrh    w4, [x3, #4]
+    strh    w4, [x2, #(ETH_SRC + 4)]
+    mov     x0, x2
+    mov     x3, x1
+    mov     x1, #ETH_TYPE
+    mov     w2, w3
+    stp     x29, x30, [sp, #-32]!
+    str     x0, [sp, #16]
+    bl      mem_write16be
+    ldr     x0, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    add     x0, x0, #ETH_HDR_SIZE
+    ret
+
+net_arp_build:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, w1
+    mov     x0, x19
+    mov     x1, #ARP_HTYPE
+    mov     w2, #1
+    bl      mem_write16be
+    mov     x0, x19
+    mov     x1, #ARP_PTYPE
+    mov     w2, #ETH_TYPE_IP
+    bl      mem_write16be
+    mov     w0, #6
+    strb    w0, [x19, #ARP_HLEN]
+    mov     w0, #4
+    strb    w0, [x19, #ARP_PLEN]
+    mov     x0, x19
+    mov     x1, #ARP_OPER
+    mov     w2, w20
+    bl      mem_write16be
+    ladr    x1, net_mac
+    ldr     w2, [x1]
+    str     w2, [x19, #ARP_SHA]
+    ldrh    w2, [x1, #4]
+    strh    w2, [x19, #(ARP_SHA + 4)]
+    mov     x0, x19
+    mov     x1, #ARP_SPA
+    ldr     w2, =NET_IP_SELF
+    bl      mem_write32be
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+net_arp_request:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x0, net_mac_broadcast
+    mov     w1, #ETH_TYPE_ARP
+    bl      net_frame_begin
+    mov     x19, x0
+    mov     w1, #ARP_OP_REQUEST
+    bl      net_arp_build
+    str     wzr, [x19, #ARP_THA]
+    strh    wzr, [x19, #(ARP_THA + 4)]
+    mov     x0, x19
+    mov     x1, #ARP_TPA
+    ldr     w2, =NET_IP_GATEWAY
+    bl      mem_write32be
+    mov     w0, #(ETH_HDR_SIZE + ARP_SIZE)
+    bl      net_send
+    ladr    x0, net_state
+    mov     w1, #NET_STATE_ARP_SENT
+    strb    w1, [x0]
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+net_receive:
+    cmp     w1, #ETH_HDR_SIZE
+    b.lo    net_receive_done
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, w1
+    mov     x1, #ETH_TYPE
+    bl      mem_read16be
+    cmp     w0, #ETH_TYPE_ARP
+    b.eq    net_receive_arp
+    cmp     w0, #ETH_TYPE_IP
+    b.eq    net_receive_ip
+    b       net_receive_end
+
+net_receive_arp:
+    add     x0, x19, #ETH_HDR_SIZE
+    sub     w1, w20, #ETH_HDR_SIZE
+    bl      net_arp_handle
+    b       net_receive_end
+
+net_receive_ip:
+    add     x0, x19, #ETH_HDR_SIZE
+    sub     w1, w20, #ETH_HDR_SIZE
+    bl      net_ip_handle
+
+net_receive_end:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+
+net_receive_done:
+    ret
+
+net_arp_handle:
+    cmp     w1, #ARP_SIZE
+    b.lo    net_arp_handle_ret
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x1, #ARP_TPA
+    bl      mem_read32be
+    ldr     w1, =NET_IP_SELF
+    cmp     w0, w1
+    b.ne    net_arp_handle_done
+    mov     x0, x19
+    mov     x1, #ARP_OPER
+    bl      mem_read16be
+    cmp     w0, #ARP_OP_REPLY
+    b.eq    net_arp_reply_in
+    cmp     w0, #ARP_OP_REQUEST
+    b.ne    net_arp_handle_done
+    add     x0, x19, #ARP_SHA
+    mov     w1, #ETH_TYPE_ARP
+    bl      net_frame_begin
+    mov     x20, x0
+    mov     w1, #ARP_OP_REPLY
+    bl      net_arp_build
+    ldr     w0, [x19, #ARP_SHA]
+    str     w0, [x20, #ARP_THA]
+    ldrh    w0, [x19, #(ARP_SHA + 4)]
+    strh    w0, [x20, #(ARP_THA + 4)]
+    ldr     w0, [x19, #ARP_SPA]
+    str     w0, [x20, #ARP_TPA]
+    mov     w0, #(ETH_HDR_SIZE + ARP_SIZE)
+    bl      net_send
+    b       net_arp_handle_done
+
+net_arp_reply_in:
+    mov     x0, x19
+    mov     x1, #ARP_SPA
+    bl      mem_read32be
+    ldr     w1, =NET_IP_GATEWAY
+    cmp     w0, w1
+    b.ne    net_arp_handle_done
+    ladr    x1, net_gw_mac
+    ldr     w0, [x19, #ARP_SHA]
+    str     w0, [x1]
+    ldrh    w0, [x19, #(ARP_SHA + 4)]
+    strh    w0, [x1, #4]
+    ladr    x0, net_arp_msg
+    bl      uart_puts
+    ladr    x0, net_gw_mac
+    bl      net_put_mac
+    ladr    x0, uart_newline
+    bl      uart_puts
+    ladr    x0, net_state
+    mov     w1, #NET_STATE_ARP_OK
+    strb    w1, [x0]
+    bl      net_ping_send
+
+net_arp_handle_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+
+net_arp_handle_ret:
+    ret
+
+net_checksum:
+    mov     w2, #0
+
+net_checksum_loop:
+    cmp     w1, #2
+    b.lo    net_checksum_tail
+    ldrb    w3, [x0], #1
+    ldrb    w4, [x0], #1
+    orr     w3, w4, w3, lsl #8
+    add     w2, w2, w3
+    sub     w1, w1, #2
+    b       net_checksum_loop
+
+net_checksum_tail:
+    cbz     w1, net_checksum_fold
+    ldrb    w3, [x0]
+    add     w2, w2, w3, lsl #8
+
+net_checksum_fold:
+    lsr     w3, w2, #16
+    cbz     w3, net_checksum_done
+    and     w2, w2, #0xffff
+    add     w2, w2, w3
+    b       net_checksum_fold
+
+net_checksum_done:
+    mvn     w0, w2
+    and     w0, w0, #0xffff
+    ret
+
+net_ping_send:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    ladr    x0, net_gw_mac
+    mov     w1, #ETH_TYPE_IP
+    bl      net_frame_begin
+    mov     x19, x0
+    mov     w0, #IP_VERSION_4
+    strb    w0, [x19, #IP_VER_IHL]
+    strb    wzr, [x19, #1]
+    mov     x0, x19
+    mov     x1, #IP_TOTAL_LEN
+    mov     w2, #(IP_HDR_SIZE + ICMP_HDR_SIZE + ICMP_PAYLOAD)
+    bl      mem_write16be
+    strh    wzr, [x19, #IP_ID]
+    strh    wzr, [x19, #IP_FLAGS]
+    mov     w0, #IP_TTL_DEFAULT
+    strb    w0, [x19, #IP_TTL]
+    mov     w0, #IP_PROTO_ICMP
+    strb    w0, [x19, #IP_PROTO]
+    strh    wzr, [x19, #IP_CHECKSUM]
+    mov     x0, x19
+    mov     x1, #IP_SRC
+    ldr     w2, =NET_IP_SELF
+    bl      mem_write32be
+    mov     x0, x19
+    mov     x1, #IP_DST
+    ldr     w2, =NET_IP_GATEWAY
+    bl      mem_write32be
+    mov     x0, x19
+    mov     w1, #IP_HDR_SIZE
+    bl      net_checksum
+    mov     w2, w0
+    mov     x0, x19
+    mov     x1, #IP_CHECKSUM
+    bl      mem_write16be
+    add     x20, x19, #IP_HDR_SIZE
+    mov     w0, #ICMP_ECHO_REQUEST
+    strb    w0, [x20, #ICMP_TYPE]
+    strb    wzr, [x20, #ICMP_CODE]
+    strh    wzr, [x20, #ICMP_CHECKSUM]
+    mov     x0, x20
+    mov     x1, #ICMP_ID
+    mov     w2, #0x0a5b
+    bl      mem_write16be
+    mov     x0, x20
+    mov     x1, #ICMP_SEQ
+    mov     w2, #1
+    bl      mem_write16be
+    mov     w0, #0
+
+net_ping_payload:
+    add     w1, w0, #0x61
+    add     x2, x20, #ICMP_HDR_SIZE
+    strb    w1, [x2, x0]
+    add     w0, w0, #1
+    cmp     w0, #ICMP_PAYLOAD
+    b.lo    net_ping_payload
+    mov     x0, x20
+    mov     w1, #(ICMP_HDR_SIZE + ICMP_PAYLOAD)
+    bl      net_checksum
+    mov     w2, w0
+    mov     x0, x20
+    mov     x1, #ICMP_CHECKSUM
+    bl      mem_write16be
+    mov     w0, #(ETH_HDR_SIZE + IP_HDR_SIZE + ICMP_HDR_SIZE + ICMP_PAYLOAD)
+    bl      net_send
+    ladr    x0, net_state
+    mov     w1, #NET_STATE_PING_SENT
+    strb    w1, [x0]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+net_ip_handle:
+    cmp     w1, #(IP_HDR_SIZE + ICMP_HDR_SIZE)
+    b.lo    net_ip_handle_ret
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, w1
+    ldrb    w0, [x19, #IP_VER_IHL]
+    cmp     w0, #IP_VERSION_4
+    b.ne    net_ip_handle_done
+    ldrb    w0, [x19, #IP_PROTO]
+    cmp     w0, #IP_PROTO_ICMP
+    b.ne    net_ip_handle_done
+    mov     x0, x19
+    mov     x1, #IP_DST
+    bl      mem_read32be
+    ldr     w1, =NET_IP_SELF
+    cmp     w0, w1
+    b.ne    net_ip_handle_done
+    ldrb    w0, [x19, #(IP_HDR_SIZE + ICMP_TYPE)]
+    cmp     w0, #ICMP_ECHO_REPLY
+    b.ne    net_ip_handle_done
+    ladr    x0, net_state
+    ldrb    w1, [x0]
+    cmp     w1, #NET_STATE_PING_SENT
+    b.ne    net_ip_handle_done
+    mov     w1, #NET_STATE_PING_OK
+    strb    w1, [x0]
+    ladr    x0, net_ping_msg
+    bl      uart_puts
+
+net_ip_handle_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+
+net_ip_handle_ret:
+    ret
 
 .section .text.vectors
 .balign VEC_TABLE_ALIGN
@@ -7913,6 +8619,20 @@ win_full_msg:
     .asciz  "WIN LISTE VOLL, Fenster verworfen\r\n"
 win_buffer_msg:
     .asciz  "WIN PUFFERBUDGET ERSCHOEPFT, Fenster zeichnet direkt\r\n"
+net_missing_msg:
+    .asciz  "NET UNAVAILABLE\r\n"
+net_fail_msg:
+    .asciz  "NET SETUP FAILED\r\n"
+net_ready_msg:
+    .asciz  "NET MAC "
+net_arp_msg:
+    .asciz  "ARP 10.0.2.2 = "
+net_ping_msg:
+    .asciz  "PING 10.0.2.2 ok\r\n"
+net_tx_timeout_msg:
+    .asciz  "NET TX TIMEOUT\r\n"
+net_mac_broadcast:
+    .byte   0xff, 0xff, 0xff, 0xff, 0xff, 0xff
 
 
 
@@ -8291,6 +9011,44 @@ virtio_events:
 .balign 16
 blk_base:
     .space  8
+
+.balign 16
+net_base:
+    .space  8
+net_mac:
+    .space  6
+net_gw_mac:
+    .space  6
+net_state:
+    .space  1
+.balign 2
+net_rx_last:
+    .space  2
+
+.balign 16
+net_rx_desc:
+    .space  (VRING_DESC_SIZE * NET_QUEUE_SIZE)
+.balign 16
+net_rx_avail:
+    .space  (VRING_AVAIL_RING + NET_QUEUE_SIZE * 2 + 2)
+.balign 16
+net_rx_used:
+    .space  (VRING_USED_RING + NET_QUEUE_SIZE * VRING_USED_ELEM_SIZE + 2)
+.balign 16
+net_tx_desc:
+    .space  (VRING_DESC_SIZE * NET_QUEUE_SIZE)
+.balign 16
+net_tx_avail:
+    .space  (VRING_AVAIL_RING + NET_QUEUE_SIZE * 2 + 2)
+.balign 16
+net_tx_used:
+    .space  (VRING_USED_RING + NET_QUEUE_SIZE * VRING_USED_ELEM_SIZE + 2)
+.balign 16
+net_rx_buf:
+    .space  (NET_BUF_SIZE * NET_QUEUE_SIZE)
+.balign 16
+net_tx_buf:
+    .space  NET_BUF_SIZE
 
 .balign 16
 blk_desc:

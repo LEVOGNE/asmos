@@ -1511,3 +1511,51 @@ Die Ablage liegt jetzt unter `~/.asmos/fonts/`, schreibgeschützt mit 444, und d
 `FONT_SRC` wird über `$(firstword $(wildcard ...))` aufgelöst und nimmt den neuen Ort zuerst, den alten Desktop-Pfad als Rückfall. Damit läuft ein Rechner, auf dem die Datei noch am alten Ort liegt, unverändert weiter und legt beim nächsten `make disk` von selbst die Sicherung an.
 
 Was bewusst **nicht** gemacht wurde: die Schrift ins Repository legen. Die Bezugsseite führt sie als kostenlos, das ist eine Kategorie und kein Lizenztext.
+
+## Netzwerk, Stufe 1 bis 3: virtio-net, ARP, ICMP (14.09.2026)
+
+### virtio-net
+
+Beleg: Virtual I/O Device (VIRTIO) Version 1.2, Kapitel 5.1 "Network Device".
+
+| Symbol im Code | Wert | Bedeutung | Fundstelle |
+|---|---|---|---|
+| `VIRTIO_ID_NET` | `1` | Device ID des Netzwerkgeräts | 5.1.1 Device ID |
+| `VIRTIO_NET_F_MAC` | `1 << 5` | Gerät stellt eine MAC-Adresse im Konfigurationsraum bereit | 5.1.3 Feature bits |
+| `NET_QUEUE_RX`, `NET_QUEUE_TX` | `0`, `1` | receiveq1 ist Queue 0, transmitq1 ist Queue 1 | 5.1.2 Virtqueues |
+| `VIRTIO_REG_CONFIG + 0` | 6 Byte | `struct virtio_net_config.mac`, gültig nur bei ausgehandeltem `VIRTIO_NET_F_MAC` | 5.1.4 Device configuration layout |
+| `NET_HDR_SIZE` | `12` | `struct virtio_net_hdr` mit `num_buffers`; bei `VIRTIO_F_VERSION_1` immer 12 Byte, nur der Legacy-Treiber ohne `MRG_RXBUF` hatte 10 | 5.1.6 Device Operation, Legacy Interface |
+| `NET_BUF_SIZE` | `2048` | Empfangspuffer. Ohne `VIRTIO_NET_F_MRG_RXBUF` muss jeder Puffer einen ganzen Rahmen fassen, mindestens 1526 Byte (12 Kopf + 1514 Rahmen) | 5.1.6.3 Setting Up Receive Buffers |
+
+Der Sendekopf wird genullt (`flags` 0, `gso_type` NONE, keine Prüfsummenauslagerung), weil keines der Offload-Features ausgehandelt wird. Die MAC wird byteweise gelesen; der Konfigurationsgenerationszähler wird nicht geprüft, weil die MAC statisch ist.
+
+Reihenfolge der Aushandlung wie bei Block und Eingabe (`virtio_negotiate`): Reset, ACKNOWLEDGE, DRIVER, Features lesen, `VIRTIO_F_VERSION_1` Pflicht, gewünschte niedrige Bits mit dem Angebot verschneiden, FEATURES_OK schreiben und zurücklesen, Queues (`virtio_queue_setup`), DRIVER_OK. Beleg: VIRTIO 1.2, 3.1.1 Driver Requirements: Device Initialization.
+
+### QEMU-Nutzermodus (slirp)
+
+Beleg: QEMU-Dokumentation "Using the user mode network stack" (`docs/system/devices/net.rst`), Abschnitt zu `-netdev user`.
+
+| Symbol im Code | Wert | Bedeutung |
+|---|---|---|
+| `NET_IP_SELF` | `10.0.2.15` | erste Adresse, die der DHCP-Server des Nutzermodus vergibt; bis DHCP gebaut ist, fest eingetragen |
+| `NET_IP_GATEWAY` | `10.0.2.2` | Gateway und Adresse des Hosts im Gastnetz |
+| MAC des Gateways | `52:55:0a:00:02:02` | Antwort auf die ARP-Anfrage, entspricht `52:55` gefolgt von der IP `0a:00:02:02` |
+
+Die Gast-MAC `52:54:00:12:34:56` ist die QEMU-Voreinstellung für die erste Netzwerkkarte. Beide MACs wurden am laufenden System bestätigt (`make check`).
+
+### Ethernet, ARP, IPv4, ICMP
+
+| Symbol im Code | Wert | Beleg |
+|---|---|---|
+| `ETH_TYPE_IP` `0x0800`, `ETH_TYPE_ARP` `0x0806` | EtherType | IEEE 802.3, IANA "IEEE 802 Numbers" |
+| Ethernet-Kopf: Ziel 0..5, Quelle 6..11, Typ 12..13 | 14 Byte | IEEE 802.3 |
+| ARP-Felder `HTYPE` 0, `PTYPE` 2, `HLEN` 4, `PLEN` 5, `OPER` 6, `SHA` 8, `SPA` 14, `THA` 18, `TPA` 24 | 28 Byte, HTYPE 1 = Ethernet, OPER 1 Anfrage, 2 Antwort | RFC 826 |
+| IPv4-Kopf: `VER_IHL` 0 (`0x45`), Gesamtlänge 2, ID 4, Flags 6, TTL 8, Protokoll 9, Prüfsumme 10, Quelle 12, Ziel 16 | 20 Byte, Protokoll 1 = ICMP | RFC 791 |
+| ICMP: Typ 0, Code 1, Prüfsumme 2, ID 4, Sequenz 6 | Typ 8 Echo Request, Typ 0 Echo Reply | RFC 792 |
+| Prüfsumme | Einerkomplement der 16-Bit-Summe im Netzwerkbyteorder, Übertrag zurückgefaltet, Prüfsummenfeld beim Rechnen 0 | RFC 1071 |
+
+Alle Mehrbytefelder werden über `mem_read16be`, `mem_read32be`, `mem_write16be`, `mem_write32be` byteweise in Netzwerkbyteorder gelesen und geschrieben; es gibt keinen Wortzugriff, der von der Ausrichtung des Rahmens abhängt.
+
+### Was noch fehlt
+
+Empfang läuft per Abfrage aus der Hauptschleife (`net_poll` in `console_drain`), geweckt vom 30-Hz-Zeitgeber, noch nicht per Interrupt. Senden wartet auf die Fertigmeldung des Geräts (`net_send`), ein Sendepuffer. IP-Fragmente, Optionen, Prüfsummen eingehender IP-Köpfe und ARP-Cache-Alterung sind nicht behandelt. DHCP, UDP, DNS und TCP folgen.
