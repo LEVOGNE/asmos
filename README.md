@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-26.408%20Byte-brightgreen?style=flat-square" alt="26408 Byte">
+<img src="https://img.shields.io/badge/Kernel-33.016%20Byte-brightgreen?style=flat-square" alt="33016 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>26.408&nbsp;Byte</b> groß, also <b>26&nbsp;KB</b>.<br>
+Das fertige System ist <b>33.016&nbsp;Byte</b> groß, also <b>33&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>196 KB · 8424 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>244 KB · 10547 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,11 +146,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 8424 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 10547 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **850 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1049 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -175,7 +175,7 @@ In `kernel.S` stecken **850 Sprungmarken**. Jede gehört zu einem Zuständigkeit
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **26.408 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **33.016 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -345,10 +345,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 204 KB in drei Dateien |
-| Zeilen Assembler | 8424 |
-| Sprungmarken | 850 |
-| **Fertiges Betriebssystem** | **26.408 Byte** |
+| Eigener Quelltext | 252 KB in drei Dateien |
+| Zeilen Assembler | 10547 |
+| Sprungmarken | 1049 |
+| **Fertiges Betriebssystem** | **33.016 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -466,3 +466,16 @@ Beim Anklicken eines Fensters wechselt die Titelleiste über 180 ms ihre Farbe. 
 Bild byteweise identisch, geprüft auch nach einem Fokuswechsel gegen den alten Kernel.
 
 **Nebenbei am Werkzeug repariert.** Die Szenarien starteten bisher nach einer festen Wartezeit von drei Sekunden. Unter `icount` läuft der Gast gedrosselt, und je nach Rechnerlast war der Start nach drei Sekunden noch nicht fertig; der Rest des Starts landete dann im Ergebnis des Szenarios. Jetzt startet QEMU angehalten, das Werkzeug verbindet sich mit der seriellen Leitung, lässt den Gast laufen und wartet auf `BOOT OK` plus vier Sekunden Ruhe. Erst dann beginnt die Eingabe. Dazu ein Szenario `click`, und ein Abbruch im Werkzeug beendet QEMU jetzt immer mit, statt ein Abbild gesperrt zurückzulassen.
+
+### Stand 14.09.2026, fünfte Runde: das Netzwerk kommt dazu
+
+Kein Optimierungslauf, sondern eine Messung nach neuer Funktion, damit die Zahlen ehrlich bleiben. Meilenstein 10 ist eingebaut: virtio-net, ARP, ICMP, UDP, DHCP, DNS und ein TCP-Client, der beim Start `HTTP/1.1 200 OK` von example.com holt.
+
+| Kennzahl | vor dem Netzwerk | mit Netzwerk |
+|---|---|---|
+| Größe des fertigen Systems | 26.408 Byte | **33.016 Byte** (+6.608 für sechs Protokolle, der Plan sah 35 bis 50 KB allein für TCP/IP vor) |
+| Zeilen Assembler | 8.424 | 10.547 |
+| Start bis Ruhe | 474 Mio. | 475 Mio., das gesamte Netzwerk beim Start (DHCP, ARP, Ping, DNS, TCP mit HTTP) kostet unter 1 Mio. Instruktionen, `net_send` allein 0,65 Mio. |
+| Arbeitsspeicher | 64,6 MB | 64,6 MB, plus 18 KB Empfangs- und Sendepuffer |
+
+Der Netzwerkverkehr fällt in der Messung nicht ins Gewicht. Was Zeit kostet, ist weiterhin das Bild.
