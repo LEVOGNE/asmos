@@ -8328,6 +8328,49 @@ net_checksum_done:
     and     w0, w0, #0xffff
     ret
 
+net_pseudo_sum:
+    lsr     w4, w0, #16
+    and     w0, w0, #0xffff
+    add     w4, w4, w0
+    lsr     w0, w1, #16
+    and     w1, w1, #0xffff
+    add     w4, w4, w0
+    add     w4, w4, w1
+    add     w4, w4, w2
+    add     w0, w4, w3
+    ret
+
+net_sum_check:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, w1
+    ladr    x0, net_last_src
+    ldr     w0, [x0]
+    ladr    x1, net_last_dst
+    ldr     w1, [x1]
+    mov     w3, w20
+    bl      net_pseudo_sum
+    mov     w2, w0
+    mov     x0, x19
+    mov     w1, w20
+    bl      net_checksum_seed
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+net_sum_fail:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     x19, x0
+    ladr    x0, net_sum_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_puts
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
 net_ip_begin:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
@@ -8485,8 +8528,14 @@ net_ip_handle:
     cmp     w20, w21
     b.lo    net_ip_handle_done
     mov     x0, x19
+    mov     w1, w21
+    bl      net_checksum
+    cbnz    w0, net_ip_handle_bad_ip
+    mov     x0, x19
     mov     x1, #IP_DST
     bl      mem_read32be
+    ladr    x1, net_last_dst
+    str     w0, [x1]
     ldr     w1, =NET_IP_BROADCAST
     cmp     w0, w1
     b.eq    net_ip_handle_proto
@@ -8509,9 +8558,13 @@ net_ip_handle_proto:
     b.eq    net_ip_handle_tcp
     cmp     w0, #IP_PROTO_ICMP
     b.ne    net_ip_handle_done
-    sub     w0, w20, w21
-    cmp     w0, #ICMP_HDR_SIZE
+    sub     w1, w20, w21
+    cmp     w1, #ICMP_HDR_SIZE
     b.lo    net_ip_handle_done
+    add     x0, x19, x21
+    mov     w2, #0
+    bl      net_checksum_seed
+    cbnz    w0, net_ip_handle_bad_icmp
     ldrb    w0, [x19, x21]
     cmp     w0, #ICMP_ECHO_REPLY
     b.ne    net_ip_handle_done
@@ -8536,7 +8589,27 @@ net_ip_handle_udp:
 net_ip_handle_tcp:
     add     x0, x19, x21
     sub     w1, w20, w21
+    mov     w2, #IP_PROTO_TCP
+    bl      net_sum_check
+    cbnz    w0, net_ip_handle_bad_tcp
+    add     x0, x19, x21
+    sub     w1, w20, w21
     bl      tcp_handle
+    b       net_ip_handle_done
+
+net_ip_handle_bad_ip:
+    ladr    x0, net_sum_ip_name
+    b       net_ip_handle_bad
+
+net_ip_handle_bad_icmp:
+    ladr    x0, net_sum_icmp_name
+    b       net_ip_handle_bad
+
+net_ip_handle_bad_tcp:
+    ladr    x0, net_sum_tcp_name
+
+net_ip_handle_bad:
+    bl      net_sum_fail
 
 net_ip_handle_done:
     ldr     x21, [sp, #32]
@@ -8560,6 +8633,18 @@ net_udp_handle:
     cmp     w0, w20
     b.hi    net_udp_handle_done
     mov     w20, w0
+    ldrh    w0, [x19, #UDP_CHECKSUM]
+    cbz     w0, net_udp_handle_port
+    mov     x0, x19
+    mov     w1, w20
+    mov     w2, #IP_PROTO_UDP
+    bl      net_sum_check
+    cbz     w0, net_udp_handle_port
+    ladr    x0, net_sum_udp_name
+    bl      net_sum_fail
+    b       net_udp_handle_done
+
+net_udp_handle_port:
     mov     x0, x19
     mov     x1, #UDP_DST
     bl      mem_read16be
@@ -9427,18 +9512,13 @@ tcp_send_copy:
 tcp_send_sum:
     ladr    x0, net_ip
     ldr     w0, [x0]
-    lsr     w2, w0, #16
-    and     w0, w0, #0xffff
-    add     w2, w2, w0
-    ldr     w0, [x25, #TCB_REMOTE_IP]
-    lsr     w1, w0, #16
-    add     w2, w2, w1
-    and     w0, w0, #0xffff
-    add     w2, w2, w0
-    add     w2, w2, #IP_PROTO_TCP
-    add     w1, w22, w21
-    add     w2, w2, w1
+    ldr     w1, [x25, #TCB_REMOTE_IP]
+    mov     w2, #IP_PROTO_TCP
+    add     w3, w22, w21
+    bl      net_pseudo_sum
+    mov     w2, w0
     mov     x0, x23
+    add     w1, w22, w21
     bl      net_checksum_seed
     mov     w2, w0
     mov     x0, x23
@@ -10232,6 +10312,16 @@ net_ready_msg:
     .asciz  "NET MAC "
 net_arp_msg:
     .asciz  "ARP 10.0.2.2 = "
+net_sum_msg:
+    .asciz  "NET PRUEFSUMME "
+net_sum_ip_name:
+    .asciz  "IP\r\n"
+net_sum_udp_name:
+    .asciz  "UDP\r\n"
+net_sum_tcp_name:
+    .asciz  "TCP\r\n"
+net_sum_icmp_name:
+    .asciz  "ICMP\r\n"
 net_ping_msg:
     .asciz  "PING 10.0.2.2 ok\r\n"
 net_tx_timeout_msg:
@@ -10705,6 +10795,8 @@ dns_tries:
     .space  1
 .balign 4
 net_last_src:
+    .space  4
+net_last_dst:
     .space  4
 net_intid:
     .space  4

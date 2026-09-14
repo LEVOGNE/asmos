@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-34.128%20Byte-brightgreen?style=flat-square" alt="34128 Byte">
+<img src="https://img.shields.io/badge/Kernel-34.424%20Byte-brightgreen?style=flat-square" alt="34424 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>34.128&nbsp;Byte</b> groß, also <b>33&nbsp;KB</b>.<br>
+Das fertige System ist <b>34.424&nbsp;Byte</b> groß, also <b>34&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>254 KB · 10895 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>256 KB · 10987 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,15 +146,15 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 10895 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 10987 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1081 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1095 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
-| `net_` `tcp_` `dhcp_` `dns_` `http_` | 214 | **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP mit Verbindungstabelle |
+| `net_` `tcp_` `dhcp_` `dns_` `http_` | 228 | **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP mit Verbindungstabelle |
 | `font_` `glyph_` | 117 | TrueType auswerten und über die Vektor-Engine zeichnen |
 | `win_` `dirty_` | 110 | Fenster, Stapelreihenfolge, Ziehen, Teilaktualisierung, Fensterpuffer |
 | `fb_` `cursor_` | 86 | Bildschirm, Bildpunkte, Mauszeiger |
@@ -176,7 +176,7 @@ In `kernel.S` stecken **1081 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **34.128 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **34.424 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -286,7 +286,7 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 7. Speicherverwaltung, MMU aktiv | ✅ |
 | 8. Datenträger und FAT32 lesend | ✅ |
 | 9. Fenstersystem | ✅ inklusive erstem Fensterinhalt |
-| 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP, DNS, TCP-Client mit Verbindungstabelle, Härtung teilweise |
+| 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP, DNS, TCP-Client mit Verbindungstabelle, eingehende Prüfsummen, Härtung teilweise |
 | 11. Verschlüsselte Verbindungen | offen |
 | 12. Vektorgrafik | ✅ Schrift, Zeiger und Icons, offen als Zeichenfläche für Anwendungen |
 | 13. Animationsschicht und Compositor | ✅ Animationen, Fensterpuffer als Ebenen, Gruppendeckkraft; Zoom und Drehung offen |
@@ -347,9 +347,9 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 | | |
 |---|---|
 | Eigener Quelltext | 260 KB in drei Dateien |
-| Zeilen Assembler | 10895 |
-| Sprungmarken | 1081 |
-| **Fertiges Betriebssystem** | **34.128 Byte** |
+| Zeilen Assembler | 10987 |
+| Sprungmarken | 1095 |
+| **Fertiges Betriebssystem** | **34.424 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -510,3 +510,16 @@ Bisher kannte der TCP-Teil genau eine Verbindung, deren Zustand in festen Variab
 | Netzarbeit nach Ende der Kette | keine | keine |
 
 Nachgewiesen mit einem Testbau, der beim Start fünf Verbindungen zu example.com öffnet: vier Mal `TCP VERBUNDEN`, vier Mal `HTTP HTTP/1.1 200 OK`, vier Mal `TCP GESCHLOSSEN`, ein Mal `TCP TABELLE VOLL`, keine Panik. Das Bild ist byteweise gleich der Referenz, denn am Bild hat sich nichts geändert.
+
+### Stand 14.09.2026, achte Runde: eingehende Prüfsummen
+
+Bisher prüfte das System nur, was es selbst sendet, und nahm jeden ankommenden Rahmen für bare Münze. Jetzt wird jede Prüfsumme nachgerechnet, bevor ein Paket verarbeitet wird: der IP-Kopf, ICMP, UDP (wenn der Absender eine Prüfsumme gesetzt hat, bei IPv4 ist sie freiwillig) und TCP. Ein Paket mit falscher Summe wird verworfen und auf der seriellen Leitung gemeldet, `NET PRUEFSUMME TCP` zum Beispiel, damit nichts still verschwindet. Die Rechnung für den Pseudokopf, den TCP und UDP in ihre Summe einbeziehen, gibt es dabei nur noch einmal (`net_pseudo_sum`), das Senden benutzt dieselbe Routine.
+
+| Kennzahl | vorher | nachher |
+|---|---|---|
+| Größe des fertigen Systems | 34.128 Byte | **34.424 Byte** (+296) |
+| geprüfte Rahmen beim Start | 0 | 3 UDP, 5 TCP, 1 ICMP, alle IP-Köpfe |
+| Netz-Interrupts über 10 s | 13 | 13 |
+| Netzarbeit nach Ende der Kette | keine | keine |
+
+Bewiesen mit vier Testbauten, die jeweils ein Byte eines ankommenden Pakets absichtlich verfälschen: Verfälschung im IP-Kopf stoppt alles bei `NET PRUEFSUMME IP`, im UDP-Teil bei `NET PRUEFSUMME UDP` (kein DHCP), im ICMP-Teil bei `NET PRUEFSUMME ICMP` (DHCP und ARP laufen, der Ping fehlt), im TCP-Teil bei `NET PRUEFSUMME TCP` (bis DNS läuft alles, die Antwort auf das SYN wird verworfen). Der unverfälschte Bau läuft die ganze Kette wie zuvor durch, das Bild ist byteweise gleich.

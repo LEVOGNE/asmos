@@ -1653,3 +1653,18 @@ Abbau: FIN der Gegenstelle in `ESTABLISHED` → FIN+ACK → `LAST_ACK`; in `FIN_
 Der Zeitgeber ist nur scharf, solange ein Platz wartet: `tcp_tick` gibt in `w0` zurück, ob ein Platz in `SYN_SENT`, `LAST_ACK`, `FIN_WAIT_1`, `FIN_WAIT_2` oder mit unbestätigten Daten ist; `net_tick` verknüpft das mit DHCP und DNS und schreibt `net_timer_armed` direkt (das frühere `net_timer_check` ist entfallen, im Füllraum von Vektoreintrag 3 liegt jetzt `net_put_ip`).
 
 Gemessen mit einem Testbau, der fünf Verbindungen gleichzeitig öffnet: vier `TCP VERBUNDEN`, vier `HTTP HTTP/1.1 200 OK`, vier `TCP GESCHLOSSEN`, einmal `TCP TABELLE VOLL`. Im normalen Bau über 10 s: 13 Interrupts, 5 gesendete Segmente, 2 Netz-Ticks, danach keine Netzarbeit.
+
+## Netzwerk, Härtung 3: eingehende Prüfsummen (14.09.2026)
+
+| Prüfung | Regel | Beleg |
+|---|---|---|
+| IP-Kopf | Einerkomplement-Summe über IHL × 4 Byte einschließlich Prüfsummenfeld muss 0 ergeben (`net_checksum` liefert das Komplement, also 0 bei gültigem Kopf) | RFC 791, Abschnitt 3.1 "Header Checksum"; RFC 1071, Abschnitt 1 |
+| ICMP | Summe über die gesamte ICMP-Nachricht (IP-Nutzlast) muss 0 ergeben | RFC 792, "Checksum" |
+| UDP | Summe über Pseudokopf (Quell-IP, Ziel-IP, 0, 17, UDP-Länge) und UDP-Länge Bytes muss 0 ergeben; Feld 0 bedeutet "keine Prüfsumme", dann keine Prüfung | RFC 768, "Checksum" |
+| TCP | Summe über Pseudokopf (Quell-IP, Ziel-IP, 0, 6, Segmentlänge) und das Segment muss 0 ergeben | RFC 793, Abschnitt 3.1 "Checksum" |
+
+Der Pseudokopf wird in `net_pseudo_sum(w0 Quell-IP, w1 Ziel-IP, w2 Protokoll, w3 Länge)` gebildet und als Startwert an `net_checksum_seed` übergeben; das Senden (`tcp_send`) benutzt dieselbe Routine. Die Ziel-IP des Pakets landet in `net_last_dst`, weil DHCP-Antworten an 255.255.255.255 gehen und die Summe mit der tatsächlichen Zieladresse gebildet werden muss, nicht mit der eigenen.
+
+Voraussetzung: virtio-net liefert vollständige Prüfsummen, weil `VIRTIO_NET_F_GUEST_CSUM` nicht ausgehandelt wird (VIRTIO 1.2, 5.1.6.4.1: ohne dieses Merkmal sind die Flags im Paketkopf 0 und die Prüfsummen gültig). Wird das Merkmal später für Beschleunigung ausgehandelt, muss die Prüfung `VIRTIO_NET_HDR_F_NEEDS_CSUM` auswerten.
+
+Ein verworfenes Paket meldet `NET PRUEFSUMME IP|ICMP|UDP|TCP`. Nachweis mit vier Testbauten, die je ein Byte im ankommenden Paket verfälschen (Bit 0 des TTL beziehungsweise des letzten Nutzlastbytes): jede Verfälschung wird an genau der erwarteten Stelle erkannt, der unverfälschte Bau läuft bis `HTTP HTTP/1.1 200 OK` durch. Über 10 s: 8 Aufrufe von `net_sum_check` (3 UDP, 5 TCP), 0 Fehlschläge.
