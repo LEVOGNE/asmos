@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-25.432%20Byte-brightgreen?style=flat-square" alt="25432 Byte">
+<img src="https://img.shields.io/badge/Kernel-26.352%20Byte-brightgreen?style=flat-square" alt="26352 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>25.432&nbsp;Byte</b> groß, also <b>25&nbsp;KB</b>.<br>
+Das fertige System ist <b>26.352&nbsp;Byte</b> groß, also <b>26&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -39,7 +39,7 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Ein Bild malen</b></td><td><b>3840 × 1600</b> Bildpunkte, intern 32 Bit je Punkt mit Alphakanal in der Byte-Reihenfolge der Ausgabe, Rechtecke, Text und Transparenz</td></tr>
 <tr><td><b>Schreiben</b></td><td><b>Eigener TrueType-Renderer.</b> Der Kernel liest eine Schriftdatei vom Datenträger, wertet ihre Tabellen aus, zerlegt die Bézierkurven, füllt die Flächen nach der Umlaufregel und glättet die Kanten. Jede Größe scharf, keine eingebauten Glyphen</td></tr>
 <tr><td><b>Eine Maus führen</b></td><td>Zeiger bewegt sich, überdeckter Hintergrund wird gesichert und sauber wiederhergestellt. Einfach-, Doppel- und Dreifachklick werden unterschieden</td></tr>
-<tr><td><b>Fenster zeigen</b></td><td>Fenster mit Titelleiste und TrueType-Beschriftung. Anklicken holt sie nach vorn, an der Titelleiste lassen sie sich ziehen. Neu gezeichnet wird nur, was sich wirklich geändert hat</td></tr>
+<tr><td><b>Fenster zeigen</b></td><td>Fenster mit Titelleiste und TrueType-Beschriftung. Anklicken holt sie nach vorn, an der Titelleiste lassen sie sich ziehen. Neu gezeichnet wird nur, was sich wirklich geändert hat. Jedes Fenster hält sein fertig gerastertes Bild in einem eigenen Puffer, Ziehen ist dadurch ein Kopieren, kein Neurastern</td></tr>
 <tr><td><b>Sich bewegen</b></td><td><b>Eigene Animationsschicht.</b> Fenster blenden ein, Fokuswechsel und Ziehen laufen weich statt sprunghaft. Zeitgesteuert, nicht bildzahlgesteuert, dadurch gleich schnell auf schneller und langsamer Maschine</td></tr>
 <tr><td><b>Speicher verwalten</b></td><td>Erkennt selbst, wie viel Arbeitsspeicher da ist, verwaltet ihn seitenweise und schaltet die Speicherverwaltungseinheit des Prozessors ein</td></tr>
 <tr><td><b>Dateien lesen</b></td><td>Spricht mit einem Datenträger und liest echte FAT32-Dateien, so wie ein USB-Stick sie enthält</td></tr>
@@ -116,7 +116,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>188 KB · 8157 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>196 KB · 8424 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -145,11 +145,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 8157 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 8424 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **828 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **850 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -174,7 +174,7 @@ In `kernel.S` stecken **828 Sprungmarken**. Jede gehört zu einem Zuständigkeit
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **25.432 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **26.352 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -184,7 +184,7 @@ In `kernel.S` stecken **828 Sprungmarken**. Jede gehört zu einem Zuständigkeit
 
 Keine dieser Dateien liegt in der Versionsverwaltung, sie entstehen alle neu aus dem Quelltext.
 
-Im Betrieb belegt der Kernel zusätzlich **47 MB** Arbeitsspeicher: 23,4 MB interner Bildpuffer und 23,4 MB Ausgabepuffer, beide mit 32 Bit je Punkt. Bis zum 14.09.2026 hatte der interne Puffer 64 Bit je Punkt und 46,9 MB, siehe Messwerte. Beim Start genullt wird davon nur der Ausgabepuffer, denn der interne wird ohnehin in der ersten Bildausgabe vollständig überschrieben. Das verkürzte die Nullung damals von 71,5 auf 24,2 MB und den Start um **81 %** im emulierten Betrieb.
+Im Betrieb belegt der Kernel zusätzlich **64,6 MB** Arbeitsspeicher: 23,4 MB interner Bildpuffer und 23,4 MB Ausgabepuffer, beide mit 32 Bit je Punkt, dazu 14,6 MB Fensterpuffer aus einem Budget von 16 MB. Bis zum 14.09.2026 hatte der interne Puffer 64 Bit je Punkt und 46,9 MB, siehe Messwerte. Beim Start genullt wird davon nur der Ausgabepuffer, denn der interne wird ohnehin in der ersten Bildausgabe vollständig überschrieben. Das verkürzte die Nullung damals von 71,5 auf 24,2 MB und den Start um **81 %** im emulierten Betrieb.
 
 ---
 
@@ -345,10 +345,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 | | |
 |---|---|
 | Eigener Quelltext | 204 KB in drei Dateien |
-| Zeilen Assembler | 8157 |
-| Sprungmarken | 828 |
-| **Fertiges Betriebssystem** | **25.432 Byte** |
-| Speicherbedarf im Betrieb | 49,9 MB, davon 99,5 % die beiden Bildpuffer |
+| Zeilen Assembler | 8424 |
+| Sprungmarken | 850 |
+| **Fertiges Betriebssystem** | **26.352 Byte** |
+| Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
 | Entwicklungsziel | QEMU `virt` |
@@ -426,3 +426,29 @@ Die zweite Zeile ist die erwartete doppelte Rundung: Die 91 % Deckkraft des gedr
 Zum Start: Die Zahl schwankt von Lauf zu Lauf um rund 10 %, weil die Anzahl der Teilausgaben des hereingleitenden Fensters vom Zeitgeber abhängt. Der Start besteht jetzt fast nur noch aus dem Einblenden: 13 Vollbilder mal 6,1 Mio. Bildpunkte, jeder mit dem Einblendfaktor multipliziert, 4,5 Befehle je Bildpunkt. Das ist die einzige Vollbild-Animation im System und läuft nur einmal.
 
 Beim Ziehschritt bleibt als größter Posten die Schrift (1,24 Mio., 31 %), dann Füllen (0,56 Mio.) und die Ausgabe (0,48 Mio.). Der nächste Schritt wäre der Fensterpuffer, der jetzt 4,3 MB je Fenster kostet statt 8,5.
+
+### Stand 14.09.2026, dritte Runde: der Fensterpuffer
+
+**Was gebaut wurde.** Jedes Fenster bekommt beim Anlegen einen Puffer in seiner eigenen Größe aus einem festen Budget von 16 MB. Sein Inhalt (Rahmen, Titelleiste, Fläche, Text, Dateiliste) wird nur dann gerastert, wenn er sich ändert, zum Beispiel beim Fokuswechsel, wenn die Titelleiste die Farbe wechselt. Beim Zeichnen des Bildschirms wird der Puffer an die aktuelle Position kopiert, 16 Bildpunkte je Befehl. Ist das Budget erschöpft, meldet der Kernel das über die serielle Schnittstelle, und das Fenster zeichnet direkt wie bisher, es geht also nichts verloren, nur die Beschleunigung.
+
+**Ist das noch Vektorgrafik?** Ja. Die Philosophie sagt, woher jede Form kommt: aus Kurven, gerastert auf dem Gerät in der gerade nötigen Größe. Sie sagt nicht, dass jede Form bei jedem Bild neu gerastert werden muss. Der Puffer ist ein Zwischenspeicher des Ergebnisses, der verworfen wird, sobald sich Inhalt oder Größe ändern. Im System ist weiterhin keine einzige fertige Bitmap gespeichert.
+
+**Nebeneffekt: echtes Einblenden.** Vorher wurde beim Einblenden eines Fensters jede Farbe einzeln mit dem Hintergrund gemischt, ein Fenster über einem anderen zeigte dabei kurz die Desktopfarbe durch. Jetzt wird das fertige Fensterbild als Ganzes mit seiner Deckkraft über das gelegt, was tatsächlich darunter liegt. Das ist die Ebenen-Struktur, die der Animationsplan für Stufe B fordert, und sie läuft über NEON mit 4 Bildpunkten je Schritt. Nachweis: Ein Bild mitten im Einblenden (Deckkraft 217 von 255) stimmt in 42.720 Stichproben exakt mit der Formel überein.
+
+**Ergebnis.** Das Endbild ist byteweise identisch mit der zweiten Runde, geprüft am Desktop und am gedrückten Mauszeiger.
+
+| Lastfall | Runde 2 | Runde 3 | Ersparnis | seit Beginn |
+|---|---|---|---|---|
+| ein Ziehschritt des Dateifensters | 4.052.089 | **1.399.301** | −65 % | **−93 %** |
+| eine Mausbewegung | 34.778 | 34.876 | unverändert | −65 % |
+| Start bis Ruhe | 457 Mio. | 474 Mio. | gleich, im Rahmen der Streuung | −60 % |
+| Arbeitsspeicher | 49,93 MB | 64,6 MB | **+14,6 MB** für drei Fensterpuffer | −13 % |
+| Größe des fertigen Systems | 25.432 Byte | 26.352 Byte | +920 Byte | +376 Byte |
+
+Ein Ziehschritt kostet emuliert jetzt rund 0,7 Millisekunden. Von den 1,4 Millionen Instruktionen sind 0,54 Mio. das Kopieren des Fensterbilds, 0,48 Mio. die Ausgabe, 0,08 Mio. die Hintergrundstreifen und 0,08 Mio. Schrift (die Titelleiste färbt sich beim Anklicken um, dafür wird der Puffer einmal neu gerastert).
+
+**Warum der Speicher wieder steigt.** Das ist der Preis des Puffers, im Bericht der ersten Runde angekündigt. Drei Fenster mit 1240x840, 1400x800 und 1600x1040 Bildpunkten belegen 14,6 MB. Das Budget von 16 MB ist eine feste Obergrenze, mehr kann der Puffer nie kosten.
+
+**Messgenauigkeit.** Die Differenzmessungen (`scenes`) laufen jetzt mit QEMU-`icount`, die Gastuhr hängt damit an der Instruktionszahl statt an der Wanduhr. Zwei Läufe unterscheiden sich um 0,006 % statt vorher bis zu 10 %. Das Startprofil läuft ohne `icount`, weil es sonst weniger Einblendbilder gäbe und die Zahl nicht mehr mit den früheren Runden vergleichbar wäre.
+
+**Was jetzt noch offen ist.** Nichts mehr auf der Leistungsseite. Ein Ziehschritt liegt unter einer Millisekunde, ab hier begrenzen der 30-Hz-Zeitgeber und die Abtastrate der Grafikausgabe, nicht der Prozessor. Die nächste Arbeit ist wieder ein Feature.

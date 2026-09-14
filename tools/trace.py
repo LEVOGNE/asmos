@@ -4,6 +4,7 @@ QEMU_VERSION = "11.1.1"
 QEMU_URL = f"https://download.qemu.org/qemu-{QEMU_VERSION}.tar.xz"
 QEMU_SHA256 = "079ffbff8a7111bbc89022107cbabf3bbfd614d5fc9d7cc675991196aca12482"
 PLUGINS = ("hotblocks", "hotpages", "execlog")
+ICOUNT_SHIFT = 2
 PIPELINE = ("fb_present", "fb_present_all", "cursor_hide", "cursor_show", "cursor_present",
             "cursor_render", "win_repaint_render", "win_repaint_present", "vg_fill", "anim_tick")
 
@@ -222,8 +223,9 @@ class Lauf:
                 os.remove(f)
         cmd = ["qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a72"] + self.p.geraete() + \
               ["-display", "none", "-serial", f"file:{self.serial}", "-monitor", "stdio",
-               "-qmp", f"unix:{self.qmp},server,nowait",
-               "-kernel", self.p.kernel(), "-plugin", plugin_arg, "-d", "plugin", "-D", self.log]
+               "-qmp", f"unix:{self.qmp},server,nowait"] + \
+              (["-icount", f"shift={ICOUNT_SHIFT},sleep=on"] if self.szenario else []) + \
+              ["-kernel", self.p.kernel(), "-plugin", plugin_arg, "-d", "plugin", "-D", self.log]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         if self.szenario:
             self.szenario.abspielen(Eingabe(self.qmp, self.szenario.breite, self.szenario.hoehe))

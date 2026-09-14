@@ -439,7 +439,10 @@
 .equ WIN_FOCUS,             40
 .equ WIN_ALPHA,             48
 .equ WIN_KIND,              56
-.equ WIN_SIZE,              64
+.equ WIN_BUF,               64
+.equ WIN_BUF_DIRTY,         72
+.equ WIN_SIZE,              80
+.equ WIN_BUF_BUDGET,        (16 * 1024 * 1024)
 
 .equ WIN_KIND_NONE,         0
 .equ WIN_KIND_FILES,        1
@@ -580,7 +583,11 @@
 .ifc \sym,__image_end
     ladr_far \reg, \sym
 .else
+.ifc \sym,win_buf_arena
+    ladr_far \reg, \sym
+.else
     adr     \reg, \sym
+.endif
 .endif
 .endif
 .endif
@@ -928,11 +935,13 @@ string_equal_no:
     ret
 
 fb_target_screen:
+    ladr    x0, fb_render
+    mov     x1, #FB_STRIDE
+
+fb_target_set:
     ladr    x9, fb_target
-    ladr    x10, fb_render
-    str     x10, [x9, #FB_TARGET_BASE]
-    mov     x10, #FB_STRIDE
-    str     x10, [x9, #FB_TARGET_STRIDE]
+    str     x0, [x9, #FB_TARGET_BASE]
+    str     x1, [x9, #FB_TARGET_STRIDE]
     ret
 
 fb_init:
@@ -1229,7 +1238,8 @@ fb_fill_rect_rest:
     b       fb_fill_rect_rest
 
 fb_fill_rect_next:
-    mov     x6, #FB_STRIDE
+    ladr    x6, fb_target
+    ldr     x6, [x6, #FB_TARGET_STRIDE]
     add     x5, x5, x6
     sub     w3, w3, #1
     b       fb_fill_rect_row
@@ -1311,35 +1321,158 @@ fb_fill_around_done:
     ldp     x29, x30, [sp], #80
     ret
 
-cursor_copy:
-cursor_copy_row:
-    cbz     w3, cursor_copy_done
+fb_copy:
+fb_copy_row:
+    cbz     w3, fb_copy_done
     mov     w6, w2
     mov     x7, x0
     mov     x8, x1
 
-cursor_copy_col16:
+fb_copy_col16:
     cmp     w6, #16
-    b.lo    cursor_copy_col
+    b.lo    fb_copy_col
     ld1     {v0.2d, v1.2d, v2.2d, v3.2d}, [x8], #64
     st1     {v0.2d, v1.2d, v2.2d, v3.2d}, [x7], #64
     sub     w6, w6, #16
-    b       cursor_copy_col16
+    b       fb_copy_col16
 
-cursor_copy_col:
-    cbz     w6, cursor_copy_next
+fb_copy_col:
+    cbz     w6, fb_copy_next
     ldr     w9, [x8], #FB_BPP
     str     w9, [x7], #FB_BPP
     sub     w6, w6, #1
-    b       cursor_copy_col
+    b       fb_copy_col
 
-cursor_copy_next:
+fb_copy_next:
     add     x0, x0, x4
     add     x1, x1, x5
     sub     w3, w3, #1
-    b       cursor_copy_row
+    b       fb_copy_row
 
-cursor_copy_done:
+fb_copy_done:
+    ret
+
+fb_rect_to_clip:
+    ladr    x9, fb_clip
+    ldp     w10, w11, [x9]
+    ldp     w12, w13, [x9, #8]
+    b       fb_rect_clip
+
+fb_copy_rect:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x2
+    mov     x20, x3
+    mov     w21, w0
+    mov     w22, w1
+    mov     w2, w4
+    mov     w3, w5
+    bl      fb_rect_to_clip
+    cbz     w2, fb_copy_rect_done
+    sub     w4, w0, w21
+    sub     w5, w1, w22
+    madd    x19, x5, x20, x19
+    add     x19, x19, x4, lsl #2
+    stp     x2, x3, [sp, #-16]!
+    bl      fb_pixel_addr
+    ldp     x2, x3, [sp], #16
+    mov     x1, x19
+    mov     x4, #FB_STRIDE
+    mov     x5, x20
+    bl      fb_copy
+
+fb_copy_rect_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+fb_blend_rect:
+    stp     x29, x30, [sp, #-96]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    stp     x27, x28, [sp, #80]
+    mov     x19, x2
+    mov     x20, x3
+    mov     w21, w0
+    mov     w22, w1
+    mov     x25, x6
+    mov     w2, w4
+    mov     w3, w5
+    bl      fb_rect_to_clip
+    cbz     w2, fb_blend_rect_done
+    sub     w4, w0, w21
+    sub     w5, w1, w22
+    madd    x19, x5, x20, x19
+    add     x19, x19, x4, lsl #2
+    mov     w21, w0
+    mov     w22, w1
+    mov     w23, w2
+    mov     w24, w3
+
+fb_blend_rect_row:
+    cbz     w24, fb_blend_rect_done
+    mov     w0, w21
+    mov     w1, w22
+    bl      fb_pixel_addr
+    mov     x26, x0
+    mov     x27, x19
+    mov     w28, w23
+    add     w0, w25, #CH_ROUND
+    lsr     w0, w0, #8
+    mov     w1, #CH_MAX
+    cmp     w0, w1
+    csel    w0, w1, w0, hi
+    sub     w1, w1, w0
+    dup     v6.16b, w0
+    dup     v7.16b, w1
+
+fb_blend_rect_col4:
+    cmp     w28, #4
+    b.lo    fb_blend_rect_col
+    ld1     {v0.16b}, [x27], #16
+    ld1     {v1.16b}, [x26]
+    umull   v2.8h, v0.8b, v6.8b
+    umull2  v3.8h, v0.16b, v6.16b
+    umlal   v2.8h, v1.8b, v7.8b
+    umlal2  v3.8h, v1.16b, v7.16b
+    movi    v4.8h, #CH_ROUND
+    add     v2.8h, v2.8h, v4.8h
+    add     v3.8h, v3.8h, v4.8h
+    usra    v2.8h, v2.8h, #8
+    usra    v3.8h, v3.8h, #8
+    shrn    v5.8b, v2.8h, #8
+    shrn2   v5.16b, v3.8h, #8
+    st1     {v5.16b}, [x26], #16
+    sub     w28, w28, #4
+    b       fb_blend_rect_col4
+
+fb_blend_rect_col:
+    cbz     w28, fb_blend_rect_next
+    mov     x0, x26
+    mov     x1, x25
+    ldr     w2, [x27], #FB_BPP
+    bl      fb_blend_pixel
+    add     x26, x26, #FB_BPP
+    sub     w28, w28, #1
+    b       fb_blend_rect_col
+
+fb_blend_rect_next:
+    add     x19, x19, x20
+    add     w22, w22, #1
+    sub     w24, w24, #1
+    b       fb_blend_rect_row
+
+fb_blend_rect_done:
+    ldp     x27, x28, [sp, #80]
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #96
     ret
 
 cursor_hide:
@@ -1357,7 +1490,7 @@ cursor_hide:
     ldr     w3, [x19, #CURSOR_STATE_H]
     mov     x4, #FB_STRIDE
     mov     x5, #(CURSOR_W * FB_BPP)
-    bl      cursor_copy
+    bl      fb_copy
     ldr     w0, [x19, #CURSOR_STATE_X]
     str     w0, [x19, #CURSOR_STATE_PREV_X]
     ldr     w0, [x19, #CURSOR_STATE_Y]
@@ -1407,7 +1540,7 @@ cursor_show:
     mov     w3, w23
     mov     x4, #(CURSOR_W * FB_BPP)
     mov     x5, #FB_STRIDE
-    bl      cursor_copy
+    bl      fb_copy
 
 cursor_show_draw:
     bl      mouse_get_buttons
@@ -1544,10 +1677,9 @@ cursor_render_clear:
     str     xzr, [x0], #8
     subs    x1, x1, #1
     b.ne    cursor_render_clear
-    ladr    x9, fb_target
-    str     x19, [x9, #FB_TARGET_BASE]
-    mov     x0, #CURSOR_STRIDE
-    str     x0, [x9, #FB_TARGET_STRIDE]
+    mov     x0, x19
+    mov     x1, #CURSOR_STRIDE
+    bl      fb_target_set
     mov     w0, #0
     mov     w1, #0
     mov     w2, #CURSOR_W
@@ -2427,6 +2559,8 @@ anim_apply_write:
 
 anim_apply_focus:
     str     x21, [x3, #WIN_FOCUS]
+    mov     w4, #1
+    strb    w4, [x3, #WIN_BUF_DIRTY]
     b       anim_apply_mark
 
 anim_apply_alpha:
@@ -2838,6 +2972,9 @@ power_off:
     ladr    x0, fb_render
     ldr     x1, =FB_SIZE
     bl      power_wipe
+    ladr    x0, win_buf_arena
+    mov     x1, #WIN_BUF_BUDGET
+    bl      power_wipe
     ladr    x0, fb_output
     ldr     x1, =OUT_SIZE
     bl      power_wipe
@@ -3010,6 +3147,38 @@ win_add:
     str     x12, [x11, #WIN_FOCUS]
     str     xzr, [x11, #WIN_ALPHA]
     str     w5, [x11, #WIN_KIND]
+    umull   x12, w2, w3
+    lsl     x12, x12, #2
+    add     x12, x12, #63
+    and     x12, x12, #-64
+    ladr    x13, win_buf_used
+    ldr     x14, [x13]
+    add     x15, x14, x12
+    mov     x16, #WIN_BUF_BUDGET
+    cmp     x15, x16
+    b.hi    win_add_no_buffer
+    ladr    x16, win_buf_arena
+    add     x16, x16, x14
+    str     x16, [x11, #WIN_BUF]
+    str     x15, [x13]
+    mov     w16, #1
+    strb    w16, [x11, #WIN_BUF_DIRTY]
+    b       win_add_buffer_done
+
+win_add_no_buffer:
+    str     xzr, [x11, #WIN_BUF]
+    strb    wzr, [x11, #WIN_BUF_DIRTY]
+    stp     x29, x30, [sp, #-32]!
+    stp     x9, x10, [sp, #16]
+    ladr    x0, win_buffer_msg
+    bl      uart_puts
+    ldp     x9, x10, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ladr    x11, win_list
+    mov     x12, #WIN_SIZE
+    madd    x11, x10, x12, x11
+
+win_add_buffer_done:
     ladr    x12, win_list
     mov     x13, #WIN_SIZE
     mov     w14, #0
@@ -3105,6 +3274,9 @@ win_fade_all_done:
 
 
 win_fade_color:
+    ladr    x1, win_color_fade
+    ldrb    w1, [x1]
+    cbz     w1, win_fade_color_none
     stp     x29, x30, [sp, #-16]!
     mov     x1, x0
     ldr     x2, [x19, #WIN_ALPHA]
@@ -3112,6 +3284,8 @@ win_fade_color:
     ldr     x0, =COLOR_BACKGROUND
     bl      win_mix_color
     ldp     x29, x30, [sp], #16
+
+win_fade_color_none:
     ret
 
 
@@ -3489,13 +3663,97 @@ win_draw_one:
     stp     x21, x22, [sp, #32]
     stp     x23, x24, [sp, #48]
     str     x25, [sp, #64]
+    mov     w20, w0
     ladr    x19, win_list
     mov     x9, #WIN_SIZE
     madd    x19, x0, x9, x19
-    mov     w20, w1
+    ldr     x23, [x19, #WIN_BUF]
+    cbz     x23, win_draw_one_direct
+    ldrb    w0, [x19, #WIN_BUF_DIRTY]
+    cbz     w0, win_draw_one_blit
+    ladr    x0, fb_clip
+    ldp     x24, x25, [x0]
+    mov     x0, x23
+    ldr     w1, [x19, #WIN_W]
+    lsl     x1, x1, #2
+    bl      fb_target_set
+    mov     w0, #0
+    mov     w1, #0
+    ldr     w2, [x19, #WIN_W]
+    ldr     w3, [x19, #WIN_H]
+    bl      fb_clip_set
+    ladr    x0, win_color_fade
+    strb    wzr, [x0]
+    mov     w0, w20
+    mov     w1, #0
+    mov     w2, #0
+    bl      win_draw_content
+    bl      fb_target_screen
+    mov     x0, x24
+    mov     x1, x25
+    bl      fb_clip_restore
+    strb    wzr, [x19, #WIN_BUF_DIRTY]
+
+win_draw_one_blit:
+    mov     w0, w20
     bl      win_rect
-    mov     w21, w0
-    mov     w22, w1
+    ldr     x4, [x19, #WIN_ALPHA]
+    asr     x4, x4, #16
+    cbz     x4, win_draw_one_done
+    mov     w5, w3
+    ldr     w3, [x19, #WIN_W]
+    lsl     w3, w3, #2
+    mov     x6, #FADE_ONE
+    cmp     x4, x6
+    mov     w4, w2
+    mov     x2, x23
+    b.hs    win_draw_one_copy
+    ldr     x6, [x19, #WIN_ALPHA]
+    asr     x6, x6, #16
+    mov     x7, #ALPHA_MAX
+    cmp     x6, x7
+    csel    x6, x7, x6, hi
+    bl      fb_blend_rect
+    b       win_draw_one_done
+
+win_draw_one_copy:
+    bl      fb_copy_rect
+    b       win_draw_one_done
+
+win_draw_one_direct:
+    ladr    x0, win_color_fade
+    mov     w1, #1
+    strb    w1, [x0]
+    mov     w0, w20
+    bl      win_rect
+    mov     w2, w1
+    mov     w1, w0
+    mov     w0, w20
+    bl      win_draw_content
+
+win_draw_one_done:
+    ldr     x25, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #80
+    ret
+
+win_draw_content:
+    stp     x29, x30, [sp, #-80]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    str     x25, [sp, #64]
+    ladr    x19, win_list
+    mov     x9, #WIN_SIZE
+    madd    x19, x0, x9, x19
+    mov     w21, w1
+    mov     w22, w2
+    mov     w0, w21
+    mov     w1, w22
+    ldr     w2, [x19, #WIN_W]
+    ldr     w3, [x19, #WIN_H]
     stp     x0, x1, [sp, #-32]!
     stp     x2, x3, [sp, #16]
     ldr     x0, =COLOR_WIN_BORDER
@@ -3547,7 +3805,7 @@ win_draw_one:
     bl      fb_fill_rect
     ldr     w9, [x19, #WIN_KIND]
     cmp     w9, #WIN_KIND_FILES
-    b.ne    win_draw_one_title
+    b.ne    win_draw_content_title
     add     w0, w21, #WIN_BORDER
     add     w1, w22, #(WIN_BORDER + WIN_TITLEBAR_H)
     ldr     w2, [x19, #WIN_W]
@@ -3559,7 +3817,7 @@ win_draw_one:
     bl      fb_clip_intersect
     mov     x24, x0
     mov     x25, x1
-    cbz     w2, win_draw_one_content_skip
+    cbz     w2, win_draw_content_skip
     ldr     x0, =COLOR_FILES_TEXT
     bl      win_fade_color
     mov     x3, x0
@@ -3568,13 +3826,13 @@ win_draw_one:
     ldr     x2, [sp, #24]
     bl      files_draw
 
-win_draw_one_content_skip:
+win_draw_content_skip:
     add     sp, sp, #32
     mov     x0, x24
     mov     x1, x25
     bl      fb_clip_restore
 
-win_draw_one_title:
+win_draw_content_title:
     add     w0, w21, #(WIN_BORDER + WIN_TEXT_PAD)
     add     w1, w22, #(WIN_BORDER + WIN_TITLEBAR_H - WIN_TEXT_PAD)
     ldr     x2, [x19, #WIN_TITLE]
@@ -7634,6 +7892,8 @@ power_fail_msg:
 
 win_full_msg:
     .asciz  "WIN LISTE VOLL, Fenster verworfen\r\n"
+win_buffer_msg:
+    .asciz  "WIN PUFFERBUDGET ERSCHOEPFT, Fenster zeichnet direkt\r\n"
 
 
 
@@ -7901,6 +8161,10 @@ win_count:
 .balign 8
 win_list:
     .space  (WIN_SIZE * WIN_MAX)
+win_buf_used:
+    .space  8
+win_color_fade:
+    .space  1
 
 .balign 8
 files_count:
@@ -8150,6 +8414,9 @@ cursor_sprite_pressed:
 .balign 64
 fb_render:
     .space  FB_SIZE
+.balign 64
+win_buf_arena:
+    .space  WIN_BUF_BUDGET
 
 .section .framebuffer, "aw", %nobits
 .balign BLOCK_SIZE
