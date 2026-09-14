@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-36.640%20Byte-brightgreen?style=flat-square" alt="36640 Byte">
+<img src="https://img.shields.io/badge/Kernel-39.176%20Byte-brightgreen?style=flat-square" alt="39176 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>36.640&nbsp;Byte</b> groß, also <b>36&nbsp;KB</b>.<br>
+Das fertige System ist <b>39.176&nbsp;Byte</b> groß, also <b>38&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>269 KB · 11463 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>282 KB · 11913 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,11 +146,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 11463 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 11913 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1150 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1218 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -164,7 +164,7 @@ In `kernel.S` stecken **1150 Sprungmarken**. Jede gehört zu einem Zuständigkei
 | `virtio_` `mouse_` `click_` | 73 | Gerätetreiber, Maus, Klickerkennung |
 | `vg_` `cov_` `edge_` `icon_` | 60 | **Vektor-Engine**: Pfade, Kurven, Füllung, Strich, Kantenglättung, Icons |
 | `console_` `string_` `out_` `power_` | 59 | Konsole, Textwerkzeuge, Herunterfahren |
-| `sha_` | 41 | **Kryptografie**: SHA-256 über die ARMv8-Erweiterung, Selbsttest gegen fünf Vektoren |
+| `sha_` `hmac_` `hkdf_` `crypto_` | 106 | **Kryptografie**: SHA-256 über die ARMv8-Erweiterung, HMAC, HKDF, Selbsttest gegen zwölf Vektoren beim Start |
 | `vec_` `panic_` `irq_` `gic_` | 37 | Fehlerbehandlung und Unterbrechungen |
 | `uart_` | 29 | Serielle Schnittstelle, Textausgabe, Tastatureingabe |
 | `boot_` | 15 | Hochfahren, Privilegstufe, Speicher vorbereiten |
@@ -177,7 +177,7 @@ In `kernel.S` stecken **1150 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **36.640 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **39.176 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -288,7 +288,7 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 8. Datenträger und FAT32 lesend | ✅ |
 | 9. Fenstersystem | ✅ inklusive erstem Fensterinhalt |
 | 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP, DNS, TCP-Client mit Verbindungstabelle, eingehende Prüfsummen, zufällige Kennungen und Ports, Härtung Block 1 abgeschlossen |
-| 11. Verschlüsselte Verbindungen | 🔧 begonnen: SHA-256 über die Prozessorerweiterung, fünf Testvektoren beim Start geprüft |
+| 11. Verschlüsselte Verbindungen | 🔧 in Arbeit: SHA-256, HMAC und HKDF fertig, zwölf Testvektoren beim Start geprüft |
 | 12. Vektorgrafik | ✅ Schrift, Zeiger und Icons, offen als Zeichenfläche für Anwendungen |
 | 13. Animationsschicht und Compositor | ✅ Animationen, Fensterpuffer als Ebenen, Gruppendeckkraft; Zoom und Drehung offen |
 | 14. Portierung auf Raspberry Pi 5 | offen |
@@ -347,10 +347,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 274 KB in drei Dateien |
-| Zeilen Assembler | 11463 |
-| Sprungmarken | 1150 |
-| **Fertiges Betriebssystem** | **36.640 Byte** |
+| Eigener Quelltext | 288 KB in drei Dateien |
+| Zeilen Assembler | 11913 |
+| Sprungmarken | 1218 |
+| **Fertiges Betriebssystem** | **39.176 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -565,4 +565,19 @@ Beim Start läuft jedes Mal ein Selbsttest gegen fünf bekannte Ergebnisse aus d
 
 Das Bild ist byteweise gleich der Referenz, die Netzwerkkette läuft unverändert. Beim Einbau meldete die Linker-Zusicherung zum dritten Mal ihren Wert: Die Testvektoren und die Konstantentabelle waren hinter `BOOT OK` eingefügt worden, und dieser Text liegt im Füllraum eines Fehlerbehandlungseintrags. Zehn Einträge wären verschoben worden, der Bau brach ab, die Daten liegen jetzt im Datenbereich.
 
-**Fehlersuche danach.** Die fünf Vektoren decken die Blockgrenzen ab, nicht aber jede Kombination aus Füllstand und Stückgröße. Ein Testbau hat deshalb 201 Nachrichten der Längen 0 bis 200 gehasht, jede in Stücken wechselnder Größe (1 bis 17 Byte) eingespeist, und jedes Ergebnis auf die serielle Leitung geschrieben; ein Skript verglich alle 201 mit der Referenz des Entwicklungsrechners. **0 Abweichungen.** Dazu geprüft: Unterbrechungsroutinen nutzen keine Vektorregister (der Hash darf also unterbrochen werden), das Alignment-Prüfbit des Prozessors ist aus (Daten dürfen an beliebiger Adresse liegen, im Test ab Offset 24 nachgewiesen), der Vergleich zweier Ergebnisse läuft in konstanter Zeit (nötig, sobald damit Nachrichtenkennungen geprüft werden).
+### Stand 14.09.2026, zwölfte Runde: HMAC und HKDF
+
+Die Bausteine zwei und drei für TLS. HMAC ist die Prüfsummenfunktion mit Schlüssel (RFC 2104), HKDF leitet daraus aus einem Geheimnis beliebig viele Schlüssel ab (RFC 5869); TLS 1.3 gewinnt sämtliche Sitzungsschlüssel auf diesem Weg. Beide sind reine Aufrufer von SHA-256, es kam kein neuer Rechenkern dazu. Der Zustand liegt auf dem Stack und wird nach Gebrauch überschrieben; ein Schlüssel, der länger als 64 Byte ist, wird zuerst gehasht, genau wie der Standard es verlangt.
+
+Der Selbsttest beim Start prüft jetzt zwölf Vektoren: fünf für SHA-256, vier für HMAC aus RFC 4231 (darunter zwei mit 131-Byte-Schlüssel, der den Hash-Pfad erzwingt) und drei für HKDF aus RFC 5869 (darunter der lange Fall mit 80-Byte-Salz und 82 Byte Ausgabe über drei Runden, und der Fall ohne Salz und ohne Info). Alle Erwartungswerte wurden vor dem Einbau auf dem Entwicklungsrechner nachgerechnet.
+
+| Kennzahl | vorher | nachher |
+|---|---|---|
+| Größe des fertigen Systems | 36.640 Byte | **39.176 Byte** (+2.536, davon 1.014 Byte Testdaten: Schlüssel, Nachrichten, Erwartungswerte) |
+| Start bis Ruhe | 476,8 Mio. Befehle | 476,8 Mio., die sieben neuen Vektoren fallen nicht ins Gewicht |
+| Selbsttest-Ausgabe | `SHA256 OK, 5 Testvektoren` | dazu `HMAC OK, 4 Testvektoren` und `HKDF OK, 3 Testvektoren` |
+| Geprüft auf | TCG und hvf | TCG und hvf |
+
+Das Bild ist byteweise gleich der Referenz. Dabei aufgefallen: Jeder Selbsttest-Aufruf im Startcode kostet dort 4 Byte, und der Startblock hatte nur noch 8 Byte Luft bis zu seiner 2048er-Grenze. Alle Kryptotests hängen jetzt an einem einzigen Einstieg `crypto_selftest`, der außerhalb des Startblocks liegt; künftige Bausteine kosten dort nichts mehr.
+
+**Fehlersuche im SHA-Block.** Die fünf Vektoren decken die Blockgrenzen ab, nicht aber jede Kombination aus Füllstand und Stückgröße. Ein Testbau hat deshalb 201 Nachrichten der Längen 0 bis 200 gehasht, jede in Stücken wechselnder Größe (1 bis 17 Byte) eingespeist, und jedes Ergebnis auf die serielle Leitung geschrieben; ein Skript verglich alle 201 mit der Referenz des Entwicklungsrechners. **0 Abweichungen.** Dazu geprüft: Unterbrechungsroutinen nutzen keine Vektorregister (der Hash darf also unterbrochen werden), das Alignment-Prüfbit des Prozessors ist aus (Daten dürfen an beliebiger Adresse liegen, im Test ab Offset 24 nachgewiesen), der Vergleich zweier Ergebnisse läuft in konstanter Zeit (nötig, sobald damit Nachrichtenkennungen geprüft werden).

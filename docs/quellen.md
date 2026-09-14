@@ -1718,3 +1718,21 @@ Gemessen: Selbsttest 15.625 Blöcke in 2,3 Mio. Befehlen, ein Block 117 Befehle.
 Nächste Bausteine in dieser Reihenfolge: HMAC und HKDF (RFC 2104, RFC 5869) auf SHA-256, AES-128 (`aese`/`aesmc`) mit GCM (`pmull` für GHASH), X25519 (RFC 7748), dann der TLS-1.3-Handshake (RFC 8446).
 
 **Fehlersuche (14.09.2026):** Differentialtest mit 201 Längen (0 bis 200) über Muster `(i·7+3) mod 256`, eingespeist in Stücken von `(Länge mod 17)+1` Byte, alle Ergebnisse gegen `hashlib.sha256` gleich. Durchgesehen: Registererhalt über alle `bl` (`x19`–`x22` in `update`/`final`, `sha256_block` rahmenlos ohne Aufruf), Füllpfad bei Füllstand 56 und 64 (`sha256_final_pad`), Zähler 64 Bit, `SCTLR_EL1.A` nie gesetzt (unausgerichtete `ld1`/`ldp` zulässig, ARM DDI 0487, SCTLR_EL1.A), keine NEON-Nutzung in `timer_tick`, `uart_rx_isr`, `virtio_input_poll`. Keine Fehler gefunden.
+
+## TLS, Bausteine 2 und 3: HMAC und HKDF (14.09.2026)
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| `HMAC_IPAD` `0x36`, `HMAC_OPAD` `0x5c` | innere und äußere Füllbytes, Blocklänge 64 | RFC 2104, Abschnitt 2 |
+| Schlüssel länger als 64 Byte | wird mit SHA-256 auf 32 Byte gekürzt, dann wie ein kurzer Schlüssel mit Nullen aufgefüllt | RFC 2104, Abschnitt 2 ("keys longer than B bytes are first hashed") |
+| `HMAC_CTX` | innerer SHA-Kontext bei 0 (112 Byte), äußerer Schlüsselblock (Schlüssel ⊕ opad) bei 112 (64 Byte), Größe 176 | Festlegung |
+| `hkdf_extract(salt, ikm)` | `HMAC(salt, ikm)`; leeres Salz entspricht 32 Nullbytes, weil HMAC jeden Schlüssel mit Nullen auf 64 Byte auffüllt, deshalb keine Sonderbehandlung nötig | RFC 5869, Abschnitt 2.2 ("if not provided, it is set to a string of HashLen zeros") |
+| `hkdf_expand(prk, info, L)` | `T(i) = HMAC(prk, T(i−1) ‖ info ‖ i)`, `i` als ein Byte ab 1, `L ≤ 255 · 32` | RFC 5869, Abschnitt 2.3 |
+| Testvektoren HMAC | RFC 4231, Test Case 1, 2, 6, 7 | RFC 4231, Abschnitt 4 |
+| Testvektoren HKDF | RFC 5869, Test Case 1 (Basis), 2 (80 Byte Salz, 82 Byte Ausgabe), 3 (ohne Salz, ohne Info) | RFC 5869, Anhang A |
+
+Alle Erwartungswerte wurden im Erzeugungsskript mit `hmac`/`hashlib` neu berechnet und gegen die Anfangsbytes der RFC-Werte geprüft (`b0344c61`, `5bdcc146`, `60e43159`, `9b09ffa7`, PRK `07770936`, OKM `3cb25f25`, `b11e398d`, `8da4e775`), bevor sie in `kernel.S` kamen.
+
+Speicherhygiene: `hmac_init` baut den inneren Füllblock auf dem Stack und überschreibt ihn danach (`mem_wipe`); `hmac_final` nullt den äußeren Schlüsselblock und den inneren Zwischenwert; `hkdf_expand` nullt `T` am Ende. `hmac_compute` und `hkdf_expand` halten ihren Kontext ausschließlich im eigenen Stackrahmen (224 beziehungsweise 288 Byte).
+
+Gemessen: `HMAC OK, 4 Testvektoren`, `HKDF OK, 3 Testvektoren` unter TCG und hvf; Start weiterhin 476,8 Mio. Befehle. Der Startblock `.text.boot` war nach zwei Selbsttest-Aufrufen bei 8 Byte Füllung; seit `crypto_selftest` sind es wieder 16.

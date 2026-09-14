@@ -736,6 +736,15 @@
 .equ SHA_BLOCK_SIZE,        64
 .equ SHA_DIGEST_SIZE,       32
 .equ SHA_TEST_CHUNK,        1000
+.equ HMAC_CTX_OPAD,         112
+.equ HMAC_CTX_SIZE,         176
+.equ HMAC_IPAD,             0x36
+.equ HMAC_OPAD,             0x5c
+.equ HKDF_MAX_OKM,          (255 * SHA_DIGEST_SIZE)
+.equ HKDF_FRAME_CTX,        64
+.equ HKDF_FRAME_T,          240
+.equ HKDF_FRAME_COUNT,      272
+.equ HKDF_FRAME_SIZE,       288
 .equ PMM_SELFTEST,          0
 .equ FS_SELFTEST,          0
 .equ FS_SELFTEST_BIG,       0
@@ -975,7 +984,7 @@ boot_fade_ok:
     bl      timer_init
     msr     daifclr, #DAIF_I
     bl      net_init
-    bl      sha_selftest
+    bl      crypto_selftest
 
 .if BOOT_SELFTEST
     brk     #0
@@ -10233,6 +10242,13 @@ sha_put_digest_loop:
     ldp     x29, x30, [sp], #32
     ret
 
+crypto_selftest:
+    stp     x29, x30, [sp, #-16]!
+    bl      sha_selftest
+    bl      hmac_selftest
+    ldp     x29, x30, [sp], #16
+    ret
+
 sha_selftest:
     stp     x29, x30, [sp, #-32]!
     stp     x19, x20, [sp, #16]
@@ -10313,6 +10329,334 @@ sha_selftest_missing:
     bl      uart_puts
 
 sha_selftest_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+
+hmac_init:
+    stp     x29, x30, [sp, #-112]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    cmp     x21, #SHA_BLOCK_SIZE
+    b.ls    hmac_init_opad
+    mov     x0, x19
+    bl      sha256_init
+    mov     x0, x19
+    mov     x1, x20
+    mov     x2, x21
+    bl      sha256_update
+    mov     x0, x19
+    add     x1, x19, #HMAC_CTX_OPAD
+    bl      sha256_final
+    add     x20, x19, #HMAC_CTX_OPAD
+    mov     x21, #SHA_DIGEST_SIZE
+
+hmac_init_opad:
+    add     x22, x19, #HMAC_CTX_OPAD
+    mov     w6, #HMAC_OPAD
+    mov     x3, #0
+
+hmac_init_opad_key:
+    cmp     x3, x21
+    b.hs    hmac_init_opad_fill
+    ldrb    w4, [x20, x3]
+    eor     w4, w4, w6
+    strb    w4, [x22, x3]
+    add     x3, x3, #1
+    b       hmac_init_opad_key
+
+hmac_init_opad_fill:
+    cmp     x3, #SHA_BLOCK_SIZE
+    b.hs    hmac_init_inner
+    strb    w6, [x22, x3]
+    add     x3, x3, #1
+    b       hmac_init_opad_fill
+
+hmac_init_inner:
+    mov     x0, x19
+    bl      sha256_init
+    add     x5, sp, #48
+    mov     w6, #(HMAC_IPAD ^ HMAC_OPAD)
+    mov     x3, #0
+
+hmac_init_ipad:
+    ldrb    w4, [x22, x3]
+    eor     w4, w4, w6
+    strb    w4, [x5, x3]
+    add     x3, x3, #1
+    cmp     x3, #SHA_BLOCK_SIZE
+    b.lo    hmac_init_ipad
+    mov     x0, x19
+    mov     x1, x5
+    mov     x2, #SHA_BLOCK_SIZE
+    bl      sha256_update
+    add     x0, sp, #48
+    mov     w1, #SHA_BLOCK_SIZE
+    bl      mem_wipe
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #112
+    ret
+
+hmac_update:
+    b       sha256_update
+
+hmac_final:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x0, x19
+    add     x1, sp, #32
+    bl      sha256_final
+    mov     x0, x19
+    bl      sha256_init
+    mov     x0, x19
+    add     x1, x19, #HMAC_CTX_OPAD
+    mov     x2, #SHA_BLOCK_SIZE
+    bl      sha256_update
+    mov     x0, x19
+    add     x1, sp, #32
+    mov     x2, #SHA_DIGEST_SIZE
+    bl      sha256_update
+    mov     x0, x19
+    mov     x1, x20
+    bl      sha256_final
+    add     x0, x19, #HMAC_CTX_OPAD
+    mov     w1, #SHA_BLOCK_SIZE
+    bl      mem_wipe
+    add     x0, sp, #32
+    mov     w1, #SHA_DIGEST_SIZE
+    bl      mem_wipe
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+    ret
+
+hmac_compute:
+    stp     x29, x30, [sp, #-224]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     x19, x2
+    mov     x20, x3
+    mov     x21, x4
+    mov     x2, x1
+    mov     x1, x0
+    add     x0, sp, #48
+    bl      hmac_init
+    add     x0, sp, #48
+    mov     x1, x19
+    mov     x2, x20
+    bl      hmac_update
+    add     x0, sp, #48
+    mov     x1, x21
+    bl      hmac_final
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #224
+    ret
+
+mem_wipe:
+    cbz     w1, mem_wipe_done
+
+mem_wipe_loop:
+    strb    wzr, [x0], #1
+    subs    w1, w1, #1
+    b.ne    mem_wipe_loop
+
+mem_wipe_done:
+    ret
+
+hkdf_extract:
+    b       hmac_compute
+
+hkdf_expand:
+    stp     x29, x30, [sp, #-HKDF_FRAME_SIZE]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    mov     x22, x3
+    mov     x23, x4
+    mov     w24, #1
+    mov     x0, #HKDF_MAX_OKM
+    cmp     x23, x0
+    b.hi    hkdf_expand_toolong
+
+hkdf_expand_loop:
+    cbz     x23, hkdf_expand_done
+    add     x0, sp, #HKDF_FRAME_CTX
+    mov     x1, x19
+    mov     x2, #SHA_DIGEST_SIZE
+    bl      hmac_init
+    cmp     w24, #1
+    b.eq    hkdf_expand_info
+    add     x0, sp, #HKDF_FRAME_CTX
+    add     x1, sp, #HKDF_FRAME_T
+    mov     x2, #SHA_DIGEST_SIZE
+    bl      hmac_update
+
+hkdf_expand_info:
+    add     x0, sp, #HKDF_FRAME_CTX
+    mov     x1, x20
+    mov     x2, x21
+    bl      hmac_update
+    strb    w24, [sp, #HKDF_FRAME_COUNT]
+    add     x0, sp, #HKDF_FRAME_CTX
+    add     x1, sp, #HKDF_FRAME_COUNT
+    mov     x2, #1
+    bl      hmac_update
+    add     x0, sp, #HKDF_FRAME_CTX
+    add     x1, sp, #HKDF_FRAME_T
+    bl      hmac_final
+    mov     x2, #SHA_DIGEST_SIZE
+    cmp     x23, x2
+    csel    x2, x23, x2, lo
+    add     x0, sp, #HKDF_FRAME_T
+    mov     x1, x22
+    add     x22, x22, x2
+    sub     x23, x23, x2
+    bl      mem_copy
+    add     w24, w24, #1
+    b       hkdf_expand_loop
+
+hkdf_expand_toolong:
+    mov     w0, #1
+    b       hkdf_expand_ret
+
+hkdf_expand_done:
+    add     x0, sp, #HKDF_FRAME_T
+    mov     w1, #SHA_DIGEST_SIZE
+    bl      mem_wipe
+    mov     w0, #0
+
+hkdf_expand_ret:
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #HKDF_FRAME_SIZE
+    ret
+
+hmac_check:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     x19, x4
+    ladr    x4, sha_digest
+    bl      hmac_compute
+    ladr    x0, sha_digest
+    mov     x1, x19
+    bl      sha_compare
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+hkdf_check:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     x19, x0
+    ldp     x0, x1, [x19]
+    ldp     x2, x3, [x19, #16]
+    ladr    x4, hkdf_prk
+    bl      hkdf_extract
+    ladr    x0, hkdf_prk
+    ldp     x1, x2, [x19, #32]
+    ldp     x3, x4, [x19, #48]
+    bl      hkdf_expand
+    cbnz    w0, hkdf_check_fail
+    ladr    x0, hkdf_prk
+    ldr     x1, [x19, #64]
+    mov     w2, #SHA_DIGEST_SIZE
+    bl      mem_equal
+    cbz     w0, hkdf_check_fail
+    ldr     x0, [x19, #48]
+    ldr     x1, [x19, #72]
+    ldr     w2, [x19, #56]
+    bl      mem_equal
+    cbz     w0, hkdf_check_fail
+    mov     w0, #0
+    b       hkdf_check_done
+
+hkdf_check_fail:
+    mov     w0, #1
+
+hkdf_check_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+hmac_selftest:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     w19, #1
+    ladr    x0, hmac_key_0b
+    mov     x1, #20
+    ladr    x2, hmac_data_1
+    mov     x3, #(hmac_data_1_end - hmac_data_1)
+    ladr    x4, hmac_expect_1
+    bl      hmac_check
+    cbnz    w0, hmac_selftest_fail
+    mov     w19, #2
+    ladr    x0, hmac_key_jefe
+    mov     x1, #4
+    ladr    x2, hmac_data_2
+    mov     x3, #(hmac_data_2_end - hmac_data_2)
+    ladr    x4, hmac_expect_2
+    bl      hmac_check
+    cbnz    w0, hmac_selftest_fail
+    mov     w19, #3
+    ladr    x0, hmac_key_aa
+    mov     x1, #131
+    ladr    x2, hmac_data_6
+    mov     x3, #(hmac_data_6_end - hmac_data_6)
+    ladr    x4, hmac_expect_6
+    bl      hmac_check
+    cbnz    w0, hmac_selftest_fail
+    mov     w19, #4
+    ladr    x0, hmac_key_aa
+    mov     x1, #131
+    ladr    x2, hmac_data_7
+    mov     x3, #(hmac_data_7_end - hmac_data_7)
+    ladr    x4, hmac_expect_7
+    bl      hmac_check
+    cbnz    w0, hmac_selftest_fail
+    ladr    x0, hmac_ok_msg
+    bl      uart_puts
+    mov     w19, #1
+    ladr    x0, hkdf_case_1
+    bl      hkdf_check
+    cbnz    w0, hkdf_selftest_fail
+    mov     w19, #2
+    ladr    x0, hkdf_case_2
+    bl      hkdf_check
+    cbnz    w0, hkdf_selftest_fail
+    mov     w19, #3
+    ladr    x0, hkdf_case_3
+    bl      hkdf_check
+    cbnz    w0, hkdf_selftest_fail
+    ladr    x0, hkdf_ok_msg
+    bl      uart_puts
+    b       hmac_selftest_done
+
+hmac_selftest_fail:
+    ladr    x0, hmac_fail_msg
+    b       hmac_selftest_report
+
+hkdf_selftest_fail:
+    ladr    x0, hkdf_fail_msg
+
+hmac_selftest_report:
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+
+hmac_selftest_done:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
@@ -11023,6 +11367,108 @@ sha_expect_million:
     .byte   0xcd,0xc7,0x6e,0x5c,0x99,0x14,0xfb,0x92,0x81,0xa1,0xc7,0xe2,0x84,0xd7,0x3e,0x67
     .byte   0xf1,0x80,0x9a,0x48,0xa4,0x97,0x20,0x0e,0x04,0x6d,0x39,0xcc,0xc7,0x11,0x2c,0xd0
 
+hmac_ok_msg:
+    .asciz  "HMAC OK, 4 Testvektoren\r\n"
+hmac_fail_msg:
+    .asciz  "HMAC FEHLER Test "
+hkdf_ok_msg:
+    .asciz  "HKDF OK, 3 Testvektoren\r\n"
+hkdf_fail_msg:
+    .asciz  "HKDF FEHLER Test "
+hmac_key_jefe:
+    .ascii  "Jefe"
+hmac_data_1:
+    .ascii  "Hi There"
+hmac_data_1_end:
+hmac_data_2:
+    .ascii  "what do ya want for nothing?"
+hmac_data_2_end:
+hmac_data_6:
+    .ascii  "Test Using Larger Than Block-Size Key - Hash Key First"
+hmac_data_6_end:
+hmac_data_7:
+    .ascii  "This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm."
+hmac_data_7_end:
+hmac_key_0b:
+    .fill   20, 1, 0x0b
+hmac_key_aa:
+    .fill   131, 1, 0xaa
+hmac_expect_1:
+    .byte   0xb0,0x34,0x4c,0x61,0xd8,0xdb,0x38,0x53,0x5c,0xa8,0xaf,0xce,0xaf,0x0b,0xf1,0x2b
+    .byte   0x88,0x1d,0xc2,0x00,0xc9,0x83,0x3d,0xa7,0x26,0xe9,0x37,0x6c,0x2e,0x32,0xcf,0xf7
+hmac_expect_2:
+    .byte   0x5b,0xdc,0xc1,0x46,0xbf,0x60,0x75,0x4e,0x6a,0x04,0x24,0x26,0x08,0x95,0x75,0xc7
+    .byte   0x5a,0x00,0x3f,0x08,0x9d,0x27,0x39,0x83,0x9d,0xec,0x58,0xb9,0x64,0xec,0x38,0x43
+hmac_expect_6:
+    .byte   0x60,0xe4,0x31,0x59,0x1e,0xe0,0xb6,0x7f,0x0d,0x8a,0x26,0xaa,0xcb,0xf5,0xb7,0x7f
+    .byte   0x8e,0x0b,0xc6,0x21,0x37,0x28,0xc5,0x14,0x05,0x46,0x04,0x0f,0x0e,0xe3,0x7f,0x54
+hmac_expect_7:
+    .byte   0x9b,0x09,0xff,0xa7,0x1b,0x94,0x2f,0xcb,0x27,0x63,0x5f,0xbc,0xd5,0xb0,0xe9,0x44
+    .byte   0xbf,0xdc,0x63,0x64,0x4f,0x07,0x13,0x93,0x8a,0x7f,0x51,0x53,0x5c,0x3a,0x35,0xe2
+.balign 8
+hkdf_case_1:
+    .quad   hkdf_case_1_salt, 13, hkdf_case_1_ikm, 22, hkdf_case_1_info, 10, hkdf_okm, 42, hkdf_case_1_prk, hkdf_case_1_okm
+hkdf_case_1_salt:
+    .byte   0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c
+hkdf_case_1_ikm:
+    .byte   0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b
+    .byte   0x0b,0x0b,0x0b,0x0b,0x0b,0x0b
+hkdf_case_1_info:
+    .byte   0xf0,0xf1,0xf2,0xf3,0xf4,0xf5,0xf6,0xf7,0xf8,0xf9
+hkdf_case_1_prk:
+    .byte   0x07,0x77,0x09,0x36,0x2c,0x2e,0x32,0xdf,0x0d,0xdc,0x3f,0x0d,0xc4,0x7b,0xba,0x63
+    .byte   0x90,0xb6,0xc7,0x3b,0xb5,0x0f,0x9c,0x31,0x22,0xec,0x84,0x4a,0xd7,0xc2,0xb3,0xe5
+hkdf_case_1_okm:
+    .byte   0x3c,0xb2,0x5f,0x25,0xfa,0xac,0xd5,0x7a,0x90,0x43,0x4f,0x64,0xd0,0x36,0x2f,0x2a
+    .byte   0x2d,0x2d,0x0a,0x90,0xcf,0x1a,0x5a,0x4c,0x5d,0xb0,0x2d,0x56,0xec,0xc4,0xc5,0xbf
+    .byte   0x34,0x00,0x72,0x08,0xd5,0xb8,0x87,0x18,0x58,0x65
+.balign 8
+hkdf_case_2:
+    .quad   hkdf_case_2_salt, 80, hkdf_case_2_ikm, 80, hkdf_case_2_info, 80, hkdf_okm, 82, hkdf_case_2_prk, hkdf_case_2_okm
+hkdf_case_2_salt:
+    .byte   0x60,0x61,0x62,0x63,0x64,0x65,0x66,0x67,0x68,0x69,0x6a,0x6b,0x6c,0x6d,0x6e,0x6f
+    .byte   0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7a,0x7b,0x7c,0x7d,0x7e,0x7f
+    .byte   0x80,0x81,0x82,0x83,0x84,0x85,0x86,0x87,0x88,0x89,0x8a,0x8b,0x8c,0x8d,0x8e,0x8f
+    .byte   0x90,0x91,0x92,0x93,0x94,0x95,0x96,0x97,0x98,0x99,0x9a,0x9b,0x9c,0x9d,0x9e,0x9f
+    .byte   0xa0,0xa1,0xa2,0xa3,0xa4,0xa5,0xa6,0xa7,0xa8,0xa9,0xaa,0xab,0xac,0xad,0xae,0xaf
+hkdf_case_2_ikm:
+    .byte   0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f
+    .byte   0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1a,0x1b,0x1c,0x1d,0x1e,0x1f
+    .byte   0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x2a,0x2b,0x2c,0x2d,0x2e,0x2f
+    .byte   0x30,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x3a,0x3b,0x3c,0x3d,0x3e,0x3f
+    .byte   0x40,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4a,0x4b,0x4c,0x4d,0x4e,0x4f
+hkdf_case_2_info:
+    .byte   0xb0,0xb1,0xb2,0xb3,0xb4,0xb5,0xb6,0xb7,0xb8,0xb9,0xba,0xbb,0xbc,0xbd,0xbe,0xbf
+    .byte   0xc0,0xc1,0xc2,0xc3,0xc4,0xc5,0xc6,0xc7,0xc8,0xc9,0xca,0xcb,0xcc,0xcd,0xce,0xcf
+    .byte   0xd0,0xd1,0xd2,0xd3,0xd4,0xd5,0xd6,0xd7,0xd8,0xd9,0xda,0xdb,0xdc,0xdd,0xde,0xdf
+    .byte   0xe0,0xe1,0xe2,0xe3,0xe4,0xe5,0xe6,0xe7,0xe8,0xe9,0xea,0xeb,0xec,0xed,0xee,0xef
+    .byte   0xf0,0xf1,0xf2,0xf3,0xf4,0xf5,0xf6,0xf7,0xf8,0xf9,0xfa,0xfb,0xfc,0xfd,0xfe,0xff
+hkdf_case_2_prk:
+    .byte   0x06,0xa6,0xb8,0x8c,0x58,0x53,0x36,0x1a,0x06,0x10,0x4c,0x9c,0xeb,0x35,0xb4,0x5c
+    .byte   0xef,0x76,0x00,0x14,0x90,0x46,0x71,0x01,0x4a,0x19,0x3f,0x40,0xc1,0x5f,0xc2,0x44
+hkdf_case_2_okm:
+    .byte   0xb1,0x1e,0x39,0x8d,0xc8,0x03,0x27,0xa1,0xc8,0xe7,0xf7,0x8c,0x59,0x6a,0x49,0x34
+    .byte   0x4f,0x01,0x2e,0xda,0x2d,0x4e,0xfa,0xd8,0xa0,0x50,0xcc,0x4c,0x19,0xaf,0xa9,0x7c
+    .byte   0x59,0x04,0x5a,0x99,0xca,0xc7,0x82,0x72,0x71,0xcb,0x41,0xc6,0x5e,0x59,0x0e,0x09
+    .byte   0xda,0x32,0x75,0x60,0x0c,0x2f,0x09,0xb8,0x36,0x77,0x93,0xa9,0xac,0xa3,0xdb,0x71
+    .byte   0xcc,0x30,0xc5,0x81,0x79,0xec,0x3e,0x87,0xc1,0x4c,0x01,0xd5,0xc1,0xf3,0x43,0x4f
+    .byte   0x1d,0x87
+.balign 8
+hkdf_case_3:
+    .quad   hkdf_case_3_salt, 0, hkdf_case_3_ikm, 22, hkdf_case_3_info, 0, hkdf_okm, 42, hkdf_case_3_prk, hkdf_case_3_okm
+hkdf_case_3_salt:
+hkdf_case_3_ikm:
+    .byte   0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b
+    .byte   0x0b,0x0b,0x0b,0x0b,0x0b,0x0b
+hkdf_case_3_info:
+hkdf_case_3_prk:
+    .byte   0x19,0xef,0x24,0xa3,0x2c,0x71,0x7b,0x16,0x7f,0x33,0xa9,0x1d,0x6f,0x64,0x8b,0xdf
+    .byte   0x96,0x59,0x67,0x76,0xaf,0xdb,0x63,0x77,0xac,0x43,0x4c,0x1c,0x29,0x3c,0xcb,0x04
+hkdf_case_3_okm:
+    .byte   0x8d,0xa4,0xe7,0x75,0xa5,0x63,0xc1,0x8f,0x71,0x5f,0x80,0x2a,0x06,0x3c,0x5a,0x31
+    .byte   0xb8,0xa1,0x1f,0x5c,0x5e,0xe1,0x87,0x9e,0xc3,0x45,0x4e,0x5f,0x3c,0x73,0x8d,0x2d
+    .byte   0x9d,0x20,0x13,0x95,0xfa,0xa4,0xb6,0x1a,0x96,0xc8
+
 .section .bss
 
 .balign 8
@@ -11280,6 +11726,10 @@ sha_digest:
     .space  SHA_DIGEST_SIZE
 sha_buf:
     .space  SHA_TEST_CHUNK
+hkdf_prk:
+    .space  SHA_DIGEST_SIZE
+hkdf_okm:
+    .space  96
 dns_id:
     .space  2
 
