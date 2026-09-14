@@ -50,6 +50,7 @@ SECTIONS
         *(.note*)
     }
 
+    ASSERT(vec_table - ADDR(.text) == 0x800, "Startcode .text.boot ueberschreitet 2048 Byte, Vektortabelle verschoben")
     ASSERT(vec_at_0  - vec_table ==    0, "Vektoreintrag 0 verschoben")
     ASSERT(vec_at_1  - vec_table ==  128, "Vektoreintrag 1 verschoben")
     ASSERT(vec_at_2  - vec_table ==  256, "Vektoreintrag 2 verschoben")

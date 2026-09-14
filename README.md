@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-33.016%20Byte-brightgreen?style=flat-square" alt="33016 Byte">
+<img src="https://img.shields.io/badge/Kernel-33.336%20Byte-brightgreen?style=flat-square" alt="33336 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>33.016&nbsp;Byte</b> groß, also <b>33&nbsp;KB</b>.<br>
+Das fertige System ist <b>33.336&nbsp;Byte</b> groß, also <b>33&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>244 KB · 10547 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>248 KB · 10652 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,11 +146,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 10547 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 10652 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1049 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1062 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -175,7 +175,7 @@ In `kernel.S` stecken **1049 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **33.016 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **33.336 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -346,9 +346,9 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 | | |
 |---|---|
 | Eigener Quelltext | 252 KB in drei Dateien |
-| Zeilen Assembler | 10547 |
-| Sprungmarken | 1049 |
-| **Fertiges Betriebssystem** | **33.016 Byte** |
+| Zeilen Assembler | 10652 |
+| Sprungmarken | 1062 |
+| **Fertiges Betriebssystem** | **33.336 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -479,3 +479,17 @@ Kein Optimierungslauf, sondern eine Messung nach neuer Funktion, damit die Zahle
 | Arbeitsspeicher | 64,6 MB | 64,6 MB, plus 18 KB Empfangs- und Sendepuffer |
 
 Der Netzwerkverkehr fällt in der Messung nicht ins Gewicht. Was Zeit kostet, ist weiterhin das Bild.
+
+### Stand 14.09.2026, sechste Runde: Netzwerk per Interrupt
+
+Bisher fragte die Hauptschleife das Netzgerät bei jedem Aufwachen ab, also mit dem 30-Hz-Zeitgeber, und jedes Protokoll zählte seine Wartezeit bei jeder Abfrage weiter. Jetzt meldet sich das Gerät per Interrupt, sobald ein Rahmen da ist; der Handler quittiert nur und setzt ein Merkmal, verarbeitet wird wie immer in der Hauptschleife. Die Wartezeiten von DHCP, DNS und TCP zählt der Zeitgeber, aber nur, solange ein Protokoll tatsächlich auf eine Antwort wartet.
+
+| Messung über 10 s ab Start | Wert |
+|---|---|
+| Netz-Interrupts | 14 |
+| empfangene Rahmen | 10 |
+| Verarbeitungsläufe (mehrere Rahmen je Lauf) | 9 |
+| Zeitgeber-Ticks für das Netz während der ganzen Kette | 2 |
+| Netzarbeit nach Ende der Kette | keine, auch nach 10 s nicht |
+
+**Zwei Dinge, die dabei aufgefallen sind.** Erstens meldete die Linker-Zusicherung, dass eine Routine im Füllraum der Fehlerbehandlungstabelle zu groß geworden war, genau die Prüfung, die dafür gebaut wurde; die Routine wurde gegen zwei kleinere getauscht. Zweitens wuchs der Startcode still um 16 Byte über seine 2048-Byte-Grenze, und die Tabelle rutschte um 2 KB nach hinten, ohne Meldung, nur am Größensprung zu sehen. Dafür gibt es jetzt ebenfalls eine Zusicherung: Ein Überlauf des Startcodes ist ein Baufehler. Größe des fertigen Systems: 33.336 Byte.

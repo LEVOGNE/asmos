@@ -4445,6 +4445,8 @@ mmu_init_no_ram:
     ldp     x29, x30, [sp], #48
     ret
 
+.section .text
+
 string_starts_with:
     ldrb    w2, [x1], #1
     cbz     w2, string_starts_with_yes
@@ -4457,6 +4459,8 @@ string_starts_with:
 string_starts_with_yes:
     mov     w0, #1
     ret
+
+.section .text.boot
 
 fdt_align4:
     add     x0, x0, #3
