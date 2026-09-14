@@ -1874,3 +1874,19 @@ Gemessen: `ECDSA OK, RFC 6979 und echtes Zertifikat geprueft` unter TCG und hvf;
 Nachweis: QMP `input-send-event` mit `qcode`-Tasten und Tablet-Klick (`typetest.py`): Eingabe nur bei fokussiertem Terminal, Bilder `typed1..3.png`. `VIRTIO KEYBOARD OK` auf der seriellen Leitung, Netzkette unverändert bis `HTTPS HTTP/1.1 200 OK`. Start 565,1 Mio. Befehle (vorher 508,9), Mehrkosten durch die Neuzeichnung des Netzwerkfensters je eintreffender Zeile. Bildvergleich seither mit Maske über dem Inneren des Netzwerkfensters (`maskcmp.py`), außerhalb byteweise gleich.
 
 **Fehlersuche Terminal (14.09.2026):** Stresstest per QMP (`stresstest.py`): Löschen vor dem Prompt, 120 Zeichen je Zeile, 30 Zeilen Bildlauf, Umschalttaste, schnelles Tippen; keine Panik. `virtio_find_from`: Zähler jetzt `subs`/`b.le`, damit eine Startadresse hinter dem Bereich nicht negativ wird. `console_pending` prüft zusätzlich `key_head`/`key_tail`, damit ein Tastendruck zwischen Abarbeitung und `wfi` die Schleife sofort weckt. Keine weiteren Funde.
+
+## TLS, Zertifikat Schritt B1: SHA-384 und P-384 (14.09.2026)
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| SHA-512-Rundenkonstanten `sha512_k` | 80 × 64 Bit, erste `0x428a2f98d728ae22`, letzte `0x6c44198c4a475817`, vom Skript aus den Kubikwurzeln der ersten 80 Primzahlen berechnet und gegen die Randwerte des Standards geprüft | FIPS 180-4, Abschnitt 4.2.3 |
+| SHA-384-Startwerte `sha384_iv` | `cbbb9d5dc1059ed8 … 47b5481dbefa4fa4` | FIPS 180-4, Abschnitt 5.3.4 |
+| Runde | `Σ0 = ROTR28 ⊕ ROTR34 ⊕ ROTR39`, `Σ1 = ROTR14 ⊕ ROTR18 ⊕ ROTR41`, `σ0 = ROTR1 ⊕ ROTR8 ⊕ SHR7`, `σ1 = ROTR19 ⊕ ROTR61 ⊕ SHR6`, Ch, Maj; Block 128 Byte, Länge 128 Bit big-endian, Ausgabe die ersten 48 Byte des Zustands | FIPS 180-4, Abschnitte 4.1.3, 5.1.2, 6.4.2, 6.5 |
+| Vektoren | `abc`, leere Nachricht, 896-Bit-Nachricht `abcdefghbcdefghi…nopqrstu` | FIPS 180-2, Anhang D.1 und D.2 (SHA-384); mit `hashlib` nachgerechnet |
+| P-384 | `p = 2³⁸⁴ − 2¹²⁸ − 2⁹⁶ + 2³² − 1`, `a = −3`, `b = b3312fa7…ec2aef`, `G`, `n = ffffffff…cc52973`; im Skript geprüft: `G` auf der Kurve, `n·G = O` (Python-Referenz) | FIPS 186-4, Anhang D.1.2.4; SEC 2, Abschnitt 2.5.1 |
+| Montgomery-Konstanten P-384 | `R = 2³⁸⁴`, `m'`, `R² mod m`, `R mod m` für `p` und `n`, `b`, `G` in Montgomery-Form, 6 Glieder | wie Schritt A |
+| Kurvenkontext `EC_*` | `EC_PCTX`, `EC_NCTX`, `EC_B`, `EC_G`, `EC_BYTES`; Schlitz `EC_SLOT` 48, Punkt 144 | Festlegung |
+| Hash-Anpassung in `ecdsa_verify` | die linken `min(hashlen, bytes)` Byte des Hashs, rechtsbündig in `bytes`; für SHA-256 mit P-384 also Nullen vorn, für SHA-384 mit P-256 die ersten 32 Byte | FIPS 186-4, Abschnitt 6.4.2 Schritt 2 (bits2int); RFC 6979, Abschnitt 2.3.2 |
+| Vektor P-384 | RFC 6979, Anhang A.2.6, SHA-384, Nachricht `sample`: `r = 94EDBB92…`, `s = 99EF4AEB…` | mit Python-Referenz und `cryptography` nachgeprüft |
+
+Gefundene Fehler beim Bau: `ec_mul` reservierte für den Eingabepunkt 96 Byte, schreibt aber `EC_POINT_SIZE` = 144 (Rahmen jetzt 352); `mp_add_mod`/`mp_sub_mod` mit zwei Zwischenwerten je `MP_BYTES_MAX` = 48 brauchen 144 Byte Rahmen, nicht 112. Beide schrieben in die gesicherten Register des Aufrufers (`elr = 0xfffffffe`). Gemessen: `SHA384 OK, 3 Testvektoren`, `ECDSA OK, P-256 und P-384, RFC 6979 und echtes Zertifikat` unter TCG und hvf; P-384-Prüfung rund 14 Mio. Befehle; Start 575,0 Mio.; Bild unverändert.

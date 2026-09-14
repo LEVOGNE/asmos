@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-58.944%20Byte-brightgreen?style=flat-square" alt="58944 Byte">
+<img src="https://img.shields.io/badge/Kernel-62.984%20Byte-brightgreen?style=flat-square" alt="62984 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>58.944&nbsp;Byte</b> groß, also <b>57&nbsp;KB</b>.<br>
+Das fertige System ist <b>62.984&nbsp;Byte</b> groß, also <b>61&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>400 KB · 16423 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>416 KB · 16915 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,11 +146,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 16423 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 16915 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1651 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1701 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -180,7 +180,7 @@ In `kernel.S` stecken **1651 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **58.944 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **62.984 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -350,10 +350,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 408 KB in drei Dateien |
-| Zeilen Assembler | 16423 |
-| Sprungmarken | 1651 |
-| **Fertiges Betriebssystem** | **58.944 Byte** |
+| Eigener Quelltext | 424 KB in drei Dateien |
+| Zeilen Assembler | 16915 |
+| Sprungmarken | 1701 |
+| **Fertiges Betriebssystem** | **62.984 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -651,6 +651,21 @@ Jetzt liest der Kernel beim Start aus dem Device Tree, welcher Controller verbau
 | Größe des fertigen Systems | 49.106 Byte | 49.597 Byte (+491) |
 
 Das Bild ist byteweise gleich der Referenz. Der Raspberry Pi 5 hat einen GICv2 (GIC-400), der bisherige Pfad bleibt also der wichtigere; der GICv3-Pfad ist die Eintrittskarte für schnelle Läufe auf dem Mac und für spätere Boards mit GICv3.
+
+### Stand 14.09.2026, neunzehnte Runde: SHA-384 und P-384
+
+Die Kette von example.com hängt nicht an P-256 allein: Die beiden Zwischenzertifikate sind mit ECDSA über P-384 und SHA-384 unterschrieben, und das Wurzelzertifikat "SSL.com TLS ECC Root CA 2022" hat einen P-384-Schlüssel. Dafür kamen zwei Bausteine dazu. SHA-384 rechnet mit 64-Bit-Wörtern und 80 Runden; anders als bei SHA-256 gibt es dafür auf dem Cortex-A72 keine Prozessorbefehle, die Runden sind ausgeschrieben, acht je Schleifendurchlauf mit rotierenden Registerrollen. Und die Kurvenarithmetik nimmt jetzt einen Kurvenkontext entgegen (Primzahl, Ordnung, `b`, Basispunkt, Bytelänge); P-256 und P-384 laufen durch denselben Code, die Zahlenschlitze sind einheitlich 48 Byte breit. Die Montgomery-Multiplikation war von Anfang an für beliebige Gliederzahl geschrieben, genau dafür.
+
+Der Selbsttest prüft SHA-384 gegen drei Vektoren (`abc`, leer, die 112-Byte-Nachricht aus dem Standard) und ECDSA P-384 gegen den Vektor aus RFC 6979 (Anhang A.2.6), dazu die Ablehnung eines gekippten Bits; die P-256-Fälle laufen unverändert durch den neuen gemeinsamen Code.
+
+| Kennzahl | vorher | nachher |
+|---|---|---|
+| Größe des fertigen Systems | 58.944 Byte | **62.984 Byte** (+4.040, davon 640 Byte Rundenkonstanten und 480 Byte Vektoren) |
+| Befehle bis Ruhe, 8 s | 565,1 Mio. | 575,0 Mio.; eine P-384-Prüfung kostet rund 14 Mio., zwei davon im Selbsttest |
+| Montgomery-Multiplikation | 19,0 Mio. | 48,2 Mio. (8,4 %) |
+| Geprüft auf | TCG, hvf | TCG, hvf |
+
+**Zwei Fehler beim Bau, beide vom Rahmen.** Nach dem Umbau stürzte der erste P-256-Test mit einem Rücksprung ins Nichts ab (`elr = 0xfffffffe`): In der Skalarmultiplikation war für den Eingabepunkt Platz für zwei Koordinaten reserviert, geschrieben werden drei, die dritte landete 32 Byte hinter dem Rahmen, genau auf den gesicherten Rücksprungregistern des Aufrufers. Und die modulare Addition und Subtraktion hatten Rahmen, die für vier Glieder genau reichten und für sechs nicht. Gefunden mit Marken in der Prüfroutine, die die Phase bis zum Absturz ausgeben. Das Bild ist byteweise gleich der Referenz.
 
 ### Stand 14.09.2026, achtzehnte Runde: Terminal und Netzwerkfenster
 
