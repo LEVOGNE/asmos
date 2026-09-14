@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-56.749%20Byte-brightgreen?style=flat-square" alt="56749 Byte">
+<img src="https://img.shields.io/badge/Kernel-58.912%20Byte-brightgreen?style=flat-square" alt="58912 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>56.749&nbsp;Byte</b> groß, also <b>55&nbsp;KB</b>.<br>
+Das fertige System ist <b>58.912&nbsp;Byte</b> groß, also <b>57&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>377 KB · 15743 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>400 KB · 16423 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,11 +146,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 15743 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 16423 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1572 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1651 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -158,12 +158,13 @@ In `kernel.S` stecken **1572 Sprungmarken**. Jede gehört zu einem Zuständigkei
 | `tls_` | 136 | **TLS 1.3**: ClientHello, ServerHello, Schlüsselableitung, Record-Schicht, Finished, verschlüsselte Anwendungsdaten |
  **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP mit Verbindungstabelle |
 | `font_` `glyph_` | 117 | TrueType auswerten und über die Vektor-Engine zeichnen |
-| `win_` `dirty_` | 110 | Fenster, Stapelreihenfolge, Ziehen, Teilaktualisierung, Fensterpuffer |
+| `win_` `dirty_` | 120 | Fenster, Stapelreihenfolge, Ziehen, Teilaktualisierung, Fensterpuffer |
+| `term_` `netlog_` `key_` `gui_` `vin_` | 58 | **Terminalfenster**, Netzwerkfenster, Tastaturring, Geräteerkennung für Tablet und Tastatur |
 | `fb_` `cursor_` | 86 | Bildschirm, Bildpunkte, Mauszeiger |
 | `blk_` `fat_` | 83 | Datenträger und Dateisystem |
 | `anim_` | 80 | **Animationsschicht**: Zeitmessung, Verläufe, Beschleunigungskurven |
 | `mem_` `pmm_` `mmu_` `fdt_` `ram_` | 82 | Speicherverwaltung und Hardware-Erkennung |
-| `virtio_` `mouse_` `click_` | 73 | Gerätetreiber, Maus, Klickerkennung |
+| `virtio_` `mouse_` `click_` | 76 | Gerätetreiber, Maus, Klickerkennung |
 | `vg_` `cov_` `edge_` `icon_` | 60 | **Vektor-Engine**: Pfade, Kurven, Füllung, Strich, Kantenglättung, Icons |
 | `console_` `string_` `out_` `power_` | 59 | Konsole, Textwerkzeuge, Herunterfahren |
 | `sha_` `hmac_` `hkdf_` `aes_` `ghash_` `fe_` `x25519_` `mp_` `ec_` `ecdsa_` `asn1_` `x509_` `crypto_` | 291 | **Kryptografie**: SHA-256, HMAC, HKDF, AES-128-GCM über die ARMv8-Erweiterung, X25519, Montgomery-Arithmetik, ECDSA P-256, DER-Parser für X.509, Selbsttest gegen 25 Vektoren beim Start |
@@ -179,7 +180,7 @@ In `kernel.S` stecken **1572 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **56.749 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **58.912 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -349,10 +350,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 392 KB in drei Dateien |
-| Zeilen Assembler | 15743 |
-| Sprungmarken | 1572 |
-| **Fertiges Betriebssystem** | **56.749 Byte** |
+| Eigener Quelltext | 408 KB in drei Dateien |
+| Zeilen Assembler | 16423 |
+| Sprungmarken | 1651 |
+| **Fertiges Betriebssystem** | **58.912 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -650,6 +651,24 @@ Jetzt liest der Kernel beim Start aus dem Device Tree, welcher Controller verbau
 | Größe des fertigen Systems | 49.106 Byte | 49.597 Byte (+491) |
 
 Das Bild ist byteweise gleich der Referenz. Der Raspberry Pi 5 hat einen GICv2 (GIC-400), der bisherige Pfad bleibt also der wichtigere; der GICv3-Pfad ist die Eintrittskarte für schnelle Läufe auf dem Mac und für spätere Boards mit GICv3.
+
+### Stand 14.09.2026, achtzehnte Runde: Terminal und Netzwerkfenster
+
+Die drei Fenster stehen jetzt nebeneinander: links **Terminal**, in der Mitte **Netzwerk**, rechts **Dateien**. Das Terminal nimmt Tastatureingaben an, aber nur, wenn es das aktive Fenster ist; ein Klick auf ein anderes Fenster nimmt ihm den Fokus, der Cursor verschwindet, und Tastendrücke werden verworfen, wie bei einem Terminal unter macOS. Befehle gibt es noch nicht: Eingabe, Löschen, Eingabetaste, neue Zeile mit Prompt, Bildlauf nach 24 Zeilen.
+
+Dafür kam eine echte Tastatur dazu: QEMU stellt sie als zweites virtio-input-Gerät neben dem Tablet, der Treiber bedient jetzt zwei Geräte mit je eigenen Ringen und erkennt an der Gerätekonfiguration, welches die Tastatur ist (das Tablet meldet Achsen, die Tastatur nicht), unabhängig von der Reihenfolge. Die Tastencodes sind die von Linux, umgesetzt nach US-Belegung mit Umschalttaste; QEMU meldet die physische Tastenposition, auf einer deutschen Tastatur sind deshalb Y und Z vertauscht.
+
+Das Netzwerkfenster ist der Beweis, dass das Netz läuft: Es schreibt jede Netzmeldung mit, die auf der seriellen Leitung erscheint (DHCP, ARP, Ping, DNS, TCP, HTTP, TLS, HTTPS), über einen Mitschreiber in der Zeichenausgabe, der Zeilen mit diesen Vorsilben in den Fensterpuffer übernimmt. Ehrlich gesagt gibt es unter QEMU kein WLAN, nur eine virtuelle Kabelkarte; das steht in der ersten Zeile des Fensters.
+
+| Kennzahl | vorher | nachher |
+|---|---|---|
+| Größe des fertigen Systems | 56.749 Byte | **58.912 Byte** (+2.163) |
+| Befehle bis Ruhe, 6 s | 508,9 Mio. | 565,1 Mio.; die 56 Mio. mehr sind fast vollständig das Netzwerkfenster, das bei jeder eintreffenden Zeile alle 24 Textzeilen neu rastert |
+| Fenster | 1240×840, 1400×800, 1600×1040 | dreimal 1180×1160 nebeneinander, alle drei im 16-MiB-Fensterpuffer |
+
+Nachgewiesen headless über die QEMU-Steuerung: "hi Aasm", Eingabetaste, "123" getippt, Bild; Klick auf die Titelleiste von Netzwerk, "xyz" getippt, Bild (kein Cursor, nichts erscheint); Klick zurück auf Terminal, "ok" getippt, Bild (`asmOS> 123ok_`). Der Bildvergleich gegen das Referenzbild blendet seither das Innere des Netzwerkfensters aus, weil dessen Zeilen zeitabhängig eintreffen; außerhalb davon ist das Bild byteweise gleich.
+
+Benannt, nicht angefasst: Die Neuzeichnung je Zeile ist verschwenderisch. Eine Teilaktualisierung nur der neuen Zeile oder ein Glyphenspeicher würde die 56 Mio. auf einen Bruchteil bringen; im laufenden Betrieb kostet das Fenster nichts, nur beim Start.
 
 ### Stand 14.09.2026, siebzehnte Runde: die Sitzung gehört jetzt zum Zertifikat
 

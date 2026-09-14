@@ -1858,3 +1858,17 @@ Nachweis: `make check` (GICv2, TCG), `make check MACHINE_EXTRA=,gic-version=3` (
 Nicht enthalten: Kette bis zur Wurzel (die beiden Zwischenzertifikate hängen über P-384 und SHA-384 am Wurzelzertifikat "SSL.com TLS ECC Root CA 2022"), Namensabgleich (SAN), Gültigkeitszeitraum, RSA, andere Kurven, Punktkompression. Der ClientHello bietet nur noch `ecdsa_secp256r1_sha256` an; ein Server mit RSA-Zertifikat scheitert damit sichtbar (`Signaturverfahren nicht ECDSA P-256`), statt still ungeprüft zu bleiben.
 
 Gemessen: `ECDSA OK, RFC 6979 und echtes Zertifikat geprueft` unter TCG und hvf; live `TLS SIGNATUR GEPRUEFT, ECDSA P-256`; Testbau mit gekipptem Bit in der Serversignatur: `TLS FEHLER: SIGNATUR DES SERVERS FALSCH`, kein `HTTPS`. Eine Prüfung rund 5,7 Mio. Befehle, `mp_mont_mul` 19,0 Mio. über 8 s (3,7 %). Bild unverändert, `.text.boot`-Füllung 24 Byte.
+
+## Tastatur, Terminal und Netzwerkfenster (14.09.2026)
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| `-device virtio-keyboard-device` | zweites virtio-input-Gerät (ID 18) neben dem Tablet | QEMU `hw/input/virtio-input-hid.c`, `virtio_keyboard_config[]` |
+| `VIN_CFG_EV_BITS` `0x11` | Konfigurationsabfrage "welche Ereignisarten"; `subsel = EV_ABS`: Größe > 0 nur beim Tablet, 0 bei der Tastatur, daran wird unterschieden | QEMU `include/standard-headers/linux/virtio_input.h` Zeile 38 (`VIRTIO_INPUT_CFG_EV_BITS = 0x11`); VIRTIO 1.2, 5.8.4 |
+| Tastenereignisse | `EV_KEY` (1), `code` = Linux-Tastencode, `value` 1 gedrückt, 0 losgelassen, 2 Wiederholung | QEMU `hw/input/virtio-input-hid.c` Zeile 91 ff. (`event.type = EV_KEY`, Code aus `keymap_qcode`); Linux `input-event-codes.h` |
+| Tastencodes 1–57 | `KEY_ESC` 1, `KEY_1` 2 … `KEY_0` 11, `KEY_MINUS` 12, `KEY_EQUAL` 13, `KEY_BACKSPACE` 14, `KEY_TAB` 15, `KEY_Q` 16 … `KEY_P` 25, `KEY_LEFTBRACE` 26, `KEY_RIGHTBRACE` 27, `KEY_ENTER` 28, `KEY_A` 30 … `KEY_L` 38, `KEY_SEMICOLON` 39, `KEY_APOSTROPHE` 40, `KEY_GRAVE` 41, `KEY_LEFTSHIFT` 42, `KEY_BACKSLASH` 43, `KEY_Z` 44 … `KEY_M` 50, `KEY_COMMA` 51, `KEY_DOT` 52, `KEY_SLASH` 53, `KEY_RIGHTSHIFT` 54, `KEY_SPACE` 57 | QEMU `include/standard-headers/linux/input-event-codes.h` Zeilen 77–133 |
+| Belegung | US-QWERTY, Umschalttaste für Großbuchstaben und Zweitzeichen; QEMU überträgt die physische Position, deshalb auf deutscher Tastatur Y/Z vertauscht | QEMU `ui/input-keymap-*`, Tabellen im Erzeugungsskript `gui1.py` |
+| Fenster | 1180 × 1160 bei x = 100, 1330, 2560, y = 200; drei Puffer 3 × 5.475.200 Byte = 16.425.600 ≤ 16 MiB | Festlegung, Budget `WIN_BUF_BUDGET` |
+| Mitschreiber | `uart_putc` sammelt Zeichen ab 0x20 bis 95 je Zeile, `BS` löscht, `LF` schließt ab; Zeilen mit Vorsilbe `NET `, `DHCP`, `ARP `, `PING`, `DNS `, `TCP `, `HTTP`, `TLS ` kommen ins Netzwerkfenster (24 Zeilen, Bildlauf) | Festlegung |
+
+Nachweis: QMP `input-send-event` mit `qcode`-Tasten und Tablet-Klick (`typetest.py`): Eingabe nur bei fokussiertem Terminal, Bilder `typed1..3.png`. `VIRTIO KEYBOARD OK` auf der seriellen Leitung, Netzkette unverändert bis `HTTPS HTTP/1.1 200 OK`. Start 565,1 Mio. Befehle (vorher 508,9), Mehrkosten durch die Neuzeichnung des Netzwerkfensters je eintreffender Zeile. Bildvergleich seither mit Maske über dem Inneren des Netzwerkfensters (`maskcmp.py`), außerhalb byteweise gleich.
