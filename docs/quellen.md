@@ -1668,3 +1668,13 @@ Der Pseudokopf wird in `net_pseudo_sum(w0 Quell-IP, w1 Ziel-IP, w2 Protokoll, w3
 Voraussetzung: virtio-net liefert vollständige Prüfsummen, weil `VIRTIO_NET_F_GUEST_CSUM` nicht ausgehandelt wird (VIRTIO 1.2, 5.1.6.4.1: ohne dieses Merkmal sind die Flags im Paketkopf 0 und die Prüfsummen gültig). Wird das Merkmal später für Beschleunigung ausgehandelt, muss die Prüfung `VIRTIO_NET_HDR_F_NEEDS_CSUM` auswerten.
 
 Ein verworfenes Paket meldet `NET PRUEFSUMME IP|ICMP|UDP|TCP`. Nachweis mit vier Testbauten, die je ein Byte im ankommenden Paket verfälschen (Bit 0 des TTL beziehungsweise des letzten Nutzlastbytes): jede Verfälschung wird an genau der erwarteten Stelle erkannt, der unverfälschte Bau läuft bis `HTTP HTTP/1.1 200 OK` durch. Über 10 s: 8 Aufrufe von `net_sum_check` (3 UDP, 5 TCP), 0 Fehlschläge.
+
+## Netzwerk, Fehlersuche (14.09.2026)
+
+| Fund | Behebung | Beleg |
+|---|---|---|
+| `timer_tick`: Netz-Zeitgeberabfrage hinter `cbz w1, timer_tick_blink`, lief nur bei aktiver Animation | eigenes Sprungziel `timer_tick_net`, keine Größenänderung in `.text.boot` (Füllung weiterhin 16 Byte) | Testbau DNS an 10.0.2.99: `DNS KEINE ANTWORT` nach 3 × 90 Ticks; Testbau TCP an 10.0.2.99:80: `TCP KEINE ANTWORT` nach 4 × 45 Ticks |
+| IP-Fragmente (MF-Bit oder Fragment-Offset ≠ 0) wurden als vollständige Pakete verarbeitet | `IP_FRAGMENT_MASK` `0x3fff` über dem Wort bei Offset 6: Bit 13 "More Fragments" und 13 Bit Fragment-Offset; Treffer → `NET FRAGMENT VERWORFEN` | RFC 791, Abschnitt 3.1 "Flags" und "Fragment Offset" |
+| `dns_skip_name` ohne Paketgrenze | zweites Argument `x1` = Paketende, Überschreiten liefert das Ende zurück, die Längenprüfungen dahinter greifen dann | RFC 1035, Abschnitt 4.1.4 (Namen als Labelfolge oder Zeiger) |
+
+Bewusst nicht enthalten: Wiederzusammensetzen von Fragmenten (RFC 791, Abschnitt 3.2). Das System sendet mit `TCP_MSS` 1460 und bietet 4096 Byte Fenster, im Emulator entstehen keine Fragmente; auf echter Hardware hinter einem Router mit kleinerer MTU wäre es der nächste Schritt.

@@ -205,6 +205,7 @@
 .equ IP_TTL,                8
 .equ IP_PROTO,              9
 .equ IP_CHECKSUM,           10
+.equ IP_FRAGMENT_MASK,      0x3fff
 .equ IP_SRC,                12
 .equ IP_DST,                16
 .equ IP_HDR_SIZE,           20
@@ -7376,11 +7377,12 @@ timer_tick:
     msr     cntv_tval_el0, x1
     ladr    x0, anim_active
     ldr     w1, [x0]
-    cbz     w1, timer_tick_blink
+    cbz     w1, timer_tick_net
     ladr    x0, anim_pending
     mov     w1, #1
     strb    w1, [x0]
 
+timer_tick_net:
     ladr    x0, net_timer_armed
     ldrb    w1, [x0]
     cbz     w1, timer_tick_blink
@@ -8532,6 +8534,12 @@ net_ip_handle:
     bl      net_checksum
     cbnz    w0, net_ip_handle_bad_ip
     mov     x0, x19
+    mov     x1, #IP_FLAGS
+    bl      mem_read16be
+    mov     w1, #IP_FRAGMENT_MASK
+    tst     w0, w1
+    b.ne    net_ip_handle_fragment
+    mov     x0, x19
     mov     x1, #IP_DST
     bl      mem_read32be
     ladr    x1, net_last_dst
@@ -8595,6 +8603,11 @@ net_ip_handle_tcp:
     add     x0, x19, x21
     sub     w1, w20, w21
     bl      tcp_handle
+    b       net_ip_handle_done
+
+net_ip_handle_fragment:
+    ladr    x0, net_fragment_msg
+    bl      uart_puts
     b       net_ip_handle_done
 
 net_ip_handle_bad_ip:
@@ -9055,6 +9068,8 @@ dns_encode_end:
     ret
 
 dns_skip_name:
+    cmp     x0, x1
+    b.hs    dns_skip_name_over
     ldrb    w2, [x0]
     cbz     w2, dns_skip_name_end
     and     w3, w2, #0xc0
@@ -9070,6 +9085,10 @@ dns_skip_name_ptr:
 
 dns_skip_name_end:
     add     x0, x0, #1
+    ret
+
+dns_skip_name_over:
+    mov     x0, x1
     ret
 
 dns_handle:
@@ -9111,6 +9130,7 @@ dns_handle_questions:
     cbz     w21, dns_handle_answers
     cmp     x0, x20
     b.hs    dns_handle_noanswer
+    mov     x1, x20
     bl      dns_skip_name
     add     x0, x0, #4
     sub     w21, w21, #1
@@ -9121,6 +9141,7 @@ dns_handle_answers:
     add     x1, x0, #12
     cmp     x1, x20
     b.hi    dns_handle_noanswer
+    mov     x1, x20
     bl      dns_skip_name
     add     x1, x0, #10
     cmp     x1, x20
@@ -10312,6 +10333,8 @@ net_ready_msg:
     .asciz  "NET MAC "
 net_arp_msg:
     .asciz  "ARP 10.0.2.2 = "
+net_fragment_msg:
+    .asciz  "NET FRAGMENT VERWORFEN\r\n"
 net_sum_msg:
     .asciz  "NET PRUEFSUMME "
 net_sum_ip_name:
