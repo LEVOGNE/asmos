@@ -1,4 +1,4 @@
-import sys, os, re, bisect, hashlib, subprocess, tarfile, time, urllib.request, collections, socket, json
+import sys, os, re, bisect, hashlib, subprocess, tarfile, time, urllib.request, collections, socket, json, threading
 
 QEMU_VERSION = "11.1.1"
 QEMU_URL = f"https://download.qemu.org/qemu-{QEMU_VERSION}.tar.xz"
@@ -180,22 +180,71 @@ class Eingabe:
         self.sock.close()
 
 
+class SerialLeser:
+    def __init__(self, sockpfad, datei):
+        self.sockpfad, self.datei, self.text = sockpfad, datei, ""
+        self.faden = threading.Thread(target=self.lesen, daemon=True)
+
+    def starten(self):
+        for _ in range(100):
+            try:
+                self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self.sock.connect(self.sockpfad)
+                break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            raise SystemExit("FEHLER: serieller Socket nicht erreichbar")
+        self.faden.start()
+        return self
+
+    def lesen(self):
+        sock = self.sock
+        with open(self.datei, "w") as f:
+            while True:
+                daten = sock.recv(4096)
+                if not daten:
+                    return
+                stueck = daten.decode(errors="replace")
+                self.text += stueck
+                f.write(stueck)
+                f.flush()
+
+    def warten_auf(self, muster, sekunden=60):
+        for _ in range(int(sekunden * 10)):
+            if muster in self.text:
+                return True
+            time.sleep(0.1)
+        return False
+
+
 class Szenario:
-    WARTEN = 3.0
+    WARTEN = 4.0
     SCHRITT = 0.02
 
     def __init__(self, name, breite, hoehe):
         self.name, self.breite, self.hoehe = name, breite, hoehe
 
-    def abspielen(self, eingabe):
+    def abspielen(self, eingabe, seriell):
+        eingabe.verbinden()
+        eingabe.befehl("cont")
+        if not seriell.warten_auf("BOOT OK"):
+            raise SystemExit("FEHLER: BOOT OK nicht erreicht")
         time.sleep(self.WARTEN)
         if self.name == "idle":
+            eingabe.schliessen()
             return
-        eingabe.verbinden()
         if self.name == "move":
             for i in range(200):
                 eingabe.bewegen(200 + i * 12, 300 + (i % 40) * 8)
                 time.sleep(self.SCHRITT)
+        elif self.name == "click":
+            eingabe.bewegen(400, 186)
+            time.sleep(0.2)
+            eingabe.taste(True)
+            time.sleep(0.1)
+            eingabe.taste(False)
+            time.sleep(1.0)
         elif self.name == "drag":
             x, y = 960 + 700, 640 + 26
             eingabe.bewegen(x, y)
@@ -216,21 +265,28 @@ class Lauf:
         self.log = os.path.join(projekt.build, f"{name}.plugin")
         self.serial = os.path.join(projekt.build, f"{name}.serial")
         self.qmp = os.path.join(projekt.build, f"{name}.qmp")
+        self.sersock = os.path.join(projekt.build, f"{name}.ser")
 
     def starten(self, plugin_arg):
-        for f in (self.log, self.serial, self.qmp):
+        for f in (self.log, self.serial, self.qmp, self.sersock):
             if os.path.exists(f):
                 os.remove(f)
+        seriell = f"unix:{self.sersock},server,nowait" if self.szenario else f"file:{self.serial}"
         cmd = ["qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a72"] + self.p.geraete() + \
-              ["-display", "none", "-serial", f"file:{self.serial}", "-monitor", "stdio",
+              ["-display", "none", "-serial", seriell, "-monitor", "stdio",
                "-qmp", f"unix:{self.qmp},server,nowait"] + \
-              (["-icount", f"shift={ICOUNT_SHIFT},sleep=on"] if self.szenario else []) + \
+              (["-icount", f"shift={ICOUNT_SHIFT},sleep=on", "-S"] if self.szenario else []) + \
               ["-kernel", self.p.kernel(), "-plugin", plugin_arg, "-d", "plugin", "-D", self.log]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        if self.szenario:
-            self.szenario.abspielen(Eingabe(self.qmp, self.szenario.breite, self.szenario.hoehe))
-        else:
-            time.sleep(self.sekunden)
+        try:
+            if self.szenario:
+                leser = SerialLeser(self.sersock, self.serial).starten()
+                self.szenario.abspielen(Eingabe(self.qmp, self.szenario.breite, self.szenario.hoehe), leser)
+            else:
+                time.sleep(self.sekunden)
+        except BaseException:
+            proc.kill()
+            raise
         try:
             _, err = proc.communicate(input="quit\n", timeout=60)
         except subprocess.TimeoutExpired:
@@ -281,7 +337,7 @@ class Profil:
 
 
 class Szenen:
-    EREIGNISSE = {"move": 200, "drag": 100}
+    EREIGNISSE = {"move": 200, "click": 1, "drag": 100}
 
     def __init__(self, projekt, bau, symbole):
         self.p, self.bau, self.s = projekt, bau, symbole

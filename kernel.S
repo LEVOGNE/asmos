@@ -441,6 +441,7 @@
 .equ WIN_KIND,              56
 .equ WIN_BUF,               64
 .equ WIN_BUF_DIRTY,         72
+.equ WIN_BUF_TITLE,         73
 .equ WIN_SIZE,              80
 .equ WIN_BUF_BUDGET,        (16 * 1024 * 1024)
 
@@ -2560,7 +2561,7 @@ anim_apply_write:
 anim_apply_focus:
     str     x21, [x3, #WIN_FOCUS]
     mov     w4, #1
-    strb    w4, [x3, #WIN_BUF_DIRTY]
+    strb    w4, [x3, #WIN_BUF_TITLE]
     b       anim_apply_mark
 
 anim_apply_alpha:
@@ -3163,6 +3164,7 @@ win_add:
     str     x15, [x13]
     mov     w16, #1
     strb    w16, [x11, #WIN_BUF_DIRTY]
+    strb    wzr, [x11, #WIN_BUF_TITLE]
     b       win_add_buffer_done
 
 win_add_no_buffer:
@@ -3670,17 +3672,33 @@ win_draw_one:
     ldr     x23, [x19, #WIN_BUF]
     cbz     x23, win_draw_one_direct
     ldrb    w0, [x19, #WIN_BUF_DIRTY]
+    cbnz    w0, win_draw_one_full
+    ldrb    w0, [x19, #WIN_BUF_TITLE]
     cbz     w0, win_draw_one_blit
+    mov     w0, #WIN_BORDER
+    mov     w1, #WIN_BORDER
+    ldr     w2, [x19, #WIN_W]
+    sub     w2, w2, #(WIN_BORDER * 2)
+    mov     w3, #WIN_TITLEBAR_H
+    b       win_draw_one_render
+
+win_draw_one_full:
+    mov     w0, #0
+    mov     w1, #0
+    ldr     w2, [x19, #WIN_W]
+    ldr     w3, [x19, #WIN_H]
+
+win_draw_one_render:
+    stp     x0, x1, [sp, #-32]!
+    stp     x2, x3, [sp, #16]
     ladr    x0, fb_clip
     ldp     x24, x25, [x0]
     mov     x0, x23
     ldr     w1, [x19, #WIN_W]
     lsl     x1, x1, #2
     bl      fb_target_set
-    mov     w0, #0
-    mov     w1, #0
-    ldr     w2, [x19, #WIN_W]
-    ldr     w3, [x19, #WIN_H]
+    ldp     x2, x3, [sp, #16]
+    ldp     x0, x1, [sp], #32
     bl      fb_clip_set
     ladr    x0, win_color_fade
     strb    wzr, [x0]
@@ -3693,6 +3711,7 @@ win_draw_one:
     mov     x1, x25
     bl      fb_clip_restore
     strb    wzr, [x19, #WIN_BUF_DIRTY]
+    strb    wzr, [x19, #WIN_BUF_TITLE]
 
 win_draw_one_blit:
     mov     w0, w20

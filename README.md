@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-26.352%20Byte-brightgreen?style=flat-square" alt="26352 Byte">
+<img src="https://img.shields.io/badge/Kernel-26.408%20Byte-brightgreen?style=flat-square" alt="26408 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>26.352&nbsp;Byte</b> groß, also <b>26&nbsp;KB</b>.<br>
+Das fertige System ist <b>26.408&nbsp;Byte</b> groß, also <b>26&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -174,7 +174,7 @@ In `kernel.S` stecken **850 Sprungmarken**. Jede gehört zu einem Zuständigkeit
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **26.352 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **26.408 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -347,7 +347,7 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 | Eigener Quelltext | 204 KB in drei Dateien |
 | Zeilen Assembler | 8424 |
 | Sprungmarken | 850 |
-| **Fertiges Betriebssystem** | **26.352 Byte** |
+| **Fertiges Betriebssystem** | **26.408 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -452,3 +452,16 @@ Ein Ziehschritt kostet emuliert jetzt rund 0,7 Millisekunden. Von den 1,4 Millio
 **Messgenauigkeit.** Die Differenzmessungen (`scenes`) laufen jetzt mit QEMU-`icount`, die Gastuhr hängt damit an der Instruktionszahl statt an der Wanduhr. Zwei Läufe unterscheiden sich um 0,006 % statt vorher bis zu 10 %. Das Startprofil läuft ohne `icount`, weil es sonst weniger Einblendbilder gäbe und die Zahl nicht mehr mit den früheren Runden vergleichbar wäre.
 
 **Was jetzt noch offen ist.** Nichts mehr auf der Leistungsseite. Ein Ziehschritt liegt unter einer Millisekunde, ab hier begrenzen der 30-Hz-Zeitgeber und die Abtastrate der Grafikausgabe, nicht der Prozessor. Die nächste Arbeit ist wieder ein Feature.
+
+### Stand 14.09.2026, vierte Runde: Titelleiste statt ganzes Fenster
+
+Beim Anklicken eines Fensters wechselt die Titelleiste über 180 ms ihre Farbe. Bisher wurde dafür in jedem Bild der Animation der komplette Fensterpuffer neu gerastert, samt Dateiliste. Jetzt merkt sich das Fenster nur "Titelleiste ungültig", und der Zeichner rastert mit einem Clip auf die Titelleiste: Fläche und Dateiliste fallen am Clip weg, übrig bleiben Titelfüllung und Titeltext. Kein neuer Zeichencode, nur ein anderer Ausschnitt.
+
+| Lastfall | vorher | nachher |
+|---|---|---|
+| ein Klick auf eine Titelleiste (Fokuswechsel, 6 Bilder) | 15.446.746 | **8.369.690** (−46 %) |
+| ein Ziehschritt (das Szenario beginnt mit so einem Klick) | 1.445.168 | **1.243.728** (−14 %) |
+
+Bild byteweise identisch, geprüft auch nach einem Fokuswechsel gegen den alten Kernel.
+
+**Nebenbei am Werkzeug repariert.** Die Szenarien starteten bisher nach einer festen Wartezeit von drei Sekunden. Unter `icount` läuft der Gast gedrosselt, und je nach Rechnerlast war der Start nach drei Sekunden noch nicht fertig; der Rest des Starts landete dann im Ergebnis des Szenarios. Jetzt startet QEMU angehalten, das Werkzeug verbindet sich mit der seriellen Leitung, lässt den Gast laufen und wartet auf `BOOT OK` plus vier Sekunden Ruhe. Erst dann beginnt die Eingabe. Dazu ein Szenario `click`, und ein Abbruch im Werkzeug beendet QEMU jetzt immer mit, statt ein Abbild gesperrt zurückzulassen.
