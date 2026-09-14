@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-33.336%20Byte-brightgreen?style=flat-square" alt="33336 Byte">
+<img src="https://img.shields.io/badge/Kernel-34.128%20Byte-brightgreen?style=flat-square" alt="34128 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>33.336&nbsp;Byte</b> groß, also <b>33&nbsp;KB</b>.<br>
+Das fertige System ist <b>34.128&nbsp;Byte</b> groß, also <b>33&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -44,7 +44,7 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Speicher verwalten</b></td><td>Erkennt selbst, wie viel Arbeitsspeicher da ist, verwaltet ihn seitenweise und schaltet die Speicherverwaltungseinheit des Prozessors ein</td></tr>
 <tr><td><b>Dateien lesen</b></td><td>Spricht mit einem Datenträger und liest echte FAT32-Dateien, so wie ein USB-Stick sie enthält</td></tr>
 <tr><td><b>Dateien zeigen</b></td><td>Ein Fenster listet den Inhalt des Datenträgers auf, gelesen beim Start aus dem echten Wurzelverzeichnis. Der Text wird auf den Fensterkörper beschnitten, läuft also nie über den Rand</td></tr>
-<tr><td><b>Ins Netz gehen</b></td><td><b>Eigener Netzwerktreiber und die ersten Protokolle.</b> virtio-net mit Empfangs- und Sendequeue, Ethernet, ARP, IPv4, ICMP, UDP und DHCP: Beim Start holt sich das System per DHCP Adresse, Gateway und Nameserver, fragt das Gateway per ARP nach seiner Hardwareadresse, schickt ihm ein Ping, löst per DNS einen Namen auf und holt sich per TCP die erste Zeile einer Webseite: <code>HTTP/1.1 200 OK</code> von example.com. Alles erscheint auf der seriellen Leitung</td></tr>
+<tr><td><b>Ins Netz gehen</b></td><td><b>Eigener Netzwerktreiber und die ersten Protokolle.</b> virtio-net mit Empfangs- und Sendequeue, Ethernet, ARP, IPv4, ICMP, UDP und DHCP: Beim Start holt sich das System per DHCP Adresse, Gateway und Nameserver, fragt das Gateway per ARP nach seiner Hardwareadresse, schickt ihm ein Ping, löst per DNS einen Namen auf und holt sich per TCP die erste Zeile einer Webseite: <code>HTTP/1.1 200 OK</code> von example.com. Bis zu vier Verbindungen laufen gleichzeitig, jede mit eigenem Sendepuffer und eigener Empfangsroutine. Alles erscheint auf der seriellen Leitung</td></tr>
 <tr><td><b>Sich abschalten</b></td><td>Roter Knopf oben rechts: Unterbrechungen sperren, Zeitgeber anhalten, Geräte zurücksetzen, Puffer überschreiben, Maschine abschalten</td></tr>
 </table>
 
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>248 KB · 10652 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>254 KB · 10895 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,25 +146,26 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 10652 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 10895 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1062 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1081 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
+| `net_` `tcp_` `dhcp_` `dns_` `http_` | 214 | **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP mit Verbindungstabelle |
 | `font_` `glyph_` | 117 | TrueType auswerten und über die Vektor-Engine zeichnen |
-| `win_` `dirty_` | 85 | Fenster, Stapelreihenfolge, Ziehen, Teilaktualisierung |
+| `win_` `dirty_` | 110 | Fenster, Stapelreihenfolge, Ziehen, Teilaktualisierung, Fensterpuffer |
+| `fb_` `cursor_` | 86 | Bildschirm, Bildpunkte, Mauszeiger |
 | `blk_` `fat_` | 83 | Datenträger und Dateisystem |
 | `anim_` | 80 | **Animationsschicht**: Zeitmessung, Verläufe, Beschleunigungskurven |
-| `mem_` `pmm_` `mmu_` `fdt_` `ram_` | 70 | Speicherverwaltung und Hardware-Erkennung |
-| `virtio_` `mouse_` `click_` | 68 | Gerätetreiber, Maus, Klickerkennung |
-| `fb_` `cursor_` | 59 | Bildschirm, Bildpunkte, Mauszeiger |
-| `console_` `string_` `out_` `power_` | 56 | Konsole, Textwerkzeuge, Herunterfahren |
-| `vg_` `cov_` `edge_` `icon_` | 53 | **Vektor-Engine**: Pfade, Kurven, Füllung, Strich, Kantenglättung, Icons |
-| `vec_` `panic_` `irq_` `gic_` | 36 | Fehlerbehandlung und Unterbrechungen |
-| `uart_` | 27 | Serielle Schnittstelle, Textausgabe, Tastatureingabe |
+| `mem_` `pmm_` `mmu_` `fdt_` `ram_` | 74 | Speicherverwaltung und Hardware-Erkennung |
+| `virtio_` `mouse_` `click_` | 73 | Gerätetreiber, Maus, Klickerkennung |
+| `vg_` `cov_` `edge_` `icon_` | 60 | **Vektor-Engine**: Pfade, Kurven, Füllung, Strich, Kantenglättung, Icons |
+| `console_` `string_` `out_` `power_` | 59 | Konsole, Textwerkzeuge, Herunterfahren |
+| `vec_` `panic_` `irq_` `gic_` | 37 | Fehlerbehandlung und Unterbrechungen |
+| `uart_` | 29 | Serielle Schnittstelle, Textausgabe, Tastatureingabe |
 | `boot_` | 15 | Hochfahren, Privilegstufe, Speicher vorbereiten |
 | `fwcfg_` | 13 | Konfigurationsschnittstelle des Emulators |
 | `timer_` | 9 | Zeitgeber |
@@ -175,7 +176,7 @@ In `kernel.S` stecken **1062 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **33.336 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **34.128 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -285,7 +286,7 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 7. Speicherverwaltung, MMU aktiv | ✅ |
 | 8. Datenträger und FAT32 lesend | ✅ |
 | 9. Fenstersystem | ✅ inklusive erstem Fensterinhalt |
-| 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP, DNS, TCP-Client, Härtung offen |
+| 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP, DNS, TCP-Client mit Verbindungstabelle, Härtung teilweise |
 | 11. Verschlüsselte Verbindungen | offen |
 | 12. Vektorgrafik | ✅ Schrift, Zeiger und Icons, offen als Zeichenfläche für Anwendungen |
 | 13. Animationsschicht und Compositor | ✅ Animationen, Fensterpuffer als Ebenen, Gruppendeckkraft; Zoom und Drehung offen |
@@ -345,10 +346,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 252 KB in drei Dateien |
-| Zeilen Assembler | 10652 |
-| Sprungmarken | 1062 |
-| **Fertiges Betriebssystem** | **33.336 Byte** |
+| Eigener Quelltext | 260 KB in drei Dateien |
+| Zeilen Assembler | 10895 |
+| Sprungmarken | 1081 |
+| **Fertiges Betriebssystem** | **34.128 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -493,3 +494,19 @@ Bisher fragte die Hauptschleife das Netzgerät bei jedem Aufwachen ab, also mit 
 | Netzarbeit nach Ende der Kette | keine, auch nach 10 s nicht |
 
 **Zwei Dinge, die dabei aufgefallen sind.** Erstens meldete die Linker-Zusicherung, dass eine Routine im Füllraum der Fehlerbehandlungstabelle zu groß geworden war, genau die Prüfung, die dafür gebaut wurde; die Routine wurde gegen zwei kleinere getauscht. Zweitens wuchs der Startcode still um 16 Byte über seine 2048-Byte-Grenze, und die Tabelle rutschte um 2 KB nach hinten, ohne Meldung, nur am Größensprung zu sehen. Dafür gibt es jetzt ebenfalls eine Zusicherung: Ein Überlauf des Startcodes ist ein Baufehler. Größe des fertigen Systems: 33.336 Byte.
+
+### Stand 14.09.2026, siebte Runde: die Verbindungstabelle
+
+Bisher kannte der TCP-Teil genau eine Verbindung, deren Zustand in festen Variablen lag, und die Anfrage wurde direkt aus dem Code heraus gesendet. Jetzt gibt es eine Tabelle mit vier Plätzen. Jeder Platz hält Zustand, Ports, Gegenstelle, Sequenznummern, Zeitgeber, einen eigenen Sendepuffer von 1 KB und einen Zeiger auf die Routine, die ankommende Daten bekommt. Wer eine Verbindung öffnet, übergibt Adresse, Port und diese Routine und bekommt einen Platz zurück; `tcp_write` legt Daten in den Puffer, gesendet wird segmentweise, bestätigte Bytes rutschen aus dem Puffer, unbestätigte werden nach 1,5 s neu gesendet. Der HTTP-Test ist damit nur noch ein Aufrufer: er öffnet, schreibt seine Anfrage und liest die erste Zeile der Antwort.
+
+| Kennzahl | vorher | nachher |
+|---|---|---|
+| Größe des fertigen Systems | 33.336 Byte | **34.128 Byte** (+792 für Tabelle, Sendepuffer, `tcp_open`, `tcp_write`, `tcp_close`, beide FIN-Wartezustände) |
+| gleichzeitige Verbindungen | 1 | 4, die fünfte meldet `TCP TABELLE VOLL` |
+| Arbeitsspeicher für TCP | 32 Byte | 4.288 Byte |
+| Netz-Interrupts über 10 s | 14 | 13 |
+| TCP-Segmente gesendet | 5 | 5 |
+| Zeitgeber-Ticks für das Netz | 2 | 2 |
+| Netzarbeit nach Ende der Kette | keine | keine |
+
+Nachgewiesen mit einem Testbau, der beim Start fünf Verbindungen zu example.com öffnet: vier Mal `TCP VERBUNDEN`, vier Mal `HTTP HTTP/1.1 200 OK`, vier Mal `TCP GESCHLOSSEN`, ein Mal `TCP TABELLE VOLL`, keine Panik. Das Bild ist byteweise gleich der Referenz, denn am Bild hat sich nichts geändert.

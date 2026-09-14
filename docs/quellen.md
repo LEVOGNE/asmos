@@ -1613,7 +1613,7 @@ Zustandsautomat (Ausschnitt aus RFC 793, Abschnitt 3.2): `CLOSED` → SYN gesend
 
 **Gefundener Fehler beim Bau:** Die Nutzlastlänge wurde aus der Rahmenlänge statt aus der IP-Gesamtlänge abgeleitet. Ein reines ACK ist per Ethernet auf 60 Byte aufgefüllt, die 6 Füllbytes wurden als Daten übernommen. Behoben in `net_ip_handle`: die verarbeitete Länge ist das Minimum aus Rahmenlänge und IP-Gesamtlänge (RFC 791, "Total Length"; RFC 894, Auffüllung auf Mindestlänge).
 
-Nicht enthalten: Fenstersteuerung beim Senden (die Anfrage ist kleiner als jedes Fenster), Sendepuffer für mehr als ein Segment, gleichzeitige Verbindungen, `TIME_WAIT`, Optionen jenseits MSS, Prüfung eingehender Prüfsummen. Gemessen: `TCP SYN an 104.20.23.154:80`, `TCP VERBUNDEN, sende GET`, `HTTP HTTP/1.1 200 OK`, `TCP GESCHLOSSEN`.
+Nicht enthalten: Fenstersteuerung beim Senden (die Anfrage ist kleiner als jedes Fenster), Sendepuffer für mehr als ein Segment, gleichzeitige Verbindungen, `TIME_WAIT`, Optionen jenseits MSS, Prüfung eingehender Prüfsummen. Gemessen: `TCP SYN an 104.20.23.154:80`, `TCP VERBUNDEN, sende GET`, `HTTP HTTP/1.1 200 OK`, `TCP GESCHLOSSEN`. Sendepuffer und gleichzeitige Verbindungen sind seit Härtung 2 enthalten.
 
 ## Netzwerk, Härtung 1: Empfang per Interrupt (14.09.2026)
 
@@ -1626,3 +1626,30 @@ Die Protokoll-Zeitgeber (DHCP, DNS, TCP-Wiederholung) laufen über `net_tick`, a
 **Nebenbefund:** `console_pending` lag im Füllraum von Vektoreintrag 3 und überschritt mit zwei neuen Merkmalen die 128 Byte; die Linker-Zusicherung hat es gemeldet. Getauscht gegen `net_timer_arm` und `net_timer_check` (108 Byte), `console_pending` liegt jetzt in `.text`.
 
 **Nachtrag, stumme Verschiebung der Vektortabelle:** Die fünf neuen Zeilen in `timer_tick` ließen `.text.boot` auf 2.064 Byte wachsen, 16 über der 2048er-Grenze. Der Linker rückte die Vektortabelle auf Offset 4096 und füllte 2.032 Byte, ohne Meldung; aufgefallen nur am Größensprung von 33.016 auf 35.336 Byte. Behoben durch Verschieben von `string_starts_with` (36 Byte) aus `.text.boot`, Füllung jetzt 16 Byte. Neue Zusicherung im Linkerskript: `vec_table - ADDR(.text) == 0x800`, ein Überlauf des Startblocks ist damit ein Baufehler. Regel: Wer Code in `.text.boot` (`boot_`, `vec_init`, `fwcfg_`, `mmu_`, `fdt_`, `gic_`, `timer_`) ändert, prüft die Füllung in `kernel.map`.
+
+## Netzwerk, Härtung 2: Verbindungstabelle (14.09.2026)
+
+Der Verbindungsblock (TCB, RFC 793 Abschnitt 3.2 "Transmission Control Block") liegt viermal in `tcp_table`, je `TCB_SIZE` = 48 + 1024 Byte:
+
+| Feld | Offset | Breite | Inhalt |
+|---|---|---|---|
+| `TCB_STATE` | 0 | 1 | `CLOSED` 0, `SYN_SENT` 1, `ESTABLISHED` 2, `LAST_ACK` 3, `FIN_WAIT_1` 4, `FIN_WAIT_2` 5 |
+| `TCB_TRIES` | 1 | 1 | Wiederholungen seit der letzten Bestätigung |
+| `TCB_SEEN` | 2 | 1 | frei für den Aufrufer (HTTP: erste Zeile schon ausgegeben) |
+| `TCB_LOCAL_PORT` | 4 | 4 | `TCP_LOCAL_PORT_BASE` + Platznummer |
+| `TCB_REMOTE_IP`, `TCB_REMOTE_PORT` | 8, 12 | 4, 4 | Gegenstelle |
+| `TCB_ISS`, `TCB_SND_NXT`, `TCB_SND_UNA`, `TCB_RCV_NXT` | 16, 20, 24, 28 | 4 | Sequenzvariablen nach RFC 793 Abschnitt 3.3 |
+| `TCB_TIMER` | 32 | 4 | Ticks seit dem letzten Senden |
+| `TCB_TX_LEN` | 36 | 4 | belegte Bytes im Sendepuffer, gezählt ab `SND_UNA` |
+| `TCB_HANDLER` | 40 | 8 | Routine, aufgerufen mit `x0` = TCB, `x1` = Daten, `w2` = Länge; Länge 0 bedeutet Verbindungsende |
+| `TCB_TX_BUF` | 48 | 1024 | Sendepuffer |
+
+Schnittstelle: `tcp_open(w0 IP, w1 Port, x2 Handler)` gibt den TCB oder 0 (`TCP TABELLE VOLL`) zurück, `tcp_write(x0 TCB, x1 Daten, w2 Länge)` legt in den Puffer und sendet sofort, was in `ESTABLISHED` gesendet werden darf, `tcp_close(x0 TCB)` sendet FIN und geht nach `FIN_WAIT_1`. Eingehende Segmente werden über Zielport, Quellport und Quelladresse (`net_last_src`) dem Platz zugeordnet; unbekannte Vierertupel werden verworfen, ohne RST (RFC 793 verlangt RST, offen).
+
+Senden: `tcp_flush` schickt alles zwischen `SND_NXT` und `SND_UNA + TX_LEN` in Segmenten bis `TCP_MSS`; das Empfangsfenster der Gegenstelle wird noch nicht beachtet (die Sendemenge des Systems ist mit 1 KB kleiner als jedes übliche Fenster). Eine Bestätigung im Bereich `SND_UNA < ACK ≤ SND_NXT` rückt `SND_UNA` vor und schiebt die bestätigten Bytes aus dem Puffer (RFC 793 Abschnitt 3.9, "SEGMENT ARRIVES", fünfter Schritt). Wiederholung nach `TCP_RETRY_TICKS` ab `SND_UNA`, nach `TCP_RETRY_MAX` Versuchen `TCP KEINE ANTWORT`; `FIN_WAIT_2` wird ebenfalls gezählt und nach derselben Frist beendet, damit kein Platz an einer Gegenstelle hängen bleibt, die ihr FIN nie schickt.
+
+Abbau: FIN der Gegenstelle in `ESTABLISHED` → FIN+ACK → `LAST_ACK`; in `FIN_WAIT_1` (gleichzeitiger Abbau) → ACK → `LAST_ACK`; in `FIN_WAIT_2` → ACK → `CLOSED`. Kein `TIME_WAIT`: der Platz ist sofort wieder frei, und die Startsequenz der nächsten Verbindung stammt aus `cntvct_el0` plus Platznummer × 65536, so dass sich alte Segmente nicht mit neuen überlagern sollten; RFC 793 fordert `TIME_WAIT` mit 2 × MSL, offen.
+
+Der Zeitgeber ist nur scharf, solange ein Platz wartet: `tcp_tick` gibt in `w0` zurück, ob ein Platz in `SYN_SENT`, `LAST_ACK`, `FIN_WAIT_1`, `FIN_WAIT_2` oder mit unbestätigten Daten ist; `net_tick` verknüpft das mit DHCP und DNS und schreibt `net_timer_armed` direkt (das frühere `net_timer_check` ist entfallen, im Füllraum von Vektoreintrag 3 liegt jetzt `net_put_ip`).
+
+Gemessen mit einem Testbau, der fünf Verbindungen gleichzeitig öffnet: vier `TCP VERBUNDEN`, vier `HTTP HTTP/1.1 200 OK`, vier `TCP GESCHLOSSEN`, einmal `TCP TABELLE VOLL`. Im normalen Bau über 10 s: 13 Interrupts, 5 gesendete Segmente, 2 Netz-Ticks, danach keine Netzarbeit.
