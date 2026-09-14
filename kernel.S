@@ -220,8 +220,49 @@
 .equ ICMP_ECHO_REPLY,       0
 .equ ICMP_ECHO_REQUEST,     8
 .equ ICMP_PAYLOAD,          32
-.equ NET_IP_SELF,           0x0a00020f
-.equ NET_IP_GATEWAY,        0x0a000202
+.equ NET_IP_BROADCAST,      0xffffffff
+.equ IP_PROTO_UDP,          17
+.equ IP_IHL_MASK,           0x0f
+.equ UDP_SRC,               0
+.equ UDP_DST,               2
+.equ UDP_LEN,               4
+.equ UDP_CHECKSUM,          6
+.equ UDP_HDR_SIZE,          8
+.equ UDP_PORT_DHCP_SERVER,  67
+.equ UDP_PORT_DHCP_CLIENT,  68
+.equ DHCP_OP,               0
+.equ DHCP_HTYPE,            1
+.equ DHCP_HLEN,             2
+.equ DHCP_XID,              4
+.equ DHCP_FLAGS,            10
+.equ DHCP_YIADDR,           16
+.equ DHCP_CHADDR,           28
+.equ DHCP_COOKIE,           236
+.equ DHCP_OPTIONS,          240
+.equ DHCP_MIN_SIZE,         300
+.equ DHCP_BOOTREQUEST,      1
+.equ DHCP_BOOTREPLY,        2
+.equ DHCP_FLAG_BROADCAST,   0x8000
+.equ DHCP_MAGIC,            0x63825363
+.equ DHCP_OPT_SUBNET,       1
+.equ DHCP_OPT_ROUTER,       3
+.equ DHCP_OPT_DNS,          6
+.equ DHCP_OPT_REQ_IP,       50
+.equ DHCP_OPT_MSG_TYPE,     53
+.equ DHCP_OPT_SERVER_ID,    54
+.equ DHCP_OPT_PARAM_LIST,   55
+.equ DHCP_OPT_END,          255
+.equ DHCP_DISCOVER,         1
+.equ DHCP_OFFER,            2
+.equ DHCP_REQUEST,          3
+.equ DHCP_ACK,              5
+.equ DHCP_XID_VALUE,        0x61736d4f
+.equ DHCP_STATE_NONE,       0
+.equ DHCP_STATE_DISCOVER,   1
+.equ DHCP_STATE_REQUEST,    2
+.equ DHCP_STATE_BOUND,      3
+.equ DHCP_RETRY_TICKS,      60
+.equ DHCP_RETRY_MAX,        5
 .equ NET_STATE_IDLE,        0
 .equ NET_STATE_ARP_SENT,    1
 .equ NET_STATE_ARP_OK,      2
@@ -7714,7 +7755,7 @@ net_init_mac:
     bl      net_put_mac
     ladr    x0, uart_newline
     bl      uart_puts
-    bl      net_arp_request
+    bl      dhcp_discover
     b       net_init_done
 
 net_init_fail:
@@ -7809,6 +7850,7 @@ net_poll:
     cbz     x0, net_poll_none
     stp     x29, x30, [sp, #-32]!
     stp     x19, x20, [sp, #16]
+    bl      dhcp_tick
 
 net_poll_loop:
     ladr    x19, net_rx_used
@@ -7948,7 +7990,8 @@ net_arp_build:
     strh    w2, [x19, #(ARP_SHA + 4)]
     mov     x0, x19
     mov     x1, #ARP_SPA
-    ldr     w2, =NET_IP_SELF
+    ladr    x2, net_ip
+    ldr     w2, [x2]
     bl      mem_write32be
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
@@ -7956,7 +7999,8 @@ net_arp_build:
 
 net_arp_request:
     stp     x29, x30, [sp, #-32]!
-    str     x19, [sp, #16]
+    stp     x19, x20, [sp, #16]
+    mov     w20, w0
     ladr    x0, net_mac_broadcast
     mov     w1, #ETH_TYPE_ARP
     bl      net_frame_begin
@@ -7967,14 +8011,14 @@ net_arp_request:
     strh    wzr, [x19, #(ARP_THA + 4)]
     mov     x0, x19
     mov     x1, #ARP_TPA
-    ldr     w2, =NET_IP_GATEWAY
+    mov     w2, w20
     bl      mem_write32be
     mov     w0, #(ETH_HDR_SIZE + ARP_SIZE)
     bl      net_send
     ladr    x0, net_state
     mov     w1, #NET_STATE_ARP_SENT
     strb    w1, [x0]
-    ldr     x19, [sp, #16]
+    ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
 
@@ -8019,7 +8063,9 @@ net_arp_handle:
     mov     x19, x0
     mov     x1, #ARP_TPA
     bl      mem_read32be
-    ldr     w1, =NET_IP_SELF
+    ladr    x1, net_ip
+    ldr     w1, [x1]
+    cbz     w1, net_arp_handle_done
     cmp     w0, w1
     b.ne    net_arp_handle_done
     mov     x0, x19
@@ -8049,7 +8095,8 @@ net_arp_reply_in:
     mov     x0, x19
     mov     x1, #ARP_SPA
     bl      mem_read32be
-    ldr     w1, =NET_IP_GATEWAY
+    ladr    x1, net_gw
+    ldr     w1, [x1]
     cmp     w0, w1
     b.ne    net_arp_handle_done
     ladr    x1, net_gw_mac
@@ -8105,10 +8152,13 @@ net_checksum_done:
     and     w0, w0, #0xffff
     ret
 
-net_ping_send:
-    stp     x29, x30, [sp, #-32]!
+net_ip_begin:
+    stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
-    ladr    x0, net_gw_mac
+    stp     x21, x22, [sp, #32]
+    mov     w20, w1
+    mov     w21, w2
+    mov     w22, w3
     mov     w1, #ETH_TYPE_IP
     bl      net_frame_begin
     mov     x19, x0
@@ -8117,22 +8167,29 @@ net_ping_send:
     strb    wzr, [x19, #1]
     mov     x0, x19
     mov     x1, #IP_TOTAL_LEN
-    mov     w2, #(IP_HDR_SIZE + ICMP_HDR_SIZE + ICMP_PAYLOAD)
+    add     w2, w22, #IP_HDR_SIZE
     bl      mem_write16be
-    strh    wzr, [x19, #IP_ID]
+    ladr    x2, net_ip_id
+    ldrh    w3, [x2]
+    add     w3, w3, #1
+    strh    w3, [x2]
+    mov     x0, x19
+    mov     x1, #IP_ID
+    mov     w2, w3
+    bl      mem_write16be
     strh    wzr, [x19, #IP_FLAGS]
     mov     w0, #IP_TTL_DEFAULT
     strb    w0, [x19, #IP_TTL]
-    mov     w0, #IP_PROTO_ICMP
-    strb    w0, [x19, #IP_PROTO]
+    strb    w21, [x19, #IP_PROTO]
     strh    wzr, [x19, #IP_CHECKSUM]
     mov     x0, x19
     mov     x1, #IP_SRC
-    ldr     w2, =NET_IP_SELF
+    ladr    x2, net_ip
+    ldr     w2, [x2]
     bl      mem_write32be
     mov     x0, x19
     mov     x1, #IP_DST
-    ldr     w2, =NET_IP_GATEWAY
+    mov     w2, w20
     bl      mem_write32be
     mov     x0, x19
     mov     w1, #IP_HDR_SIZE
@@ -8141,7 +8198,56 @@ net_ping_send:
     mov     x0, x19
     mov     x1, #IP_CHECKSUM
     bl      mem_write16be
-    add     x20, x19, #IP_HDR_SIZE
+    add     x0, x19, #IP_HDR_SIZE
+    add     w1, w22, #(ETH_HDR_SIZE + IP_HDR_SIZE)
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+net_udp_begin:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     w20, w2
+    mov     w21, w3
+    mov     w22, w4
+    mov     w2, #IP_PROTO_UDP
+    add     w3, w4, #UDP_HDR_SIZE
+    bl      net_ip_begin
+    mov     x19, x0
+    mov     w22, w1
+    mov     x0, x19
+    mov     x1, #UDP_SRC
+    mov     w2, w20
+    bl      mem_write16be
+    mov     x0, x19
+    mov     x1, #UDP_DST
+    mov     w2, w21
+    bl      mem_write16be
+    mov     x0, x19
+    mov     x1, #UDP_LEN
+    sub     w2, w22, #(ETH_HDR_SIZE + IP_HDR_SIZE)
+    bl      mem_write16be
+    strh    wzr, [x19, #UDP_CHECKSUM]
+    add     x0, x19, #UDP_HDR_SIZE
+    mov     w1, w22
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+net_ping_send:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    ladr    x0, net_gw_mac
+    ladr    x1, net_gw
+    ldr     w1, [x1]
+    mov     w2, #IP_PROTO_ICMP
+    mov     w3, #(ICMP_HDR_SIZE + ICMP_PAYLOAD)
+    bl      net_ip_begin
+    mov     x20, x0
+    mov     w19, w1
     mov     w0, #ICMP_ECHO_REQUEST
     strb    w0, [x20, #ICMP_TYPE]
     strb    wzr, [x20, #ICMP_CODE]
@@ -8170,7 +8276,7 @@ net_ping_payload:
     mov     x0, x20
     mov     x1, #ICMP_CHECKSUM
     bl      mem_write16be
-    mov     w0, #(ETH_HDR_SIZE + IP_HDR_SIZE + ICMP_HDR_SIZE + ICMP_PAYLOAD)
+    mov     w0, w19
     bl      net_send
     ladr    x0, net_state
     mov     w1, #NET_STATE_PING_SENT
@@ -8180,25 +8286,45 @@ net_ping_payload:
     ret
 
 net_ip_handle:
-    cmp     w1, #(IP_HDR_SIZE + ICMP_HDR_SIZE)
+    cmp     w1, #IP_HDR_SIZE
     b.lo    net_ip_handle_ret
-    stp     x29, x30, [sp, #-32]!
+    stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
     mov     x19, x0
     mov     w20, w1
     ldrb    w0, [x19, #IP_VER_IHL]
-    cmp     w0, #IP_VERSION_4
+    lsr     w1, w0, #4
+    cmp     w1, #4
     b.ne    net_ip_handle_done
-    ldrb    w0, [x19, #IP_PROTO]
-    cmp     w0, #IP_PROTO_ICMP
-    b.ne    net_ip_handle_done
+    and     w21, w0, #IP_IHL_MASK
+    lsl     w21, w21, #2
+    cmp     w21, #IP_HDR_SIZE
+    b.lo    net_ip_handle_done
+    cmp     w20, w21
+    b.lo    net_ip_handle_done
     mov     x0, x19
     mov     x1, #IP_DST
     bl      mem_read32be
-    ldr     w1, =NET_IP_SELF
+    ldr     w1, =NET_IP_BROADCAST
+    cmp     w0, w1
+    b.eq    net_ip_handle_proto
+    ladr    x1, net_ip
+    ldr     w1, [x1]
+    cbz     w1, net_ip_handle_proto
     cmp     w0, w1
     b.ne    net_ip_handle_done
-    ldrb    w0, [x19, #(IP_HDR_SIZE + ICMP_TYPE)]
+
+net_ip_handle_proto:
+    ldrb    w0, [x19, #IP_PROTO]
+    cmp     w0, #IP_PROTO_UDP
+    b.eq    net_ip_handle_udp
+    cmp     w0, #IP_PROTO_ICMP
+    b.ne    net_ip_handle_done
+    sub     w0, w20, w21
+    cmp     w0, #ICMP_HDR_SIZE
+    b.lo    net_ip_handle_done
+    ldrb    w0, [x19, x21]
     cmp     w0, #ICMP_ECHO_REPLY
     b.ne    net_ip_handle_done
     ladr    x0, net_state
@@ -8209,12 +8335,367 @@ net_ip_handle:
     strb    w1, [x0]
     ladr    x0, net_ping_msg
     bl      uart_puts
+    b       net_ip_handle_done
+
+net_ip_handle_udp:
+    add     x0, x19, x21
+    sub     w1, w20, w21
+    bl      net_udp_handle
 
 net_ip_handle_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+
+net_ip_handle_ret:
+    ret
+
+net_udp_handle:
+    cmp     w1, #UDP_HDR_SIZE
+    b.lo    net_udp_handle_ret
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, w1
+    mov     x1, #UDP_LEN
+    bl      mem_read16be
+    cmp     w0, #UDP_HDR_SIZE
+    b.lo    net_udp_handle_done
+    cmp     w0, w20
+    b.hi    net_udp_handle_done
+    mov     w20, w0
+    mov     x0, x19
+    mov     x1, #UDP_DST
+    bl      mem_read16be
+    cmp     w0, #UDP_PORT_DHCP_CLIENT
+    b.ne    net_udp_handle_done
+    add     x0, x19, #UDP_HDR_SIZE
+    sub     w1, w20, #UDP_HDR_SIZE
+    bl      dhcp_handle
+
+net_udp_handle_done:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
 
-net_ip_handle_ret:
+net_udp_handle_ret:
+    ret
+
+net_put_ip:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     w19, w0
+    mov     w20, #24
+
+net_put_ip_loop:
+    lsr     w0, w19, w20
+    and     x0, x0, #0xff
+    bl      uart_putdec
+    cbz     w20, net_put_ip_done
+    ladr    x0, net_dot
+    bl      uart_puts
+    sub     w20, w20, #8
+    b       net_put_ip_loop
+
+net_put_ip_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+dhcp_build:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     w21, w0
+    ladr    x0, net_mac_broadcast
+    ldr     w1, =NET_IP_BROADCAST
+    mov     w2, #UDP_PORT_DHCP_CLIENT
+    mov     w3, #UDP_PORT_DHCP_SERVER
+    mov     w4, #DHCP_MIN_SIZE
+    bl      net_udp_begin
+    mov     x19, x0
+    mov     w20, w1
+    mov     x1, #0
+
+dhcp_build_clear:
+    str     xzr, [x19, x1]
+    add     x1, x1, #8
+    cmp     x1, #DHCP_MIN_SIZE
+    b.lo    dhcp_build_clear
+    mov     w0, #DHCP_BOOTREQUEST
+    strb    w0, [x19, #DHCP_OP]
+    mov     w0, #1
+    strb    w0, [x19, #DHCP_HTYPE]
+    mov     w0, #6
+    strb    w0, [x19, #DHCP_HLEN]
+    mov     x0, x19
+    mov     x1, #DHCP_XID
+    ldr     w2, =DHCP_XID_VALUE
+    bl      mem_write32be
+    mov     x0, x19
+    mov     x1, #DHCP_FLAGS
+    mov     w2, #DHCP_FLAG_BROADCAST
+    bl      mem_write16be
+    ladr    x1, net_mac
+    ldr     w2, [x1]
+    str     w2, [x19, #DHCP_CHADDR]
+    ldrh    w2, [x1, #4]
+    strh    w2, [x19, #(DHCP_CHADDR + 4)]
+    mov     x0, x19
+    mov     x1, #DHCP_COOKIE
+    ldr     w2, =DHCP_MAGIC
+    bl      mem_write32be
+    add     x0, x19, #DHCP_OPTIONS
+    mov     w1, #DHCP_OPT_MSG_TYPE
+    strb    w1, [x0], #1
+    mov     w1, #1
+    strb    w1, [x0], #1
+    strb    w21, [x0], #1
+    cmp     w21, #DHCP_REQUEST
+    b.ne    dhcp_build_params
+    mov     w1, #DHCP_OPT_REQ_IP
+    strb    w1, [x0], #1
+    mov     w1, #4
+    strb    w1, [x0], #1
+    ladr    x1, dhcp_offer
+    ldr     w2, [x1]
+    mov     x1, #0
+    stp     x0, x19, [sp, #-16]!
+    bl      mem_write32be
+    ldp     x0, x19, [sp], #16
+    add     x0, x0, #4
+    mov     w1, #DHCP_OPT_SERVER_ID
+    strb    w1, [x0], #1
+    mov     w1, #4
+    strb    w1, [x0], #1
+    ladr    x1, dhcp_server
+    ldr     w2, [x1]
+    mov     x1, #0
+    stp     x0, x19, [sp, #-16]!
+    bl      mem_write32be
+    ldp     x0, x19, [sp], #16
+    add     x0, x0, #4
+
+dhcp_build_params:
+    mov     w1, #DHCP_OPT_PARAM_LIST
+    strb    w1, [x0], #1
+    mov     w1, #3
+    strb    w1, [x0], #1
+    mov     w1, #DHCP_OPT_SUBNET
+    strb    w1, [x0], #1
+    mov     w1, #DHCP_OPT_ROUTER
+    strb    w1, [x0], #1
+    mov     w1, #DHCP_OPT_DNS
+    strb    w1, [x0], #1
+    mov     w1, #DHCP_OPT_END
+    strb    w1, [x0], #1
+    mov     w0, w20
+    bl      net_send
+    ladr    x0, dhcp_timer
+    str     wzr, [x0]
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+dhcp_discover:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, net_ip
+    str     wzr, [x0]
+    mov     w0, #DHCP_DISCOVER
+    bl      dhcp_build
+    ladr    x0, dhcp_state
+    mov     w1, #DHCP_STATE_DISCOVER
+    strb    w1, [x0]
+    ldp     x29, x30, [sp], #16
+    ret
+
+dhcp_tick:
+    ladr    x0, dhcp_state
+    ldrb    w1, [x0]
+    cbz     w1, dhcp_tick_ret
+    cmp     w1, #DHCP_STATE_BOUND
+    b.eq    dhcp_tick_ret
+    ladr    x2, dhcp_timer
+    ldr     w3, [x2]
+    add     w3, w3, #1
+    str     w3, [x2]
+    cmp     w3, #DHCP_RETRY_TICKS
+    b.lo    dhcp_tick_ret
+    stp     x29, x30, [sp, #-16]!
+    ladr    x2, dhcp_tries
+    ldrb    w3, [x2]
+    add     w3, w3, #1
+    strb    w3, [x2]
+    cmp     w3, #DHCP_RETRY_MAX
+    b.hs    dhcp_tick_giveup
+    cmp     w1, #DHCP_STATE_REQUEST
+    b.eq    dhcp_tick_request
+    bl      dhcp_discover
+    b       dhcp_tick_done
+
+dhcp_tick_request:
+    mov     w0, #DHCP_REQUEST
+    bl      dhcp_build
+    b       dhcp_tick_done
+
+dhcp_tick_giveup:
+    strb    wzr, [x0]
+    ladr    x0, dhcp_timeout_msg
+    bl      uart_puts
+
+dhcp_tick_done:
+    ldp     x29, x30, [sp], #16
+
+dhcp_tick_ret:
+    ret
+
+dhcp_handle:
+    cmp     w1, #DHCP_OPTIONS
+    b.lo    dhcp_handle_ret
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     x19, x0
+    mov     w20, w1
+    ldrb    w0, [x19, #DHCP_OP]
+    cmp     w0, #DHCP_BOOTREPLY
+    b.ne    dhcp_handle_done
+    mov     x0, x19
+    mov     x1, #DHCP_XID
+    bl      mem_read32be
+    ldr     w1, =DHCP_XID_VALUE
+    cmp     w0, w1
+    b.ne    dhcp_handle_done
+    mov     x0, x19
+    mov     x1, #DHCP_COOKIE
+    bl      mem_read32be
+    ldr     w1, =DHCP_MAGIC
+    cmp     w0, w1
+    b.ne    dhcp_handle_done
+    mov     w21, #0
+    mov     w22, #0
+    mov     w23, #0
+    mov     w24, #0
+    mov     x0, x19
+    mov     x1, #DHCP_YIADDR
+    bl      mem_read32be
+    str     x0, [sp, #-16]!
+    mov     w2, #DHCP_OPTIONS
+
+dhcp_handle_opts:
+    cmp     w2, w20
+    b.hs    dhcp_handle_parsed
+    ldrb    w3, [x19, x2]
+    cmp     w3, #DHCP_OPT_END
+    b.eq    dhcp_handle_parsed
+    cbz     w3, dhcp_handle_pad
+    add     w4, w2, #1
+    cmp     w4, w20
+    b.hs    dhcp_handle_parsed
+    ldrb    w5, [x19, x4]
+    add     w6, w4, #1
+    add     w7, w6, w5
+    cmp     w7, w20
+    b.hi    dhcp_handle_parsed
+    cmp     w3, #DHCP_OPT_MSG_TYPE
+    b.ne    dhcp_handle_opt_ip
+    ldrb    w21, [x19, x6]
+    b       dhcp_handle_next
+
+dhcp_handle_opt_ip:
+    cmp     w5, #4
+    b.lo    dhcp_handle_next
+    stp     x2, x7, [sp, #-16]!
+    str     x3, [sp, #-16]!
+    mov     x0, x19
+    mov     x1, x6
+    bl      mem_read32be
+    ldr     x3, [sp], #16
+    ldp     x2, x7, [sp], #16
+    cmp     w3, #DHCP_OPT_SERVER_ID
+    csel    w22, w0, w22, eq
+    cmp     w3, #DHCP_OPT_ROUTER
+    csel    w23, w0, w23, eq
+    cmp     w3, #DHCP_OPT_DNS
+    csel    w24, w0, w24, eq
+    cmp     w3, #DHCP_OPT_SUBNET
+    b.ne    dhcp_handle_next
+    ladr    x1, net_mask
+    str     w0, [x1]
+    b       dhcp_handle_next
+
+dhcp_handle_pad:
+    add     w2, w2, #1
+    b       dhcp_handle_opts
+
+dhcp_handle_next:
+    mov     w2, w7
+    b       dhcp_handle_opts
+
+dhcp_handle_parsed:
+    ldr     x0, [sp], #16
+    ladr    x1, dhcp_state
+    ldrb    w2, [x1]
+    cmp     w21, #DHCP_OFFER
+    b.eq    dhcp_handle_offer
+    cmp     w21, #DHCP_ACK
+    b.ne    dhcp_handle_done
+    cmp     w2, #DHCP_STATE_REQUEST
+    b.ne    dhcp_handle_done
+    mov     w2, #DHCP_STATE_BOUND
+    strb    w2, [x1]
+    ladr    x1, net_ip
+    str     w0, [x1]
+    ladr    x1, net_gw
+    str     w23, [x1]
+    ladr    x1, net_dns
+    str     w24, [x1]
+    ladr    x0, dhcp_msg
+    bl      uart_puts
+    ladr    x0, net_ip
+    ldr     w0, [x0]
+    bl      net_put_ip
+    ladr    x0, dhcp_gw_label
+    bl      uart_puts
+    mov     w0, w23
+    bl      net_put_ip
+    ladr    x0, dhcp_dns_label
+    bl      uart_puts
+    mov     w0, w24
+    bl      net_put_ip
+    ladr    x0, dhcp_mask_label
+    bl      uart_puts
+    ladr    x0, net_mask
+    ldr     w0, [x0]
+    bl      net_put_ip
+    ladr    x0, uart_newline
+    bl      uart_puts
+    cbz     w23, dhcp_handle_done
+    mov     w0, w23
+    bl      net_arp_request
+    b       dhcp_handle_done
+
+dhcp_handle_offer:
+    cmp     w2, #DHCP_STATE_DISCOVER
+    b.ne    dhcp_handle_done
+    ladr    x1, dhcp_offer
+    str     w0, [x1]
+    ladr    x1, dhcp_server
+    str     w22, [x1]
+    mov     w0, #DHCP_REQUEST
+    bl      dhcp_build
+    ladr    x1, dhcp_state
+    mov     w2, #DHCP_STATE_REQUEST
+    strb    w2, [x1]
+
+dhcp_handle_done:
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+
+dhcp_handle_ret:
     ret
 
 .section .text.vectors
@@ -8631,6 +9112,18 @@ net_ping_msg:
     .asciz  "PING 10.0.2.2 ok\r\n"
 net_tx_timeout_msg:
     .asciz  "NET TX TIMEOUT\r\n"
+dhcp_msg:
+    .asciz  "DHCP ip "
+dhcp_gw_label:
+    .asciz  " gw "
+dhcp_dns_label:
+    .asciz  " dns "
+dhcp_mask_label:
+    .asciz  " mask "
+dhcp_timeout_msg:
+    .asciz  "DHCP KEINE ANTWORT, Netz ohne Adresse\r\n"
+net_dot:
+    .asciz  "."
 net_mac_broadcast:
     .byte   0xff, 0xff, 0xff, 0xff, 0xff, 0xff
 
@@ -9021,9 +9514,30 @@ net_gw_mac:
     .space  6
 net_state:
     .space  1
+dhcp_state:
+    .space  1
+dhcp_tries:
+    .space  1
 .balign 2
 net_rx_last:
     .space  2
+net_ip_id:
+    .space  2
+.balign 4
+net_ip:
+    .space  4
+net_gw:
+    .space  4
+net_dns:
+    .space  4
+net_mask:
+    .space  4
+dhcp_server:
+    .space  4
+dhcp_offer:
+    .space  4
+dhcp_timer:
+    .space  4
 
 .balign 16
 net_rx_desc:

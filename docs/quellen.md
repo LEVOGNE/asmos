@@ -1559,3 +1559,23 @@ Alle Mehrbytefelder werden über `mem_read16be`, `mem_read32be`, `mem_write16be`
 ### Was noch fehlt
 
 Empfang läuft per Abfrage aus der Hauptschleife (`net_poll` in `console_drain`), geweckt vom 30-Hz-Zeitgeber, noch nicht per Interrupt. Senden wartet auf die Fertigmeldung des Geräts (`net_send`), ein Sendepuffer. IP-Fragmente, Optionen, Prüfsummen eingehender IP-Köpfe und ARP-Cache-Alterung sind nicht behandelt. DHCP, UDP, DNS und TCP folgen.
+
+## Netzwerk, Stufe 4: UDP und DHCP (14.09.2026)
+
+| Symbol im Code | Wert | Beleg |
+|---|---|---|
+| `IP_PROTO_UDP` | `17` | RFC 791 / IANA Protocol Numbers |
+| UDP-Kopf: Quellport 0, Zielport 2, Länge 4, Prüfsumme 6 | 8 Byte, Prüfsumme 0 = keine Prüfsumme (bei IPv4 erlaubt) | RFC 768 |
+| `UDP_PORT_DHCP_SERVER`, `UDP_PORT_DHCP_CLIENT` | `67`, `68` | RFC 2131, Abschnitt 4.1 |
+| BOOTP-Kopf: `op` 0, `htype` 1, `hlen` 2, `hops` 3, `xid` 4, `secs` 8, `flags` 10, `ciaddr` 12, `yiaddr` 16, `siaddr` 20, `giaddr` 24, `chaddr` 28 (16 Byte), `sname` 44 (64), `file` 108 (128) | Optionen ab 236 | RFC 2131, Abschnitt 2, Tabelle "Format of a DHCP message" |
+| `DHCP_MAGIC` | `0x63825363` | Magic Cookie `99.130.83.99` vor den Optionen, RFC 2131 Abschnitt 3, RFC 1497 |
+| `DHCP_FLAG_BROADCAST` | `0x8000` | höchstes Bit des Flags-Felds, Server antwortet per Broadcast, RFC 2131 Abschnitt 4.1 |
+| Optionen 1 Subnetzmaske, 3 Router, 6 DNS, 50 angeforderte Adresse, 53 Nachrichtentyp, 54 Server-Kennung, 55 Parameterliste, 255 Ende, 0 Füllung | | RFC 2132 |
+| Nachrichtentypen `DHCPDISCOVER` 1, `DHCPOFFER` 2, `DHCPREQUEST` 3, `DHCPACK` 5 | | RFC 2132, Abschnitt 9.6 |
+| `DHCP_MIN_SIZE` | `300` | kleinste BOOTP-Nachricht, die ältere Server und Relays erwarten (RFC 1542 Abschnitt 2.1: "minimum 300 octets"); die Nachricht wird auf diese Länge mit Nullen aufgefüllt |
+| `DHCP_XID_VALUE` | `0x61736d4f` | Transaktionskennung, ASCII "asmO", frei gewählt, Antworten mit anderer Kennung werden verworfen |
+| `DHCP_RETRY_TICKS`, `DHCP_RETRY_MAX` | `60`, `5` | Wiederholung nach zwei Sekunden am 30-Hz-Zeitgeber, fünf Versuche, dann Meldung `DHCP KEINE ANTWORT`. Bewusste Festlegung, RFC 2131 empfiehlt exponentielles Backoff ab 4 s; im Nutzermodus antwortet der Server sofort |
+
+Ablauf: `DHCPDISCOVER` (Quelle 0.0.0.0, Ziel 255.255.255.255, Broadcast-Flag), `DHCPOFFER` liefert `yiaddr` und Server-Kennung, `DHCPREQUEST` mit Option 50 und 54, weiterhin Quelle 0.0.0.0, `DHCPACK` setzt Adresse, Gateway, DNS und Maske. Erst danach ARP an das Gateway und Ping. Solange keine Adresse gebunden ist, nimmt der IP-Empfang jedes Ziel an, verarbeitet aber nur UDP-Port 68.
+
+Gemessen im QEMU-Nutzermodus: `DHCP ip 10.0.2.15 gw 10.0.2.2 dns 10.0.2.3 mask 255.255.255.0`, deckungsgleich mit der QEMU-Dokumentation.
