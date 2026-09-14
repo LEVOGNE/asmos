@@ -77,6 +77,20 @@
 .equ GIC_PMR_UNMASKED,      0xf0
 .equ GIC_INTID_MASK,        0x3ff
 .equ GIC_INTID_SPURIOUS,    0x3ff
+.equ GICD_PIDR2,            0xffe8
+.equ GICD_IGROUPR,          0x080
+.equ GICD_IROUTER,          0x6000
+.equ GICD_CTLR_ARE,         (1 << 4)
+.equ GICD_CTLR_EN_GRP1,     (1 << 1)
+.equ GICR_BASE,             0x080a0000
+.equ GICR_SGI_BASE,         (GICR_BASE + 0x10000)
+.equ GICR_WAKER,            0x014
+.equ GICR_WAKER_SLEEP,      (1 << 1)
+.equ GICR_WAKER_ASLEEP,     (1 << 2)
+.equ GICR_IGROUPR0,         0x080
+.equ GICR_ISENABLER0,       0x100
+.equ GICR_IPRIORITYR,       0x400
+.equ GIC_VERSION_3,         3
 
 .equ TIMER_INTID,           27
 .equ TIMER_CTL_ENABLE,      1
@@ -1081,6 +1095,7 @@ boot_fade_ok:
     bl      uart_puts
 .endif
     bl      timer_init
+    bl      gic_put_version
     msr     daifclr, #DAIF_I
     bl      net_init
     bl      crypto_selftest
@@ -4608,153 +4623,182 @@ fdt_align4:
     ret
 
 fdt_find_memory:
-    stp     x29, x30, [sp, #-64]!
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x1, fdt_memory_name
+    mov     w2, #6
+    ladr    x3, fdt_reg_name
+    bl      fdt_find_prop
+    cbz     x0, fdt_find_memory_fail
+    cmp     w1, #16
+    b.lo    fdt_find_memory_fail
+    mov     x19, x0
+    ldr     w0, [x19]
+    rev     w0, w0
+    ldr     w2, [x19, #4]
+    rev     w2, w2
+    orr     x0, x2, x0, lsl #32
+    ldr     w1, [x19, #8]
+    rev     w1, w1
+    ldr     w2, [x19, #12]
+    rev     w2, w2
+    orr     x1, x2, x1, lsl #32
+    b       fdt_find_memory_done
+
+fdt_find_memory_fail:
+    mov     x0, #0
+    mov     x1, #0
+
+fdt_find_memory_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+fdt_find_prop:
+    stp     x29, x30, [sp, #-96]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
     stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    str     x27, [sp, #80]
+    mov     x25, x1
+    mov     w26, w2
+    mov     x27, x3
     mov     x22, x0
-    cbz     x22, fdt_find_memory_fail
+    cbz     x22, fdt_find_prop_fail
     tst     x22, #3
-    b.ne    fdt_find_memory_fail
+    b.ne    fdt_find_prop_fail
     ldr     w0, [x22]
     rev     w0, w0
     ldr     w1, =FDT_MAGIC
     cmp     w0, w1
-    b.ne    fdt_find_memory_fail
+    b.ne    fdt_find_prop_fail
     ldr     w1, [x22, #4]
     rev     w1, w1
     cmp     w1, #40
-    b.lo    fdt_find_memory_fail
+    b.lo    fdt_find_prop_fail
     ldr     w0, [x22, #FDT_OFF_DT_STRUCT]
     rev     w0, w0
     cmp     w0, #40
-    b.lo    fdt_find_memory_fail
+    b.lo    fdt_find_prop_fail
     tst     w0, #3
-    b.ne    fdt_find_memory_fail
+    b.ne    fdt_find_prop_fail
     ldr     w2, [x22, #36]
     rev     w2, w2
     add     x3, x0, x2
     cmp     x3, x1
-    b.hi    fdt_find_memory_fail
+    b.hi    fdt_find_prop_fail
     add     x19, x22, x0
     add     x23, x22, x3
     ldr     w0, [x22, #FDT_OFF_DT_STRINGS]
     rev     w0, w0
     cmp     w0, #40
-    b.lo    fdt_find_memory_fail
+    b.lo    fdt_find_prop_fail
     ldr     w2, [x22, #32]
     rev     w2, w2
     add     x3, x0, x2
     cmp     x3, x1
-    b.hi    fdt_find_memory_fail
+    b.hi    fdt_find_prop_fail
     add     x20, x22, x0
     add     x24, x22, x3
     mov     w21, #0
 
-fdt_find_memory_loop:
+fdt_find_prop_loop:
     add     x0, x19, #4
     cmp     x0, x23
-    b.hi    fdt_find_memory_fail
+    b.hi    fdt_find_prop_fail
     ldr     w0, [x19]
     rev     w0, w0
     cmp     w0, #FDT_TOKEN_BEGIN_NODE
-    b.eq    fdt_find_memory_node
+    b.eq    fdt_find_prop_node
     cmp     w0, #FDT_TOKEN_PROP
-    b.eq    fdt_find_memory_prop
+    b.eq    fdt_find_prop_prop
     cmp     w0, #FDT_TOKEN_END_NODE
-    b.eq    fdt_find_memory_endnode
+    b.eq    fdt_find_prop_endnode
     cmp     w0, #FDT_TOKEN_NOP
-    b.eq    fdt_find_memory_nop
-    b       fdt_find_memory_fail
+    b.eq    fdt_find_prop_nop
+    b       fdt_find_prop_fail
 
-fdt_find_memory_nop:
+fdt_find_prop_nop:
     add     x19, x19, #4
-    b       fdt_find_memory_loop
+    b       fdt_find_prop_loop
 
-fdt_find_memory_endnode:
+fdt_find_prop_endnode:
     add     x19, x19, #4
     mov     w21, #0
-    b       fdt_find_memory_loop
+    b       fdt_find_prop_loop
 
-fdt_find_memory_node:
+fdt_find_prop_node:
     add     x0, x19, #4
     mov     x1, x23
     bl      string_length_bounded
-    tbnz    x0, #63, fdt_find_memory_fail
+    tbnz    x0, #63, fdt_find_prop_fail
     mov     x22, x0
     mov     w21, #0
-    cmp     x22, #6
-    b.lo    fdt_find_memory_node_next
+    cmp     x22, x26
+    b.lo    fdt_find_prop_node_next
     add     x0, x19, #4
-    ladr    x1, fdt_memory_name
+    mov     x1, x25
     bl      string_starts_with
-    cbz     w0, fdt_find_memory_node_next
-    ldrb    w1, [x19, #10]
+    cbz     w0, fdt_find_prop_node_next
+    add     x1, x19, #4
+    ldrb    w1, [x1, x26]
     cmp     w1, #0
     cset    w21, eq
     cmp     w1, #64
     cset    w0, eq
     orr     w21, w21, w0
-fdt_find_memory_node_next:
+
+fdt_find_prop_node_next:
     add     x0, x22, #1
     bl      fdt_align4
     add     x19, x19, #4
     add     x19, x19, x0
-    b       fdt_find_memory_loop
+    b       fdt_find_prop_loop
 
-fdt_find_memory_prop:
+fdt_find_prop_prop:
     add     x0, x19, #FDT_PROP_HEADER_SIZE
     cmp     x0, x23
-    b.hi    fdt_find_memory_fail
+    b.hi    fdt_find_prop_fail
     ldr     w0, [x19, #4]
     rev     w0, w0
     mov     w22, w0
     add     x1, x19, #FDT_PROP_HEADER_SIZE
     add     x1, x1, x22
     cmp     x1, x23
-    b.hi    fdt_find_memory_fail
-    cbz     w21, fdt_find_memory_prop_skip
+    b.hi    fdt_find_prop_fail
+    cbz     w21, fdt_find_prop_skip
     ldr     w0, [x19, #8]
     rev     w0, w0
     add     x0, x20, x0
     add     x1, x0, #4
     cmp     x1, x24
-    b.hi    fdt_find_memory_fail
-    ladr    x1, fdt_reg_name
+    b.hi    fdt_find_prop_fail
+    mov     x1, x27
     bl      string_equal
-    cbz     w0, fdt_find_memory_prop_skip
-    cmp     w22, #16
-    b.lo    fdt_find_memory_fail
-    ldr     w0, [x19, #FDT_PROP_HEADER_SIZE]
-    rev     w0, w0
-    ldr     w2, [x19, #(FDT_PROP_HEADER_SIZE + 4)]
-    rev     w2, w2
-    orr     x0, x2, x0, lsl #32
-    ldr     w1, [x19, #(FDT_PROP_HEADER_SIZE + 8)]
-    rev     w1, w1
-    ldr     w2, [x19, #(FDT_PROP_HEADER_SIZE + 12)]
-    rev     w2, w2
-    orr     x1, x2, x1, lsl #32
-    ldp     x23, x24, [sp, #48]
-    ldp     x21, x22, [sp, #32]
-    ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #64
-    ret
+    cbz     w0, fdt_find_prop_skip
+    add     x0, x19, #FDT_PROP_HEADER_SIZE
+    mov     w1, w22
+    b       fdt_find_prop_done
 
-fdt_find_memory_prop_skip:
+fdt_find_prop_skip:
     mov     x0, x22
     bl      fdt_align4
     add     x19, x19, #FDT_PROP_HEADER_SIZE
     add     x19, x19, x0
-    b       fdt_find_memory_loop
+    b       fdt_find_prop_loop
 
-fdt_find_memory_fail:
+fdt_find_prop_fail:
     mov     x0, #0
     mov     x1, #0
+
+fdt_find_prop_done:
+    ldr     x27, [sp, #80]
+    ldp     x25, x26, [sp, #64]
     ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #64
+    ldp     x29, x30, [sp], #96
     ret
 
 .section .text
@@ -7439,33 +7483,6 @@ font_init_done:
 
 .section .text.boot
 
-gic_init:
-    mov     x0, #GICD_BASE
-    mov     w1, #GIC_ENABLE
-    str     w1, [x0, #GICD_CTLR]
-    mov     x0, #GICC_BASE
-    mov     w1, #GIC_PMR_UNMASKED
-    str     w1, [x0, #GICC_PMR]
-    mov     w1, #GIC_ENABLE
-    str     w1, [x0, #GICC_CTLR]
-    ret
-
-gic_enable_irq:
-    mov     x1, #GICD_BASE
-    add     x2, x1, #GICD_IPRIORITYR
-    strb    wzr, [x2, w0, uxtw]
-    add     x2, x1, #GICD_ITARGETSR
-    mov     w3, #GIC_TARGET_CPU0
-    strb    w3, [x2, w0, uxtw]
-    lsr     w2, w0, #5
-    and     w3, w0, #31
-    mov     w4, #1
-    lsl     w4, w4, w3
-    add     x2, x1, x2, lsl #2
-    str     w4, [x2, #GICD_ISENABLER]
-    dsb     sy
-    ret
-
 timer_init:
     stp     x29, x30, [sp, #-16]!
     mrs     x0, cntfrq_el0
@@ -7708,8 +7725,18 @@ console_draw_cursor_emit:
 
 irq_entry:
     irq_save
+    ladr    x1, gic_version
+    ldrb    w1, [x1]
+    cmp     w1, #GIC_VERSION_3
+    b.eq    irq_entry_v3
     mov     x1, #GICC_BASE
     ldr     w19, [x1, #GICC_IAR]
+    b       irq_entry_id
+
+irq_entry_v3:
+    mrs     x19, icc_iar1_el1
+
+irq_entry_id:
     and     w0, w19, #GIC_INTID_MASK
     cmp     w0, #GIC_INTID_SPURIOUS
     b.eq    irq_return
@@ -7735,8 +7762,16 @@ irq_virtio:
     bl      virtio_input_poll
 
 irq_eoi:
+    ladr    x1, gic_version
+    ldrb    w1, [x1]
+    cmp     w1, #GIC_VERSION_3
+    b.eq    irq_eoi_v3
     mov     x1, #GICC_BASE
     str     w19, [x1, #GICC_EOIR]
+    b       irq_return
+
+irq_eoi_v3:
+    msr     icc_eoir1_el1, x19
 
 irq_return:
     irq_restore
@@ -12665,6 +12700,127 @@ tls_keys_finish:
     ldp     x29, x30, [sp], #32
     ret
 
+
+gic_init:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, fdt_base
+    ldr     x0, [x0]
+    ladr    x1, gic_node_name
+    mov     w2, #4
+    ladr    x3, fdt_compatible_name
+    bl      fdt_find_prop
+    mov     w1, #2
+    cbz     x0, gic_init_store
+    ladr    x1, gic_v3_compatible
+    bl      string_starts_with
+    cmp     w0, #0
+    mov     w1, #2
+    mov     w2, #GIC_VERSION_3
+    csel    w1, w2, w1, ne
+
+gic_init_store:
+    ladr    x2, gic_version
+    strb    w1, [x2]
+    ldp     x29, x30, [sp], #16
+    mov     x0, #GICD_BASE
+    cmp     w1, #GIC_VERSION_3
+    b.eq    gic_init_v3
+    mov     w1, #GIC_ENABLE
+    str     w1, [x0, #GICD_CTLR]
+    mov     x0, #GICC_BASE
+    mov     w1, #GIC_PMR_UNMASKED
+    str     w1, [x0, #GICC_PMR]
+    mov     w1, #GIC_ENABLE
+    str     w1, [x0, #GICC_CTLR]
+    ret
+
+gic_init_v3:
+    mov     w1, #(GICD_CTLR_ARE | GICD_CTLR_EN_GRP1)
+    str     w1, [x0, #GICD_CTLR]
+    mov     x0, #GICR_BASE
+    ldr     w1, [x0, #GICR_WAKER]
+    bic     w1, w1, #GICR_WAKER_SLEEP
+    str     w1, [x0, #GICR_WAKER]
+
+gic_init_v3_wake:
+    ldr     w1, [x0, #GICR_WAKER]
+    tst     w1, #GICR_WAKER_ASLEEP
+    b.ne    gic_init_v3_wake
+    mov     x1, #1
+    msr     icc_sre_el1, x1
+    isb
+    mov     x1, #GIC_PMR_UNMASKED
+    msr     icc_pmr_el1, x1
+    mov     x1, #1
+    msr     icc_igrpen1_el1, x1
+    isb
+    ret
+
+gic_enable_irq:
+    ladr    x1, gic_version
+    ldrb    w1, [x1]
+    cmp     w1, #GIC_VERSION_3
+    b.eq    gic_enable_irq_v3
+    mov     x1, #GICD_BASE
+    add     x2, x1, #GICD_IPRIORITYR
+    strb    wzr, [x2, w0, uxtw]
+    add     x2, x1, #GICD_ITARGETSR
+    mov     w3, #GIC_TARGET_CPU0
+    strb    w3, [x2, w0, uxtw]
+    lsr     w2, w0, #5
+    and     w3, w0, #31
+    mov     w4, #1
+    lsl     w4, w4, w3
+    add     x2, x1, x2, lsl #2
+    str     w4, [x2, #GICD_ISENABLER]
+    dsb     sy
+    ret
+
+gic_enable_irq_v3:
+    cmp     w0, #32
+    b.hs    gic_enable_irq_v3_spi
+    mov     x1, #GICR_SGI_BASE
+    add     x2, x1, #GICR_IPRIORITYR
+    strb    wzr, [x2, w0, uxtw]
+    mov     w3, #1
+    lsl     w3, w3, w0
+    ldr     w4, [x1, #GICR_IGROUPR0]
+    orr     w4, w4, w3
+    str     w4, [x1, #GICR_IGROUPR0]
+    str     w3, [x1, #GICR_ISENABLER0]
+    dsb     sy
+    ret
+
+gic_enable_irq_v3_spi:
+    mov     x1, #GICD_BASE
+    add     x2, x1, #GICD_IPRIORITYR
+    strb    wzr, [x2, w0, uxtw]
+    add     x2, x1, #GICD_IROUTER
+    str     xzr, [x2, w0, uxtw #3]
+    lsr     w2, w0, #5
+    and     w3, w0, #31
+    mov     w4, #1
+    lsl     w4, w4, w3
+    add     x2, x1, x2, lsl #2
+    ldr     w5, [x2, #GICD_IGROUPR]
+    orr     w5, w5, w4
+    str     w5, [x2, #GICD_IGROUPR]
+    str     w4, [x2, #GICD_ISENABLER]
+    dsb     sy
+    ret
+
+gic_put_version:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, gic_msg
+    bl      uart_puts
+    ladr    x0, gic_version
+    ldrb    w0, [x0]
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+    ldp     x29, x30, [sp], #16
+    ret
+
 .section .text.vectors
 .balign VEC_TABLE_ALIGN
 .global vec_table
@@ -13067,6 +13223,8 @@ net_missing_msg:
     .asciz  "NET UNAVAILABLE\r\n"
 net_fail_msg:
     .asciz  "NET SETUP FAILED\r\n"
+gic_msg:
+    .asciz  "GIC v"
 net_ready_msg:
     .asciz  "NET MAC "
 net_arp_msg:
@@ -13687,6 +13845,12 @@ tls_hrr_random:
     .byte   0xc2,0xa2,0x11,0x16,0x7a,0xbb,0x8c,0x5e,0x07,0x9e,0x09,0xe2,0xc8,0xa8,0x33,0x9c
 tls_zero32:
     .space  32
+fdt_compatible_name:
+    .asciz  "compatible"
+gic_node_name:
+    .asciz  "intc"
+gic_v3_compatible:
+    .asciz  "arm,gic-v3"
 .section .bss
 
 .balign 8
@@ -13933,6 +14097,8 @@ net_pending:
 net_tick_pending:
     .space  1
 net_timer_armed:
+    .space  1
+gic_version:
     .space  1
 .balign 8
 net_rand_state:

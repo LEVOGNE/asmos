@@ -6,6 +6,7 @@ OBJDUMP := $(CROSS)objdump
 
 QEMU    := qemu-system-aarch64
 MACHINE := virt
+MACHINE_EXTRA :=
 CPU     := cortex-a72
 
 DISK          := disk.img
@@ -67,7 +68,7 @@ shot: kernel.bin disk-required
 
 check: kernel.bin disk-required
 	@rm -f $(CHECK_LOG)
-	@$(QEMU) -machine $(MACHINE) -cpu $(CPU) $(DEVICES) -display none -serial file:$(CHECK_LOG) -kernel kernel.bin & \
+	@$(QEMU) -machine $(MACHINE)$(MACHINE_EXTRA) -cpu $(CPU) $(DEVICES) -display none -serial file:$(CHECK_LOG) -kernel kernel.bin & \
 	  QPID=$$!; sleep $(CHECK_SECONDS); kill $$QPID 2>/dev/null; wait $$QPID 2>/dev/null; true
 	@echo "--- $(CHECK_LOG) ---"
 	@cat $(CHECK_LOG) 2>/dev/null || echo "(leer)"

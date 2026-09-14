@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-49.106%20Byte-brightgreen?style=flat-square" alt="49106 Byte">
+<img src="https://img.shields.io/badge/Kernel-49.597%20Byte-brightgreen?style=flat-square" alt="49597 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>49.106&nbsp;Byte</b> groß, also <b>48&nbsp;KB</b>.<br>
+Das fertige System ist <b>49.597&nbsp;Byte</b> groß, also <b>48&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>339 KB · 14149 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>343 KB · 14315 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,11 +146,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 14149 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 14315 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1437 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1455 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -162,12 +162,12 @@ In `kernel.S` stecken **1437 Sprungmarken**. Jede gehört zu einem Zuständigkei
 | `fb_` `cursor_` | 86 | Bildschirm, Bildpunkte, Mauszeiger |
 | `blk_` `fat_` | 83 | Datenträger und Dateisystem |
 | `anim_` | 80 | **Animationsschicht**: Zeitmessung, Verläufe, Beschleunigungskurven |
-| `mem_` `pmm_` `mmu_` `fdt_` `ram_` | 74 | Speicherverwaltung und Hardware-Erkennung |
+| `mem_` `pmm_` `mmu_` `fdt_` `ram_` | 82 | Speicherverwaltung und Hardware-Erkennung |
 | `virtio_` `mouse_` `click_` | 73 | Gerätetreiber, Maus, Klickerkennung |
 | `vg_` `cov_` `edge_` `icon_` | 60 | **Vektor-Engine**: Pfade, Kurven, Füllung, Strich, Kantenglättung, Icons |
 | `console_` `string_` `out_` `power_` | 59 | Konsole, Textwerkzeuge, Herunterfahren |
 | `sha_` `hmac_` `hkdf_` `aes_` `ghash_` `fe_` `x25519_` `crypto_` | 213 | **Kryptografie**: SHA-256, HMAC, HKDF, AES-128-GCM über die ARMv8-Erweiterung, X25519 in reiner Ganzzahlarithmetik, Selbsttest gegen 22 Vektoren beim Start |
-| `vec_` `panic_` `irq_` `gic_` | 37 | Fehlerbehandlung und Unterbrechungen |
+| `vec_` `panic_` `irq_` `gic_` | 50 | Fehlerbehandlung und Unterbrechungen, GICv2 und GICv3 |
 | `uart_` | 29 | Serielle Schnittstelle, Textausgabe, Tastatureingabe |
 | `boot_` | 15 | Hochfahren, Privilegstufe, Speicher vorbereiten |
 | `fwcfg_` | 13 | Konfigurationsschnittstelle des Emulators |
@@ -179,7 +179,7 @@ In `kernel.S` stecken **1437 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **49.106 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **49.597 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -349,10 +349,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 348 KB in drei Dateien |
-| Zeilen Assembler | 14149 |
-| Sprungmarken | 1437 |
-| **Fertiges Betriebssystem** | **49.106 Byte** |
+| Eigener Quelltext | 352 KB in drei Dateien |
+| Zeilen Assembler | 14315 |
+| Sprungmarken | 1455 |
+| **Fertiges Betriebssystem** | **49.597 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -632,7 +632,24 @@ Was bewusst noch fehlt: Das Zertifikat wird empfangen (3.682 Byte) und in den Ge
 
 Zwei Läufe hintereinander, beide durchgängig, das Bild byteweise gleich der Referenz. Dass alles im ersten Anlauf lief, verdankt sich den Testvektoren der Bausteine: Der Handshake selbst enthält keine neue Rechnung, nur Buchführung über Zustände, Längen und Puffer.
 
-**Ein Nebenbefund, unabhängig von TLS.** Unter `hvf` (Apple Silicon direkt statt Emulation) bleibt die Netzwerkkette nach `NET MAC` stehen, DHCP bekommt keine Antwort verarbeitet. Das war schon vor dem Handshake so, geprüft am Stand davor, und ist unter der Emulation nicht zu sehen. Vermutlich Speicherordnung oder Interruptzustellung auf echter Hardware, also genau die Art Fehler, die vor der Portierung auf den Raspberry Pi gefunden werden muss. Benannt, noch nicht gesucht.
+**Ein Nebenbefund, unabhängig von TLS.** Unter `hvf` (Apple Silicon direkt statt Emulation) blieb die Netzwerkkette nach `NET MAC` stehen. Aufgeklärt in der nächsten Runde.
+
+### Stand 14.09.2026, sechzehnte Runde: der hvf-Fehler, oder warum es keinen Interrupt gab
+
+Die Fehlersuche begann mit einer Vermutung (Speicherordnung an den Geräteringen) und endete woanders. Unter `hvf` kam nicht nur kein Netzwerkpaket an, es kam **gar kein Interrupt** an: kein Zeitgeber, keine Maus, kein Netz. Der Startvorgang lief trotzdem bis `BOOT OK`, weil er auf keinen Interrupt wartet, und die Kette brach erst dort ab, wo sie den ersten braucht, nämlich bei der DHCP-Antwort.
+
+Die Ursache liegt im Interrupt-Controller. QEMU stellt der `virt`-Maschine unter Emulation einen GICv2 hin, ein Baustein, den das System seit Meilenstein 3 bedient. Unter `hvf` gibt es den nicht: Apples Hypervisor bringt seinen eigenen Interrupt-Controller mit, einen GICv3, und QEMU kann darunter keinen GICv2 nachbilden (`HVF does not support GICv2 emulation`). Der GICv3 hat ein anderes Programmiermodell: die Prozessorseite wird nicht über Speicheradressen, sondern über Systemregister angesprochen, jeder Prozessorkern hat einen eigenen "Redistributor" für seine privaten Interrupts, und der muss erst aus dem Schlaf geholt werden. Das System schrieb seine Einstellungen in Register, die es dort nicht gab, und der Controller blieb stumm.
+
+Jetzt liest der Kernel beim Start aus dem Device Tree, welcher Controller verbaut ist (`compatible = "arm,gic-v3"` oder `"arm,cortex-a15-gic"`), meldet `GIC v2` oder `GIC v3` und bedient beide. Der erste Versuch, die Version an einem Kennungsregister des Controllers selbst abzulesen, endete mit einem Speicherfehler, weil dieses Register beim GICv2 an einer anderen Stelle liegt als beim GICv3; der Device Tree ist die verlässliche Quelle, und die Suche darin ist jetzt allgemein (`fdt_find_prop`), die Speichergröße wird über denselben Weg gefunden wie zuvor.
+
+| Lauf | vorher | nachher |
+|---|---|---|
+| Emulation, GICv2 (`make check`) | vollständig bis `HTTPS HTTP/1.1 200 OK` | unverändert vollständig |
+| Emulation, GICv3 (`make check MACHINE_EXTRA=,gic-version=3`) | nicht möglich | vollständig bis `HTTPS HTTP/1.1 200 OK` |
+| Apple Silicon direkt (`hvf`, GICv3) | Stillstand nach `NET MAC` | **vollständig bis `HTTPS HTTP/1.1 200 OK`**, der TLS-Handshake läuft damit erstmals auf echten Befehlen |
+| Größe des fertigen Systems | 49.106 Byte | 49.597 Byte (+491) |
+
+Das Bild ist byteweise gleich der Referenz. Der Raspberry Pi 5 hat einen GICv2 (GIC-400), der bisherige Pfad bleibt also der wichtigere; der GICv3-Pfad ist die Eintrittskarte für schnelle Läufe auf dem Mac und für spätere Boards mit GICv3.
 
 **Fehlersuche im X25519-Block, kein Fund.** Sechs Vektoren aus dem RFC prüfen die Leiter, aber nicht die Ränder der Zahlenarithmetik. Ein Testbau hat deshalb 42 weitere Fälle gerechnet und gegen die Referenz des Entwicklungsrechners verglichen: 32 Schlüsselvereinbarungen mit Mustereingaben, zwei absichtlich unsaubere Kodierungen der Basiszahl 9 (einmal um die Primzahl vergrößert, einmal mit gesetztem oberstem Bit, beide müssen den Alice-Schlüssel ergeben) und acht Rechnungen der Feldarithmetik mit dem größtmöglichen Wert 2²⁵⁶−1: Quadrat, Summe, `0−1`, `a−a`, die Normierung selbst, `1−a`, die Multiplikation mit 121665 und die Inversion. Genau diese Extremwerte treiben die Überlaufbehandlung in ihre zweite Runde. **0 Abweichungen.** Dazu nachgerechnet: Nach jeder Faltung des Überlaufs mit 38 ist höchstens noch ein zweiter Übertrag möglich, ein dritter nicht; die zweite Runde im Code ist also ausreichend, nicht nur vorsichtig.
 

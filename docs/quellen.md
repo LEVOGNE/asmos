@@ -1815,3 +1815,23 @@ Ablauf im Code: `tls_connect` → ClientHello über `tcp_write` (wird beim Verbi
 Nicht enthalten: Zertifikatsprüfung (nächster Schritt), HelloRetryRequest (wird erkannt und abgelehnt), PSK und Wiederaufnahme, KeyUpdate, mehrere Sitzungen, andere Cipher Suites oder Gruppen, Alerts vom Client außer über TCP-Schluss. Der Zufall für `random` und den Schlüsselanteil stammt aus `net_random` (xorshift mit Zeitgeber), das ist kein kryptografischer Generator, siehe Härtung 4.
 
 Gemessen: zwei Läufe unter TCG durchgängig bis `HTTPS HTTP/1.1 200 OK` und `TLS ALERT 1 0` (close_notify), Zertifikat 3.682 Byte, Handshake rund 1,2 Mio. Befehle. Unter hvf kommt die Netzwerkkette nicht über `NET MAC` hinaus, auch am Stand vor TLS (Kernel 44.568 Byte); als bekannte Grenze in `CLAUDE.md` vermerkt.
+
+## GICv3 und die hvf-Fehlersuche (14.09.2026)
+
+Befund: Unter `-machine virt,accel=hvf` liefert QEMU 11.1.1 ausschließlich einen GICv3 (`hw/arm/virt.c`, Meldung `HVF does not support GICv2 emulation` bei `gic-version=2`), Device Tree `intc@8000000` mit `compatible = "arm,gic-v3"`, `reg = <0x8000000 0x10000 0x80a0000 0xf60000>`. Der bisherige GICv2-Code schrieb in nicht vorhandene Register (`GICC` bei `0x08010000`), es kam kein Interrupt an.
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| Erkennung | Device Tree, Knoten `intc`, Eigenschaft `compatible` beginnt mit `arm,gic-v3`; sonst v2 | QEMU `hw/arm/virt.c` (`create_gic`, `fdt_add_gic_node`); Device-Tree-Spezifikation v0.4, Abschnitt 2.3.1 (`compatible`) |
+| `GICD_PIDR2` | `0xffe8` beim GICv3 (64-KB-Rahmen), beim GICv2 in QEMU `0xfe8` (4-KB-Rahmen, `gic_id_gicv2[]`, PIDR2 `0x2b`); ein Lesezugriff auf `0x08000000 + 0xffe8` beim v2 löst einen externen Abort aus (`esr 0x96000010`) | QEMU `hw/intc/arm_gic.c` Zeile 55 und 1136 ff.; `hw/intc/gicv3_internal.h` `GICD_IDREGS 0xFFD0` |
+| `GICD_CTLR` v3 | Bit 4 ARE, Bit 1 EnableGrp1; in QEMU ohne Sicherheitserweiterung ist ARE RAO/WI und Bit 1 `EN_GRP1NS` | `gicv3_internal.h` Zeilen 31, 63, 67; `arm_gicv3_dist.c` `case GICD_CTLR` (Maske `EN_GRP0 \| EN_GRP1NS`); GIC Architecture Specification IHI 0069, GICD_CTLR |
+| `GICD_IGROUPR` `0x080`, `GICD_ISENABLER` `0x100`, `GICD_IPRIORITYR` `0x400`, `GICD_IROUTER` `0x6000` (8 Byte je Interrupt, Affinität 0 = Kern 0) | | `gicv3_internal.h` Zeilen 41, 42, 48, 58 |
+| Redistributor `GICR_BASE` `0x080a0000`, SGI-Rahmen bei `+0x10000` | Kern 0 ist der erste Rahmen | `hw/arm/virt.c` `VIRT_GIC_REDIST`; `gicv3_internal.h` `GICR_SGI_OFFSET 0x10000` |
+| `GICR_WAKER` `0x014`, Bit 1 ProcessorSleep löschen, warten bis Bit 2 ChildrenAsleep 0 | | `gicv3_internal.h` Zeilen 93, 139, 140; `arm_gicv3_redist.c` `case GICR_WAKER` |
+| `GICR_IGROUPR0` `SGI+0x080`, `GICR_ISENABLER0` `SGI+0x100`, `GICR_IPRIORITYR` `SGI+0x400` | für PPI 27 (Zeitgeber) | `gicv3_internal.h` Zeilen 104, 105, 111 |
+| Gruppe 1 | Interrupts müssen in Gruppe 1 stehen (Bit in IGROUPR gesetzt), sonst werden sie als FIQ gemeldet, den das System nicht bedient | IHI 0069, Kapitel 4.6 (Interrupt grouping) |
+| `ICC_SRE_EL1` Bit 0 SRE, `ICC_PMR_EL1` `0xf0`, `ICC_IGRPEN1_EL1` Bit 0, `ICC_IAR1_EL1` (1023 = spurious), `ICC_EOIR1_EL1` | Systemregister-Schnittstelle | `arm_gicv3_cpuif.c` Registerliste (`ICC_SRE_EL1`, `ICC_PMR_EL1`, `ICC_IGRPEN1_EL1`, `ICC_IAR1_EL1`, `ICC_EOIR1_EL1`); `gicv3_internal.h` `INTID_SPURIOUS 1023` |
+
+Nicht enthalten: EL2-Pfad mit `ICC_SRE_EL2` (das System startet unter `virt` und `hvf` in EL1; für `virtualization=on` mit GICv3 fehlt `ICC_SRE_EL2.Enable`), mehrere Kerne (nur Redistributor 0), LPIs, Prioritäten außer 0.
+
+Nachweis: `make check` (GICv2, TCG), `make check MACHINE_EXTRA=,gic-version=3` (GICv3, TCG) und der hvf-Lauf (`-machine virt,accel=hvf -cpu host`) zeigen jeweils `GIC v2`/`GIC v3`, DHCP, DNS, `HTTP/1.1 200 OK`, `TLS HANDSHAKE FERTIG` und `HTTPS HTTP/1.1 200 OK`. Bild byteweise gleich. Kernel 49.597 Byte, `.text.boot`-Füllung 24 Byte (`fdt_find_prop` liegt im Startblock, GIC-Code in `.text`).
