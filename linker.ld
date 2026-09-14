@@ -6,10 +6,10 @@ SECTIONS
 
     .text : ALIGN(16) {
         KEEP(*(.text.boot))
-        *(.text)
-        *(.text.[^v]*)
         . = ALIGN(0x800);
         KEEP(*(.text.vectors))
+        *(.text)
+        *(.text.[^v]*)
     }
 
     .rodata : ALIGN(16) {

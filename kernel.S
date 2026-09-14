@@ -35,6 +35,8 @@
 .equ HCR_EL2_RW,            (1 << 31)
 .equ CNTHCTL_EL2_EL1PCTEN,  (1 << 0)
 .equ CNTHCTL_EL2_EL1PCEN,   (1 << 1)
+.equ CPTR_EL2_TFP,          (1 << 10)
+.equ CPACR_EL1_FPEN,        (3 << 20)
 
 .equ SCTLR_M,               (1 << 0)
 
@@ -413,7 +415,6 @@
 
 .equ CURSOR_W,              48
 .equ CURSOR_H,              48
-.equ CURSOR_ALPHA_FULL,     0x10000
 .equ CURSOR_ALPHA_PRESSED,  59638
 .equ CURSOR_PRESSED_PCT,    96
 .equ CURSOR_PRESSED_OFFSET, ((CURSOR_W - (CURSOR_W * CURSOR_PRESSED_PCT) / 100) / 2)
@@ -656,6 +657,9 @@ boot_from_el3:
 boot_from_el2:
     mov     x0, #HCR_EL2_RW
     msr     hcr_el2, x0
+    mrs     x0, cptr_el2
+    bic     x0, x0, #CPTR_EL2_TFP
+    msr     cptr_el2, x0
     mrs     x0, cnthctl_el2
     orr     x0, x0, #(CNTHCTL_EL2_EL1PCTEN | CNTHCTL_EL2_EL1PCEN)
     msr     cnthctl_el2, x0
@@ -673,6 +677,10 @@ boot_from_el2:
 boot_el1_entry:
     ladr    x0, __stack_top
     mov     sp, x0
+    mrs     x0, cpacr_el1
+    orr     x0, x0, #CPACR_EL1_FPEN
+    msr     cpacr_el1, x0
+    isb
     bl      uart_init
     bl      vec_init
     mov     x0, x21
@@ -818,8 +826,6 @@ boot_clear_out_loop:
 boot_clear_out_done:
     ret
 
-.section .text
-
 vec_init:
     ladr    x0, vec_table
     msr     vbar_el1, x0
@@ -904,6 +910,8 @@ fwcfg_find_fail:
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
+
+.section .text
 
 string_equal:
     ldrb    w2, [x0], #1
@@ -1003,14 +1011,31 @@ fb_present:
     add     x7, x7, x0, lsl #2
     ladr    x10, fb_fade
     ldr     w10, [x10]
+    ladr    x4, fb_present_shuffle
+    ld1     {v7.16b}, [x4]
+    dup     v6.8h, w10
 fb_present_row:
     mov     x11, x6
     mov     x12, x7
     mov     w13, w2
     mov     w4, #FADE_ONE
     cmp     w10, w4
-    b.ne    fb_present_col_fade
+    b.ne    fb_present_fade8
+fb_present_col8:
+    cmp     w13, #8
+    b.lo    fb_present_col
+    ld1     {v0.2d, v1.2d, v2.2d, v3.2d}, [x11], #64
+    shrn    v4.8b, v0.8h, #8
+    shrn2   v4.16b, v1.8h, #8
+    shrn    v5.8b, v2.8h, #8
+    shrn2   v5.16b, v3.8h, #8
+    tbl     v4.16b, {v4.16b}, v7.16b
+    tbl     v5.16b, {v5.16b}, v7.16b
+    st1     {v4.16b, v5.16b}, [x12], #32
+    sub     w13, w13, #8
+    b       fb_present_col8
 fb_present_col:
+    cbz     w13, fb_present_next
     ldr     x14, [x11], #FB_BPP
     ubfx    x4, x14, #(CH_SHIFT_B + 8), #8
     ubfx    x5, x14, #(CH_SHIFT_G + 8), #8
@@ -1021,7 +1046,30 @@ fb_present_col:
     subs    w13, w13, #1
     b.ne    fb_present_col
     b       fb_present_next
+fb_present_fade8:
+    cmp     w13, #4
+    b.lo    fb_present_col_fade
+    ld1     {v0.2d, v1.2d}, [x11], #32
+    shrn    v2.8b, v0.8h, #8
+    shrn2   v2.16b, v1.8h, #8
+    ushll   v3.8h, v2.8b, #0
+    ushll2  v4.8h, v2.16b, #0
+    umull   v5.4s, v3.4h, v6.4h
+    umull2  v3.4s, v3.8h, v6.8h
+    umull   v2.4s, v4.4h, v6.4h
+    umull2  v4.4s, v4.8h, v6.8h
+    shrn    v5.4h, v5.4s, #16
+    shrn2   v5.8h, v3.4s, #16
+    shrn    v2.4h, v2.4s, #16
+    shrn2   v2.8h, v4.4s, #16
+    xtn     v5.8b, v5.8h
+    xtn2    v5.16b, v2.8h
+    tbl     v5.16b, {v5.16b}, v7.16b
+    st1     {v5.16b}, [x12], #16
+    sub     w13, w13, #4
+    b       fb_present_fade8
 fb_present_col_fade:
+    cbz     w13, fb_present_next
     ldr     x14, [x11], #FB_BPP
     ubfx    x4, x14, #(CH_SHIFT_B + 8), #8
     mul     w4, w4, w10
@@ -1170,19 +1218,26 @@ fb_fill_rect:
 .endif
     bl      fb_pixel_addr
     mov     x5, x0
+    dup     v0.2d, x4
+    mov     v1.16b, v0.16b
+    mov     v2.16b, v0.16b
+    mov     v3.16b, v0.16b
 
 fb_fill_rect_row:
     cbz     w3, fb_fill_rect_done
-    lsr     w6, w2, #1
+    mov     w6, w2
     mov     x7, x5
-    tbz     w2, #0, fb_fill_rect_pairs
-    str     x4, [x7], #FB_BPP
-fb_fill_rect_pairs:
+fb_fill_rect_col8:
+    cmp     w6, #8
+    b.lo    fb_fill_rect_rest
+    st1     {v0.2d, v1.2d, v2.2d, v3.2d}, [x7], #64
+    sub     w6, w6, #8
+    b       fb_fill_rect_col8
+fb_fill_rect_rest:
     cbz     w6, fb_fill_rect_next
-fb_fill_rect_col:
-    stp     x4, x4, [x7], #(FB_BPP * 2)
-    subs    w6, w6, #1
-    b.ne    fb_fill_rect_col
+    str     x4, [x7], #FB_BPP
+    sub     w6, w6, #1
+    b       fb_fill_rect_rest
 
 fb_fill_rect_next:
     mov     x6, #FB_STRIDE
@@ -1194,12 +1249,93 @@ fb_fill_rect_done:
     ldp     x29, x30, [sp], #16
     ret
 
+fb_fill_around:
+    stp     x29, x30, [sp, #-80]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     x24, x4
+    mov     w19, w0
+    mov     w20, w1
+    add     w21, w0, w2
+    add     w22, w1, w3
+    ldp     w0, w1, [x5]
+    ldp     w2, w3, [x5, #8]
+    add     w2, w0, w2
+    add     w3, w1, w3
+    cmp     w0, w19
+    csel    w0, w19, w0, lt
+    cmp     w1, w20
+    csel    w1, w20, w1, lt
+    cmp     w2, w21
+    csel    w2, w21, w2, gt
+    cmp     w3, w22
+    csel    w3, w22, w3, gt
+    cmp     w0, w2
+    b.ge    fb_fill_around_all
+    cmp     w1, w3
+    b.ge    fb_fill_around_all
+    stp     w0, w1, [sp, #64]
+    stp     w2, w3, [sp, #72]
+    mov     w0, w19
+    mov     w1, w20
+    sub     w2, w21, w19
+    ldr     w3, [sp, #68]
+    sub     w3, w3, w20
+    mov     x4, x24
+    bl      fb_fill_rect
+    mov     w0, w19
+    ldr     w1, [sp, #76]
+    sub     w2, w21, w19
+    sub     w3, w22, w1
+    mov     x4, x24
+    bl      fb_fill_rect
+    mov     w0, w19
+    ldr     w1, [sp, #68]
+    ldr     w2, [sp, #64]
+    sub     w2, w2, w19
+    ldr     w3, [sp, #76]
+    sub     w3, w3, w1
+    mov     x4, x24
+    bl      fb_fill_rect
+    ldr     w0, [sp, #72]
+    ldr     w1, [sp, #68]
+    sub     w2, w21, w0
+    ldr     w3, [sp, #76]
+    sub     w3, w3, w1
+    mov     x4, x24
+    bl      fb_fill_rect
+    b       fb_fill_around_done
+
+fb_fill_around_all:
+    mov     w0, w19
+    mov     w1, w20
+    sub     w2, w21, w19
+    sub     w3, w22, w20
+    mov     x4, x24
+    bl      fb_fill_rect
+
+fb_fill_around_done:
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #80
+    ret
+
 cursor_copy:
 cursor_copy_row:
     cbz     w3, cursor_copy_done
     mov     w6, w2
     mov     x7, x0
     mov     x8, x1
+
+cursor_copy_col8:
+    cmp     w6, #8
+    b.lo    cursor_copy_col
+    ld1     {v0.2d, v1.2d, v2.2d, v3.2d}, [x8], #64
+    st1     {v0.2d, v1.2d, v2.2d, v3.2d}, [x7], #64
+    sub     w6, w6, #8
+    b       cursor_copy_col8
 
 cursor_copy_col:
     cbz     w6, cursor_copy_next
@@ -1286,12 +1422,9 @@ cursor_show:
 
 cursor_show_draw:
     bl      mouse_get_buttons
-    mov     w24, #CURSOR_ALPHA_FULL
-    mov     w13, #CURSOR_ALPHA_PRESSED
     ladr    x21, cursor_sprite
     ladr    x9, cursor_sprite_pressed
     cmp     w0, #0
-    csel    w24, w13, w24, ne
     csel    x21, x9, x21, ne
     ldr     w0, [x19, #CURSOR_STATE_X]
     ldr     w1, [x19, #CURSOR_STATE_Y]
@@ -1309,25 +1442,9 @@ cursor_show_draw_row:
 cursor_show_draw_col:
     cmp     w4, w22
     b.hs    cursor_show_draw_next
-    ldr     x8, [x7], #FB_BPP
-    lsr     x12, x8, #CH_SHIFT_A
+    ldr     x10, [x7], #FB_BPP
+    lsr     x12, x10, #CH_SHIFT_A
     cbz     x12, cursor_show_draw_skip
-    mul     x12, x12, x24
-    lsr     x12, x12, #16
-    and     x10, x8, #0xffff
-    mul     x10, x10, x24
-    lsr     x10, x10, #16
-    lsr     x13, x8, #CH_SHIFT_G
-    and     x13, x13, #0xffff
-    mul     x13, x13, x24
-    lsr     x13, x13, #16
-    orr     x10, x10, x13, lsl #CH_SHIFT_G
-    lsr     x13, x8, #CH_SHIFT_B
-    and     x13, x13, #0xffff
-    mul     x13, x13, x24
-    lsr     x13, x13, #16
-    orr     x10, x10, x13, lsl #CH_SHIFT_B
-    orr     x10, x10, x12, lsl #CH_SHIFT_A
 
 cursor_show_draw_blend:
     mov     x13, #ALPHA_MAX
@@ -1402,7 +1519,37 @@ cursor_render:
     mov     w1, #CURSOR_PRESSED_OFFSET
     mov     x2, #CURSOR_SCALE_PRESSED
     bl      cursor_render_sprite
+    ladr    x0, cursor_sprite_pressed
+    mov     w1, #CURSOR_ALPHA_PRESSED
+    bl      cursor_sprite_opacity
     ldp     x29, x30, [sp], #16
+    ret
+
+cursor_sprite_opacity:
+    mov     w2, #(CURSOR_W * CURSOR_H)
+
+cursor_sprite_opacity_px:
+    ldr     x8, [x0]
+    lsr     x12, x8, #CH_SHIFT_A
+    mul     x12, x12, x1
+    lsr     x12, x12, #16
+    and     x10, x8, #0xffff
+    mul     x10, x10, x1
+    lsr     x10, x10, #16
+    lsr     x13, x8, #CH_SHIFT_G
+    and     x13, x13, #0xffff
+    mul     x13, x13, x1
+    lsr     x13, x13, #16
+    orr     x10, x10, x13, lsl #CH_SHIFT_G
+    lsr     x13, x8, #CH_SHIFT_B
+    and     x13, x13, #0xffff
+    mul     x13, x13, x1
+    lsr     x13, x13, #16
+    orr     x10, x10, x13, lsl #CH_SHIFT_B
+    orr     x10, x10, x12, lsl #CH_SHIFT_A
+    str     x10, [x0], #FB_BPP
+    subs    w2, w2, #1
+    b.ne    cursor_sprite_opacity_px
     ret
 
 cursor_render_sprite:
@@ -1616,10 +1763,22 @@ win_dirty_title:
 win_dirty_rect:
     mov     w3, #0
 win_dirty_bounds:
+    stp     x29, x30, [sp, #-16]!
     ladr    x9, win_count
     ldr     w9, [x9]
     cmp     x0, x9
-    b.hs    dirty_add_done
+    b.hs    win_dirty_bounds_done
+    mov     w12, w3
+    bl      win_rect
+    cmp     w12, #0
+    csel    w3, w3, w12, eq
+    bl      dirty_add
+
+win_dirty_bounds_done:
+    ldp     x29, x30, [sp], #16
+    ret
+
+win_rect:
     ladr    x9, win_list
     mov     x10, #WIN_SIZE
     madd    x9, x0, x10, x9
@@ -1632,10 +1791,8 @@ win_dirty_bounds:
     asr     x11, x11, #ANIM_SHIFT
     add     w1, w1, w11
     ldr     w2, [x9, #WIN_W]
-    ldr     w12, [x9, #WIN_H]
-    cmp     w3, #0
-    csel    w3, w12, w3, eq
-    b       dirty_add
+    ldr     w3, [x9, #WIN_H]
+    ret
 
 win_repaint:
     stp     x29, x30, [sp, #-16]!
@@ -3357,18 +3514,9 @@ win_draw_one:
     mov     x9, #WIN_SIZE
     madd    x19, x0, x9, x19
     mov     w20, w1
-    ldr     w21, [x19, #WIN_X]
-    ldr     x9, [x19, #WIN_TX]
-    asr     x9, x9, #ANIM_SHIFT
-    add     w21, w21, w9
-    ldr     w22, [x19, #WIN_Y]
-    ldr     x9, [x19, #WIN_TY]
-    asr     x9, x9, #ANIM_SHIFT
-    add     w22, w22, w9
-    mov     w0, w21
-    mov     w1, w22
-    ldr     w2, [x19, #WIN_W]
-    ldr     w3, [x19, #WIN_H]
+    bl      win_rect
+    mov     w21, w0
+    mov     w22, w1
     stp     x0, x1, [sp, #-32]!
     stp     x2, x3, [sp, #16]
     ldr     x0, =COLOR_WIN_BORDER
@@ -3376,7 +3524,15 @@ win_draw_one:
     mov     x4, x0
     ldp     x2, x3, [sp, #16]
     ldp     x0, x1, [sp], #32
-    bl      fb_fill_rect
+    add     w9, w0, #WIN_BORDER
+    add     w10, w1, #WIN_BORDER
+    sub     w11, w2, #(WIN_BORDER * 2)
+    sub     w12, w3, #(WIN_BORDER * 2)
+    stp     w9, w10, [sp, #-16]!
+    stp     w11, w12, [sp, #8]
+    mov     x5, sp
+    bl      fb_fill_around
+    add     sp, sp, #16
     add     w0, w21, #WIN_BORDER
     add     w1, w22, #WIN_BORDER
     ldr     w2, [x19, #WIN_W]
@@ -3462,14 +3618,23 @@ win_draw_one_title:
 win_draw_all:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
+    ladr    x9, win_count
+    ldr     w20, [x9]
+    stp     xzr, xzr, [sp, #32]
+    cbz     w20, win_draw_all_background
+    sub     w0, w20, #1
+    bl      win_rect
+    stp     w0, w1, [sp, #32]
+    stp     w2, w3, [sp, #40]
+
+win_draw_all_background:
     mov     w0, #0
     mov     w1, #0
     mov     w2, #FB_WIDTH
     mov     w3, #FB_HEIGHT
     ldr     x4, =COLOR_BACKGROUND
-    bl      fb_fill_rect
-    ladr    x9, win_count
-    ldr     w20, [x9]
+    add     x5, sp, #32
+    bl      fb_fill_around
     mov     w19, #0
 
 win_draw_all_loop:
@@ -3780,6 +3945,8 @@ pmm_free:
 pmm_free_done:
     ret
 
+.section .text.boot
+
 mmu_init:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
@@ -4038,6 +4205,8 @@ fdt_find_memory_fail:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #64
     ret
+
+.section .text
 
 string_length_bounded:
     mov     x2, x0
@@ -6667,6 +6836,8 @@ font_init_done:
     ldp     x29, x30, [sp], #48
     ret
 
+.section .text.boot
+
 gic_init:
     mov     x0, #GICD_BASE
     mov     w1, #GIC_ENABLE
@@ -6748,6 +6919,8 @@ timer_tick_blink:
 timer_tick_store:
     str     w1, [x0]
     ret
+
+.section .text
 
 uart_rx_get:
     ladr    x1, uart_rx_tail
@@ -7475,6 +7648,10 @@ win_title_3:
     vec_entry 15, panic_entry
 
 .section .rodata
+
+.balign 16
+fb_present_shuffle:
+    .byte   2, 1, 0, 255, 6, 5, 4, 255, 10, 9, 8, 255, 14, 13, 12, 255
 
 files_error_msg:
     .asciz  "FILES SCAN FAIL\r\n"

@@ -91,6 +91,8 @@ Beleg: Arm Architecture Reference Manual for A-profile (ARM DDI 0487), Kapitel D
 | `HCR_EL2_RW` | `1 << 31` | EL1 ist AArch64 |
 | `CNTHCTL_EL2_EL1PCTEN` | `1 << 0` | EL1 darf den physischen Zähler lesen |
 | `CNTHCTL_EL2_EL1PCEN` | `1 << 1` | EL1 darf die physischen Timer-Register nutzen |
+| `CPTR_EL2_TFP` | `1 << 10` | `CPTR_EL2.TFP`, bei gesetztem Bit werden FP/SIMD-Befehle aus EL0/EL1 nach EL2 getrappt. Wird beim Abstieg aus EL2 gelöscht |
+| `CPACR_EL1_FPEN` | `3 << 20` | `CPACR_EL1.FPEN` Bits [21:20], `0b11` = kein Trap für FP/SIMD in EL0 und EL1. Reset-Wert ist `0b00`, ohne diese Freigabe löst die erste NEON-Instruktion eine Ausnahme aus. Gesetzt in `boot_el1_entry`, per Lesen-Ändern-Schreiben wie `SCTLR_EL1` |
 | `SCTLR_M` | `1 << 0` | MMU aktiv |
 
 ### SPSR-Werte für den Exception-Level-Wechsel

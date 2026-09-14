@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-26.704%20Byte-brightgreen?style=flat-square" alt="26704 Byte">
+<img src="https://img.shields.io/badge/Kernel-25.608%20Byte-brightgreen?style=flat-square" alt="25608 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>26.704&nbsp;Byte</b> groß, also <b>26&nbsp;KB</b>.<br>
+Das fertige System ist <b>25.608&nbsp;Byte</b> groß, also <b>25&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -116,7 +116,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>182 KB · 7832 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>192 KB · 8215 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -145,11 +145,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 7832 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 8215 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **792 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **829 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -174,7 +174,7 @@ In `kernel.S` stecken **792 Sprungmarken**. Jede gehört zu einem Zuständigkeit
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **26.704 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **25.608 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -344,10 +344,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 188 KB in drei Dateien |
-| Zeilen Assembler | 7832 |
-| Sprungmarken | 792 |
-| **Fertiges Betriebssystem** | **26.704 Byte** |
+| Eigener Quelltext | 204 KB in drei Dateien |
+| Zeilen Assembler | 8215 |
+| Sprungmarken | 829 |
+| **Fertiges Betriebssystem** | **25.608 Byte** |
 | Speicherbedarf im Betrieb | 70 MB, fast vollständig Bildspeicher |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -355,3 +355,46 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 | Späteres Hardwareziel | Raspberry Pi 5 |
 
 </div>
+
+---
+
+## Messwerte
+
+Dieser Abschnitt wird nach jeder Messung fortgeschrieben. Alle Zahlen stammen aus `make trace` und `python3 tools/trace.py scenes`: QEMU zählt dabei jede ausgeführte Instruktion und jeden Speicherzugriff, ohne dass im Kernel eine Zeile dafür steht. Eine "Instruktion" ist ein einzelner Maschinenbefehl. Zum Einordnen: Die Emulation schafft in einfachen Schleifen rund zwei Milliarden davon je Sekunde, ein echter Cortex-A76 im Raspberry Pi 5 etwa das Doppelte bis Dreifache.
+
+### Stand 14.09.2026: erste Messung und erste Optimierungsrunde
+
+**Was gemessen wurde.** Drei Lastfälle: der Start (Hochfahren, Einblenden des Bildschirms über 450 ms, ein Fenster gleitet herein), eine einzelne Mausbewegung, und ein einzelner Schritt beim Ziehen des Dateifensters (1400x800 Bildpunkte, 24 Zeilen Text). Dazu die Größe des fertigen Systems und der belegte Arbeitsspeicher.
+
+**Was dabei herauskam.** Nicht die Vektorgrafik war teuer, wie man vermuten könnte, sondern eine unscheinbare Routine namens `fb_present`. Sie übersetzt das interne Bild (8 Byte je Bildpunkt, für saubere Farbmischung) in das Format, das die Grafikausgabe versteht (4 Byte je Bildpunkt). Beim Start entfielen 91 % aller Instruktionen darauf, beim Fensterziehen 52 %. Die gesamte Schrift- und Vektorrasterung zusammen: 1,5 % beim Start. Zweiter Befund: Beim Zeichnen eines Fensters wurde jeder Bildpunkt dreimal gefüllt, erst Hintergrund, dann Rahmen, dann Fläche. Nur die letzte Füllung war sichtbar.
+
+**Was geändert wurde, ohne dass sich am Bild ein einziges Byte ändert.** Das ist der Maßstab: Vor jeder Änderung wurde ein Bildschirmfoto als Referenz gespeichert, nach jeder Änderung neu aufgenommen und byteweise verglichen. Zusätzlich der gedrückte Mauszeiger, der im Referenzbild nicht vorkommt, mit eigenem Vergleich gegen den alten Kernel.
+
+1. Rahmen und Hintergrund werden als Streifen um das oberste Fenster gezeichnet statt vollflächig darunter. Jeder Bildpunkt wird genau einmal gefüllt.
+2. `fb_present` und `fb_fill_rect` nutzen die SIMD-Einheit des Prozessors (NEON): acht Bildpunkte je Befehl statt einem. Dafür musste die SIMD-Einheit beim Start erst freigeschaltet werden, sie ist ab Werk gesperrt.
+3. Die verringerte Deckkraft des gedrückten Mauszeigers wird einmal beim Start ins Sprite eingerechnet statt bei jeder Bewegung neu.
+4. Das Sichern und Wiederherstellen des Hintergrunds unter dem Zeiger läuft ebenfalls über NEON.
+5. Die Vektortabelle der Fehlerbehandlung muss an einer 2048-Byte-Grenze liegen. Davor klaffte eine Lücke von 976 Byte Füllung. Jetzt liegt sie direkt hinter dem Startcode, die Lücke ist auf 8 Byte geschrumpft.
+
+**Ergebnis.**
+
+| Lastfall | vorher | nachher | Ersparnis |
+|---|---|---|---|
+| Start bis Ruhe | 1.189.498.712 Instruktionen | 416.083.185 | **−65 %** |
+| eine Mausbewegung | 100.519 | 41.988 | **−58 %** |
+| ein Ziehschritt des Dateifensters | 19.111.140 | 5.797.771 | **−70 %** |
+| davon `fb_present` | 9.983.433 | 1.713.602 | −83 % |
+| davon Füllen | 5.999.757 | 1.002.721 | −83 % |
+| davon Schrift | 2.700.000 | 2.700.000 | unverändert, siehe unten |
+| Größe des fertigen Systems | 25.976 Byte | 25.608 Byte | −368 Byte, obwohl 568 Byte neuer Code hinzukamen |
+| Arbeitsspeicher | 74,55 MB | 74,55 MB | unverändert |
+
+Ein Ziehschritt kostet emuliert jetzt rund 3 statt 10 Millisekunden. Das Ziehen bleibt damit auch unter Emulation deutlich über 30 Bildern je Sekunde.
+
+**Was noch offen ist, und warum.**
+
+- *Schrift beim Ziehen.* Die 24 Textzeilen des Dateifensters werden bei jedem Ziehschritt neu gerastert (2,7 Mio. Instruktionen), obwohl sich der Text nicht ändert. Die Lösung ist ein Fensterpuffer: einmal rastern, beim Ziehen kopieren. Er kostet 8,5 MB je Fenster und ist im Animationsplan als Schritt 5 vorgesehen.
+- *Arbeitsspeicher.* 99,7 % der 74,55 MB sind die beiden Bildpuffer: 49 MB internes Bild mit 8 Byte je Bildpunkt, 24,6 MB Ausgabebild. Alles andere zusammen sind 235 KB. Halbieren ließe sich das nur, indem das interne Bild auf 4 Byte je Bildpunkt umgestellt wird. Das würde `fb_present` sogar ganz überflüssig machen, rechnet aber Farbmischungen mit 8 statt 16 Bit je Kanal. Am Bildschirm kommen ohnehin 8 Bit an, der Unterschied wären Rundungen in mehrfach überlagerten Kanten. Das ist eine Architekturentscheidung, keine Optimierung, und sie ist noch nicht getroffen.
+- *Was sich nicht lohnt.* Die Vektor-Engine beschleunigen: sie ist beim Start 1,5 % und fällt beim Ziehen mit dem Fensterpuffer ganz weg. Das Löschen des Ausgabepuffers beim Start: 3 ms, einmalig.
+
+**Nebenbei bestätigt.** Die Animation rechnet zeitbasiert (13 Bilder in 450 ms entsprechen dem 30-Hz-Zeitgeber, keine Bildzählung). Nach dem Ende jeder Animation führt das System bis zur nächsten Eingabe exakt null Instruktionen aus. Die Reihenfolge beim Zeichnen des Mauszeigers (entfernen, Fenster rendern, Zeiger zeichnen, dann ausgeben) ist maschinell bestätigt. In allen Messläufen mit Mausbewegung, Drücken, Ziehen und Loslassen: kein einziger `PANIC`.
