@@ -1716,3 +1716,5 @@ Kontext `SHA_CTX`: Zustand 0 (32 Byte), Puffer 32 (64), Byte-Zähler 96 (8), Fü
 Gemessen: Selbsttest 15.625 Blöcke in 2,3 Mio. Befehlen, ein Block 117 Befehle. `SHA256 OK, 5 Testvektoren` unter TCG (Cortex-A72) und unter hvf (`-cpu host`, Apple Silicon).
 
 Nächste Bausteine in dieser Reihenfolge: HMAC und HKDF (RFC 2104, RFC 5869) auf SHA-256, AES-128 (`aese`/`aesmc`) mit GCM (`pmull` für GHASH), X25519 (RFC 7748), dann der TLS-1.3-Handshake (RFC 8446).
+
+**Fehlersuche (14.09.2026):** Differentialtest mit 201 Längen (0 bis 200) über Muster `(i·7+3) mod 256`, eingespeist in Stücken von `(Länge mod 17)+1` Byte, alle Ergebnisse gegen `hashlib.sha256` gleich. Durchgesehen: Registererhalt über alle `bl` (`x19`–`x22` in `update`/`final`, `sha256_block` rahmenlos ohne Aufruf), Füllpfad bei Füllstand 56 und 64 (`sha256_final_pad`), Zähler 64 Bit, `SCTLR_EL1.A` nie gesetzt (unausgerichtete `ld1`/`ldp` zulässig, ARM DDI 0487, SCTLR_EL1.A), keine NEON-Nutzung in `timer_tick`, `uart_rx_isr`, `virtio_input_poll`. Keine Fehler gefunden.
