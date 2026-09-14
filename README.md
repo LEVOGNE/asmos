@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-41.608%20Byte-brightgreen?style=flat-square" alt="41608 Byte">
+<img src="https://img.shields.io/badge/Kernel-41.640%20Byte-brightgreen?style=flat-square" alt="41640 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>41.608&nbsp;Byte</b> groß, also <b>41&nbsp;KB</b>.<br>
+Das fertige System ist <b>41.640&nbsp;Byte</b> groß, also <b>41&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>295 KB · 12431 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>295 KB · 12441 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,11 +146,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 12431 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 12441 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1284 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1285 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -164,7 +164,7 @@ In `kernel.S` stecken **1284 Sprungmarken**. Jede gehört zu einem Zuständigkei
 | `virtio_` `mouse_` `click_` | 73 | Gerätetreiber, Maus, Klickerkennung |
 | `vg_` `cov_` `edge_` `icon_` | 60 | **Vektor-Engine**: Pfade, Kurven, Füllung, Strich, Kantenglättung, Icons |
 | `console_` `string_` `out_` `power_` | 59 | Konsole, Textwerkzeuge, Herunterfahren |
-| `sha_` `hmac_` `hkdf_` `aes_` `ghash_` `crypto_` | 172 | **Kryptografie**: SHA-256, HMAC, HKDF, AES-128-GCM, alles über die ARMv8-Erweiterung, Selbsttest gegen sechzehn Vektoren beim Start |
+| `sha_` `hmac_` `hkdf_` `aes_` `ghash_` `crypto_` | 173 | **Kryptografie**: SHA-256, HMAC, HKDF, AES-128-GCM, alles über die ARMv8-Erweiterung, Selbsttest gegen sechzehn Vektoren beim Start |
 | `vec_` `panic_` `irq_` `gic_` | 37 | Fehlerbehandlung und Unterbrechungen |
 | `uart_` | 29 | Serielle Schnittstelle, Textausgabe, Tastatureingabe |
 | `boot_` | 15 | Hochfahren, Privilegstufe, Speicher vorbereiten |
@@ -177,7 +177,7 @@ In `kernel.S` stecken **1284 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **41.608 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **41.640 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -348,9 +348,9 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 | | |
 |---|---|
 | Eigener Quelltext | 302 KB in drei Dateien |
-| Zeilen Assembler | 12431 |
-| Sprungmarken | 1284 |
-| **Fertiges Betriebssystem** | **41.608 Byte** |
+| Zeilen Assembler | 12441 |
+| Sprungmarken | 1285 |
+| **Fertiges Betriebssystem** | **41.640 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -596,5 +596,7 @@ Der Selbsttest prüft die vier klassischen Vektoren von McGrew und Viega für AE
 | Geprüft auf | TCG und hvf | TCG und hvf |
 
 **Ein Fehler beim Einbau, im ersten Lauf gefunden.** Der Fälschungsschutz rechnet in einem Zahlenkörper, dessen Bitreihenfolge dem Prozessor entgegengesetzt ist. Die erste Fassung drehte dafür die Bits jedes Bytes und zusätzlich die Reihenfolge der Bytes; Vektor 2 (der erste, der diese Rechnung überhaupt braucht) schlug fehl. Richtig ist, nur die Bits je Byte zu drehen, weil ein Prozessorwort seine Bits ohnehin byteweise aufsteigend zählt. Vektor 1 hätte den Fehler nie gezeigt, denn bei leerer Nachricht ist das Ergebnis der Rechnung immer null. Das Bild ist byteweise gleich der Referenz.
+
+**Fehlersuche im AES-Block, ein echter Fund.** Ein Testbau hat 64 Fälle mit Nachrichten von 0 bis 79 Byte und Zusatzdaten von 0 bis 36 Byte verschlüsselt, jedes Ergebnis auf die serielle Leitung geschrieben und gegen die Referenz des Entwicklungsrechners geprüft: 0 Abweichungen. Derselbe Testbau hat jede Nachricht danach **an Ort und Stelle** entschlüsselt, also mit demselben Puffer für Ein- und Ausgabe, wie es TLS mit seinem Empfangspuffer tun wird. Ergebnis vor dem Fix: 60 von 64 abgelehnt, nämlich alle, deren Länge kein Vielfaches von 16 ist. Ursache: Beim letzten, unvollständigen Block schrieb die Routine erst den Klartext in den Puffer und las danach für den Fälschungsschutz den Geheimtext von derselben Adresse, also den Klartext. Der Tag stimmte nicht, die Nachricht wurde verworfen. Der Fälschungsschutz liest jetzt vor dem Überschreiben. Nach dem Fix: 64 von 64 angenommen. Der feste Selbsttest beim Start entschlüsselt seither ebenfalls an Ort und Stelle, damit der Fehler nicht wiederkommen kann. Größe des fertigen Systems: 41.640 Byte.
 
 **Fehlersuche im SHA-Block.** Die fünf Vektoren decken die Blockgrenzen ab, nicht aber jede Kombination aus Füllstand und Stückgröße. Ein Testbau hat deshalb 201 Nachrichten der Längen 0 bis 200 gehasht, jede in Stücken wechselnder Größe (1 bis 17 Byte) eingespeist, und jedes Ergebnis auf die serielle Leitung geschrieben; ein Skript verglich alle 201 mit der Referenz des Entwicklungsrechners. **0 Abweichungen.** Dazu geprüft: Unterbrechungsroutinen nutzen keine Vektorregister (der Hash darf also unterbrochen werden), das Alignment-Prüfbit des Prozessors ist aus (Daten dürfen an beliebiger Adresse liegen, im Test ab Offset 24 nachgewiesen), der Vergleich zweier Ergebnisse läuft in konstanter Zeit (nötig, sobald damit Nachrichtenkennungen geprüft werden).

@@ -10903,6 +10903,13 @@ aes_gcm_run_absorb:
 aes_gcm_run_partial:
     add     x0, sp, #GCM_FRAME_TMP
     st1     {v0.16b}, [x0]
+    cbz     w27, aes_gcm_run_partial_xor_start
+    mov     x0, x23
+    mov     x1, x24
+    bl      ghash_data
+
+aes_gcm_run_partial_xor_start:
+    add     x0, sp, #GCM_FRAME_TMP
     mov     x1, #0
 
 aes_gcm_run_partial_xor:
@@ -10913,13 +10920,12 @@ aes_gcm_run_partial_xor:
     add     x1, x1, #1
     cmp     x1, x24
     b.lo    aes_gcm_run_partial_xor
+    cbnz    w27, aes_gcm_run_partial_done
     mov     x0, x25
-    cbz     w27, aes_gcm_run_partial_hash
-    mov     x0, x23
-
-aes_gcm_run_partial_hash:
     mov     x1, x24
     bl      ghash_data
+
+aes_gcm_run_partial_done:
     mov     x24, #0
     b       aes_gcm_run_data
 
@@ -10998,10 +11004,14 @@ aes_check:
     mov     w2, #GCM_TAG_SIZE
     bl      mem_equal
     cbz     w0, aes_check_fail
+    ldr     x0, [x19, #48]
+    ladr    x1, aes_buf
+    ldr     w2, [x19, #40]
+    bl      mem_copy
     ladr    x0, aes_ctx
     ldp     x1, x2, [x19, #8]
     ldr     x3, [x19, #24]
-    ldr     x4, [x19, #48]
+    ladr    x4, aes_buf
     ldr     x5, [x19, #40]
     ladr    x6, aes_buf
     ldr     x7, [x19, #56]
