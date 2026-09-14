@@ -7358,6 +7358,12 @@ timer_tick:
     mov     w1, #1
     strb    w1, [x0]
 
+    ladr    x0, net_timer_armed
+    ldrb    w1, [x0]
+    cbz     w1, timer_tick_blink
+    ladr    x0, net_tick_pending
+    strb    w1, [x0]
+
 timer_tick_blink:
     ladr    x0, timer_blink_count
     ldr     w1, [x0]
@@ -7481,7 +7487,18 @@ console_drain_release:
     cbz     w0, console_drain_mouse
     bl      power_off
 console_drain_mouse:
+    ladr    x0, net_pending
+    bl      console_take_flag
+    cbz     w0, console_drain_net_tick
     bl      net_poll
+
+console_drain_net_tick:
+    ladr    x0, net_tick_pending
+    bl      console_take_flag
+    cbz     w0, console_drain_mouse_flag
+    bl      net_tick
+
+console_drain_mouse_flag:
     ladr    x0, mouse_dirty
     bl      console_take_flag
     cbz     w0, console_drain_anim
@@ -7559,10 +7576,7 @@ irq_entry:
     ldr     w1, [x1]
     cmp     w0, w1
     b.eq    irq_virtio
-    ladr    x0, irq_label
-    mov     x1, x19
-    bl      uart_field
-    b       irq_eoi
+    b       irq_other
 
 irq_timer:
     bl      timer_tick
@@ -7796,6 +7810,14 @@ net_init_mac:
     b.lo    net_init_mac
     mov     x0, x19
     bl      virtio_driver_ok
+    mov     x0, x19
+    mov     x1, #VIRTIO_MMIO_BASE
+    sub     x0, x0, x1
+    lsr     x0, x0, #9
+    add     w0, w0, #VIRTIO_MMIO_IRQ_BASE
+    ladr    x1, net_intid
+    str     w0, [x1]
+    bl      gic_enable_irq
     bl      net_rx_fill
     ladr    x0, net_ready_msg
     bl      uart_puts
@@ -7898,9 +7920,6 @@ net_poll:
     cbz     x0, net_poll_none
     stp     x29, x30, [sp, #-32]!
     stp     x19, x20, [sp, #16]
-    bl      dhcp_tick
-    bl      dns_tick
-    bl      tcp_tick
 
 net_poll_loop:
     ladr    x19, net_rx_used
@@ -7943,6 +7962,74 @@ net_poll_done:
     ldp     x29, x30, [sp], #32
 
 net_poll_none:
+    ret
+
+irq_other:
+    ladr    x1, net_intid
+    ldr     w1, [x1]
+    cmp     w0, w1
+    b.ne    irq_unexpected
+    ladr    x0, net_base
+    ldr     x0, [x0]
+    cbz     x0, irq_eoi
+    ldr     w1, [x0, #VIRTIO_REG_INT_STATUS]
+    str     w1, [x0, #VIRTIO_REG_INT_ACK]
+    ladr    x0, net_pending
+    mov     w1, #1
+    strb    w1, [x0]
+    b       irq_eoi
+
+irq_unexpected:
+    ladr    x0, irq_label
+    mov     x1, x19
+    bl      uart_field
+    b       irq_eoi
+
+console_pending:
+    ladr    x1, uart_rx_head
+    ldr     w2, [x1]
+    ladr    x1, uart_rx_tail
+    ldr     w3, [x1]
+    cmp     w2, w3
+    b.ne    console_pending_yes
+    ladr    x1, uart_rx_overflow
+    ldrb    w2, [x1]
+    cbnz    w2, console_pending_yes
+    ladr    x1, click_record
+    ldrb    w2, [x1, #CLICK_PENDING]
+    cbnz    w2, console_pending_yes
+    ladr    x1, release_record
+    ldrb    w2, [x1, #CLICK_PENDING]
+    cbnz    w2, console_pending_yes
+    ladr    x1, mouse_dirty
+    ldrb    w2, [x1]
+    cbnz    w2, console_pending_yes
+    ladr    x1, console_blink_pending
+    ldrb    w2, [x1]
+    cbnz    w2, console_pending_yes
+    ladr    x1, anim_pending
+    ldrb    w2, [x1]
+    cbnz    w2, console_pending_yes
+    ladr    x1, net_pending
+    ldrb    w2, [x1]
+    cbnz    w2, console_pending_yes
+    ladr    x1, net_tick_pending
+    ldrb    w2, [x1]
+    cbnz    w2, console_pending_yes
+    mov     w0, #0
+    ret
+
+console_pending_yes:
+    mov     w0, #1
+    ret
+
+net_tick:
+    stp     x29, x30, [sp, #-16]!
+    bl      dhcp_tick
+    bl      dns_tick
+    bl      tcp_tick
+    bl      net_timer_check
+    ldp     x29, x30, [sp], #16
     ret
 
 net_send:
@@ -8572,6 +8659,7 @@ dhcp_build_params:
     bl      net_send
     ladr    x0, dhcp_timer
     str     wzr, [x0]
+    bl      net_timer_arm
     ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
@@ -8789,6 +8877,7 @@ dns_query:
     strb    w1, [x0]
     ladr    x0, dns_timer
     str     wzr, [x0]
+    bl      net_timer_arm
     ladr    x22, net_tx_buf
     add     x22, x22, #(NET_HDR_SIZE + ETH_HDR_SIZE + IP_HDR_SIZE + UDP_HDR_SIZE)
     mov     x0, x21
@@ -9207,6 +9296,7 @@ tcp_send_sum:
     bl      net_send
     ladr    x0, tcp_timer
     str     wzr, [x0]
+    bl      net_timer_arm
     ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
@@ -9570,36 +9660,39 @@ fat_next_cluster_end:
     ret
 
     vec_entry 3, panic_entry
-console_pending:
-    ladr    x1, uart_rx_head
-    ldr     w2, [x1]
-    ladr    x1, uart_rx_tail
-    ldr     w3, [x1]
-    cmp     w2, w3
-    b.ne    console_pending_yes
-    ladr    x1, uart_rx_overflow
-    ldrb    w2, [x1]
-    cbnz    w2, console_pending_yes
-    ladr    x1, click_record
-    ldrb    w2, [x1, #CLICK_PENDING]
-    cbnz    w2, console_pending_yes
-    ladr    x1, release_record
-    ldrb    w2, [x1, #CLICK_PENDING]
-    cbnz    w2, console_pending_yes
-    ladr    x1, mouse_dirty
-    ldrb    w2, [x1]
-    cbnz    w2, console_pending_yes
-    ladr    x1, console_blink_pending
-    ldrb    w2, [x1]
-    cbnz    w2, console_pending_yes
-    ladr    x1, anim_pending
-    ldrb    w2, [x1]
-    cbnz    w2, console_pending_yes
-    mov     w0, #0
+net_timer_arm:
+    ladr    x0, net_timer_armed
+    mov     w1, #1
+    strb    w1, [x0]
     ret
 
-console_pending_yes:
-    mov     w0, #1
+net_timer_check:
+    ladr    x0, dhcp_state
+    ldrb    w1, [x0]
+    cmp     w1, #DHCP_STATE_DISCOVER
+    b.eq    net_timer_check_ret
+    cmp     w1, #DHCP_STATE_REQUEST
+    b.eq    net_timer_check_ret
+    ladr    x0, dns_state
+    ldrb    w1, [x0]
+    cmp     w1, #DNS_STATE_SENT
+    b.eq    net_timer_check_ret
+    ladr    x0, tcp_state
+    ldrb    w1, [x0]
+    cmp     w1, #TCP_STATE_SYN_SENT
+    b.eq    net_timer_check_ret
+    cmp     w1, #TCP_STATE_ESTABLISHED
+    b.ne    net_timer_check_off
+    ladr    x0, tcp_snd_nxt
+    ldp     w0, w1, [x0]
+    cmp     w0, w1
+    b.ne    net_timer_check_ret
+
+net_timer_check_off:
+    ladr    x0, net_timer_armed
+    strb    wzr, [x0]
+
+net_timer_check_ret:
     ret
 
     vec_entry 4, panic_entry
@@ -10370,6 +10463,14 @@ tcp_timer:
     .space  4
 net_last_src:
     .space  4
+net_intid:
+    .space  4
+net_pending:
+    .space  1
+net_tick_pending:
+    .space  1
+net_timer_armed:
+    .space  1
 
 .balign 16
 net_rx_desc:

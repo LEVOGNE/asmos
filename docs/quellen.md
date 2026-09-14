@@ -1614,3 +1614,13 @@ Zustandsautomat (Ausschnitt aus RFC 793, Abschnitt 3.2): `CLOSED` → SYN gesend
 **Gefundener Fehler beim Bau:** Die Nutzlastlänge wurde aus der Rahmenlänge statt aus der IP-Gesamtlänge abgeleitet. Ein reines ACK ist per Ethernet auf 60 Byte aufgefüllt, die 6 Füllbytes wurden als Daten übernommen. Behoben in `net_ip_handle`: die verarbeitete Länge ist das Minimum aus Rahmenlänge und IP-Gesamtlänge (RFC 791, "Total Length"; RFC 894, Auffüllung auf Mindestlänge).
 
 Nicht enthalten: Fenstersteuerung beim Senden (die Anfrage ist kleiner als jedes Fenster), Sendepuffer für mehr als ein Segment, gleichzeitige Verbindungen, `TIME_WAIT`, Optionen jenseits MSS, Prüfung eingehender Prüfsummen. Gemessen: `TCP SYN an 104.20.23.154:80`, `TCP VERBUNDEN, sende GET`, `HTTP HTTP/1.1 200 OK`, `TCP GESCHLOSSEN`.
+
+## Netzwerk, Härtung 1: Empfang per Interrupt (14.09.2026)
+
+Gleicher Weg wie bei virtio-input: Interruptnummer = `VIRTIO_MMIO_IRQ_BASE` + Steckplatz (Basisadresse minus `VIRTIO_MMIO_BASE`, geteilt durch `VIRTIO_MMIO_STRIDE`), freigeschaltet über `gic_enable_irq`. Beleg für die Nummerierung: Device Tree der QEMU-virt-Maschine (`make dtb`), Eintrag `virtio_mmio@a000000` mit `interrupts = <0 16 1>` aufsteigend je Steckplatz, SPI 16 entspricht Interrupt-ID 48.
+
+Im Handler (`irq_other`, außerhalb der Vektortabelle) wird `InterruptStatus` gelesen und nach `InterruptACK` zurückgeschrieben (VIRTIO 1.2, 4.2.2 MMIO Device Register Layout: Bit 0 "Used Buffer Notification"), dann nur das Merkmal `net_pending` gesetzt. Verarbeitet wird in der Hauptschleife (`console_drain` → `net_poll`), wie bei allen anderen Ereignisquellen.
+
+Die Protokoll-Zeitgeber (DHCP, DNS, TCP-Wiederholung) laufen über `net_tick`, ausgelöst vom 30-Hz-Zeitgeber, aber nur solange `net_timer_armed` gesetzt ist. Scharf gestellt wird beim Senden einer Nachricht, die eine Antwort erwartet; `net_timer_check` löscht das Merkmal, sobald kein Zustand mehr wartet. Gemessen über 10 s: 14 Interrupts, 2 Netz-Ticks, danach null Netzarbeit.
+
+**Nebenbefund:** `console_pending` lag im Füllraum von Vektoreintrag 3 und überschritt mit zwei neuen Merkmalen die 128 Byte; die Linker-Zusicherung hat es gemeldet. Getauscht gegen `net_timer_arm` und `net_timer_check` (108 Byte), `console_pending` liegt jetzt in `.text`.
