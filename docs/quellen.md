@@ -1790,3 +1790,28 @@ Nicht enthalten: Prüfung auf Ergebnis 0 (RFC 7748, Abschnitt 6.1, "MAY check"),
 Gemessen: `X25519 OK, 6 Testvektoren` unter TCG und hvf, sechs Vereinbarungen 2,5 Mio. Befehle (`fe_mul` 1,89 Mio.), Start 479,3 Mio., Bild unverändert.
 
 **Fehlersuche X25519 (14.09.2026):** Differentialtest mit 42 Fällen gegen `cryptography` und Python-Ganzzahlen: 32 Paare `(k, u)` aus Mustern, `u = p + 9` und `u = 9 + 2²⁵⁵` (nichtkanonische Kodierungen, RFC 7748 Abschnitt 5 verlangt Maskierung des obersten Bits und akzeptiert `u ≥ p`), acht Feldoperationen mit `a = 2²⁵⁶ − 1`: `a²`, `a + a`, `0 − 1`, `a − a`, `tobytes(a)`, `1 − a`, `121665 · a`, `a⁻¹`. 0 Abweichungen. Schranken nachgerechnet: `fe_add` Summe < 2²⁵⁷, nach Faltung des Übertrags (× 38) höchstens ein weiterer Übertrag, wenn die Summe ≥ 2²⁵⁷ − 38; `fe_sub` Borgen nach erstem Abzug nur, wenn `a − b + 2²⁵⁶ < 38`, dann kein drittes; `fe_mul` Übertrag der ersten Faltung ≤ 39, nach der zweiten ≤ 1, nach der dritten keiner. Durchgesehen: Registererhalt (`x19`–`x23` in `fe_mul`, `x19`–`x24` in `x25519`), Bitextraktion über `lsr`/`and` ohne Verzweigung, Stackbedarf der Kette `x25519` → `fe_invert` → `fe_sqr_n` → `fe_mul` rund 830 Byte von 16 KB. Keine Fehler gefunden.
+
+## TLS 1.3, Handshake (14.09.2026)
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| Record-Kopf | Typ (1), Version (2), Länge (2); Typen 20 CCS, 21 Alert, 22 Handshake, 23 Anwendungsdaten; Länge höchstens 2¹⁴ + 256 für verschlüsselte Records | RFC 8446, Abschnitt 5.1 und 5.2 |
+| `legacy_record_version` `0x0301` im ClientHello, sonst `0x0303` | | RFC 8446, Abschnitt 5.1 |
+| ClientHello | `legacy_version 0x0303`, `random` 32, `legacy_session_id` leer, `cipher_suites` `{0x13, 0x01}`, `legacy_compression_methods` `{0}`, Erweiterungen | RFC 8446, Abschnitt 4.1.2 |
+| Erweiterungen | server_name (0) nach RFC 6066 Abschnitt 3; supported_groups (10) `x25519 = 0x001d`; signature_algorithms (13) `0x0403, 0x0804, 0x0401, 0x0807`; supported_versions (43) `0x0304`; key_share (51) `{0x001d, 32 Byte}` | RFC 8446, Abschnitt 4.2 und 4.2.3, 4.2.7, 4.2.8; RFC 8422 (Gruppen) |
+| ServerHello | `cipher_suite` muss `0x1301` sein, `supported_versions` muss `0x0304` enthalten, `key_share` genau eine Gruppe; das besondere `random` `CF 21 AD 74 …` kennzeichnet HelloRetryRequest | RFC 8446, Abschnitt 4.1.3 und 4.1.4 |
+| Schlüsselplan | `Early = Extract(0, 0)`, `Derived = Derive-Secret(Early, "derived", "")`, `Handshake = Extract(Derived, ECDHE)`, `c/s hs traffic = Derive-Secret(Handshake, "c hs traffic"/"s hs traffic", Transcript(CH..SH))`, `Master = Extract(Derive-Secret(Handshake, "derived", ""), 0)`, `c/s ap traffic = Derive-Secret(Master, "c ap traffic"/"s ap traffic", Transcript(CH..server Finished))` | RFC 8446, Abschnitt 7.1 |
+| `HKDF-Expand-Label` | `HkdfLabel = uint16 Länge ‖ uint8 len("tls13 " + Label) ‖ "tls13 " + Label ‖ uint8 len(Context) ‖ Context`; `key` 16 Byte, `iv` 12 Byte, `finished` 32 Byte | RFC 8446, Abschnitt 7.1 und 7.3 |
+| Transcript-Hash | SHA-256 über die Handshake-Nachrichten ohne Record-Köpfe; `Derive-Secret(…, "")` benutzt `SHA-256("")` (im Code die Konstante `sha_expect_empty`) | RFC 8446, Abschnitt 4.4.1 und 7.1 |
+| Nonce | `IV ⊕ (Sequenznummer als 64 Bit big-endian, rechtsbündig in 12 Byte)`, Sequenz je Richtung ab 0, bei Schlüsselwechsel zurück auf 0 | RFC 8446, Abschnitt 5.3 |
+| AEAD | AAD = Record-Kopf (5 Byte), Klartext = Inhalt ‖ Typ ‖ Nullen; beim Lesen Nullen vom Ende entfernen, letztes Byte ist der Typ | RFC 8446, Abschnitt 5.2 |
+| Finished | `verify_data = HMAC(finished_key, Transcript-Hash)`; für das Server-Finished der Verlauf bis CertificateVerify, für das Client-Finished bis einschließlich Server-Finished | RFC 8446, Abschnitt 4.4.4 |
+| ChangeCipherSpec | wird ignoriert (Middlebox-Kompatibilität) | RFC 8446, Anhang D.4 |
+| Alert | Stufe (1 Warnung, 2 fatal), Beschreibung; `close_notify` = 0 | RFC 8446, Abschnitt 6 |
+| NewSessionTicket nach dem Handshake | wird angenommen und verworfen, nicht in den Verlauf gerechnet | RFC 8446, Abschnitt 4.6.1 |
+
+Ablauf im Code: `tls_connect` → ClientHello über `tcp_write` (wird beim Verbindungsaufbau gesendet) → `tls_on_data` setzt Records zusammen → `tls_process_record` (Klartext-Handshake nur im Zustand HELLO_SENT, verschlüsselt ab HANDSHAKE) → `tls_handshake_append` setzt Nachrichten zusammen → `tls_handshake_message` (ServerHello → `tls_keys_handshake`; EE, Certificate, CertificateVerify nur in den Verlauf; Finished → prüfen → `tls_keys_finish` sendet Client-Finished, wechselt die Schlüssel, sendet GET). Gesprächsverlauf als laufender SHA-256-Kontext, Zwischenstände über eine Kopie des Kontexts (`tls_transcript_hash`).
+
+Nicht enthalten: Zertifikatsprüfung (nächster Schritt), HelloRetryRequest (wird erkannt und abgelehnt), PSK und Wiederaufnahme, KeyUpdate, mehrere Sitzungen, andere Cipher Suites oder Gruppen, Alerts vom Client außer über TCP-Schluss. Der Zufall für `random` und den Schlüsselanteil stammt aus `net_random` (xorshift mit Zeitgeber), das ist kein kryptografischer Generator, siehe Härtung 4.
+
+Gemessen: zwei Läufe unter TCG durchgängig bis `HTTPS HTTP/1.1 200 OK` und `TLS ALERT 1 0` (close_notify), Zertifikat 3.682 Byte, Handshake rund 1,2 Mio. Befehle. Unter hvf kommt die Netzwerkkette nicht über `NET MAC` hinaus, auch am Stand vor TLS (Kernel 44.568 Byte); als bekannte Grenze in `CLAUDE.md` vermerkt.
