@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-69.833%20Byte-brightgreen?style=flat-square" alt="69833 Byte">
+<img src="https://img.shields.io/badge/Kernel-69.929%20Byte-brightgreen?style=flat-square" alt="69929 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>69.833&nbsp;Byte</b> groß, also <b>68&nbsp;KB</b>.<br>
+Das fertige System ist <b>69.929&nbsp;Byte</b> groß, also <b>68&nbsp;KB</b>.<br>
 Mit Systemschrift und Wurzelzertifikat sind es <b>118&nbsp;KB</b> auf dem Datenträger.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
@@ -119,7 +119,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>474 KB · 19.395 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>475 KB · 19.424 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -148,11 +148,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 19.395 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 19.424 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **2.001 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **2.002 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -181,7 +181,7 @@ In `kernel.S` stecken **2.001 Sprungmarken**. Jede gehört zu einem Zuständigke
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **69.833 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 56.888 Byte Code, 12.937 Byte Konstanten |
+| **`kernel.bin`** | **69.929 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 56.992 Byte Code, 12.937 Byte Konstanten |
 | `kernel.elf` | 254 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -197,10 +197,10 @@ Wollte man asmOS heute auf ein Gerät bringen, wären es genau drei Dateien:
 
 | Datei | Größe | Wozu |
 |---|---:|---|
-| `kernel.bin` | 69.833 Byte | das gesamte Betriebssystem |
+| `kernel.bin` | 69.929 Byte | das gesamte Betriebssystem |
 | `FONT.TTF` | 50.516 Byte | die Systemschrift, vom Kernel selbst ausgewertet |
 | `ROOT.DER` | 574 Byte | das Wurzelzertifikat für die TLS-Kettenprüfung |
-| **zusammen** | **120.923 Byte, also 118 KB** | |
+| **zusammen** | **121.019 Byte, also 118 KB** | |
 
 Das 64-MB-Abbild `disk.img` ist nur der leere FAT32-Testdatenträger, auf dem diese Dateien liegen. Die Selbsttests samt Testvektoren machen rund 9 KB des Kernels aus, ein Auslieferungsbau könnte sie weglassen. Dass es trotzdem noch nicht auf echter Hardware läuft, steht im nächsten Abschnitt.
 
@@ -374,10 +374,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 482 KB in drei Dateien |
-| Zeilen Assembler | 19.395 |
-| Sprungmarken | 2.001 |
-| **Fertiges Betriebssystem** | **69.833 Byte** |
+| Eigener Quelltext | 483 KB in drei Dateien |
+| Zeilen Assembler | 19.424 |
+| Sprungmarken | 2.002 |
+| **Fertiges Betriebssystem** | **69.929 Byte** |
 | Auf dem Datenträger mit Schrift und Wurzelzertifikat | 118 KB |
 | Speicherbedarf im Betrieb | rund 67 MB: 25,2 MB Ausgabebild, 24,6 MB internes Bild, 16 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 171 KB Quellenbelege |
@@ -395,7 +395,7 @@ Dieser Abschnitt wird nach jeder Messung fortgeschrieben. Alle Zahlen stammen au
 
 ### Die Runden im Überblick
 
-Vom 14. bis 15.09.2026 sind 22 Runden gelaufen. Jede Zeile nennt, was dazukam, wie groß das System danach war und die eine Zahl, die die Runde geprägt hat. Die ausführlichen Berichte der Runden 1 bis 21 stehen in der Versionsgeschichte dieser Datei.
+Vom 14. bis 15.09.2026 sind 24 Runden gelaufen. Jede Zeile nennt, was dazukam, wie groß das System danach war und die eine Zahl, die die Runde geprägt hat. Die ausführlichen Berichte der Runden 1 bis 21 stehen in der Versionsgeschichte dieser Datei.
 
 | Runde | Was | Größe danach | Die Zahl der Runde |
 |---:|---|---:|---|
@@ -421,7 +421,8 @@ Vom 14. bis 15.09.2026 sind 22 Runden gelaufen. Jede Zeile nennt, was dazukam, w
 | 20 | Kette bis zur Wurzel vom Datenträger, Hostname über SAN, vier Gegenproben | 65.352 Byte | Montgomery-Multiplikation 13,7 % des Starts |
 | 21 | Echtzeituhr pl031 aus dem Device Tree, Kalender, Gültigkeitszeitraum, sieben Gegenproben | 67.904 Byte | Start 601,7 Mio. Befehle |
 | 22 | Kompression, Fensterklassen, Knöpfe, Animation, Fehlersuche, siehe unten | 66.977 Byte | Start 606,6 Mio. Befehle |
-| 23 | Alle Befunde der Fehlersuche behoben, dazu sechs weitere: Handshake-Folge, CA-Berechtigungen, virtio-rng, DNS-Zuordnung, TCP, virtio, Kalender, Tasten, Pufferverdichtung, siehe unten | **69.833 Byte** | Start 606,6 Mio. Befehle, neun Gegenproben |
+| 23 | Alle Befunde der Fehlersuche behoben, dazu sechs weitere: Handshake-Folge, CA-Berechtigungen, virtio-rng, DNS-Zuordnung, TCP, virtio, Kalender, Tasten, Pufferverdichtung, siehe unten | 69.833 Byte | Start 606,6 Mio. Befehle, neun Gegenproben |
+| 24 | Dritte Fehlersuche, acht Durchsichten: drei Befunde behoben, zehn Behauptungen widerlegt, siehe unten | **69.929 Byte** | drei Gegenproben, je vorher und nachher |
 
 ### Was aus den Runden bleibt
 
@@ -502,3 +503,23 @@ Achtzehn Befunde, drei Pakete, jedes einzeln gebaut und geprüft. Das Bild ist b
 | Gegenproben | 0 | 9 Testbauten und Startvarianten |
 
 **Was bleibt.** Kein Befund der beiden Durchsichten ist mehr offen. Nicht gebaut, weil außerhalb des Fahrplans: Sperrlisten und OCSP, Namensbeschränkungen, Sitzungswiederaufnahme, ein Empfangsfenster für TCP. Und eine Grenze ehrlich benannt: Die Reihenfolgeprüfung ist gegen den echten Server und einen Testbau belegt, nicht gegen einen absichtlich bösartigen Server; dafür fehlt im Projekt noch ein eigener TLS-Server.
+
+### Stand 15.09.2026, Runde 24: dritte Fehlersuche, drei Befunde behoben
+
+Acht Durchsichten, je eine pro Block (Fenster, Animation, Netz und Zufall, TCP, TLS-Datenpfad, X.509 und Zeit, Eingabe und Schrift, Kurvenarithmetik und Systemunterbau), jeder gemeldete Punkt am Code nachvollzogen. Der Code aus den Runden 22 und 23 hält: Klassentabellen, Knöpfe, Verdichtung der Arena, Abschlussaufruf der Animationsliste, Zufallsgerät, DNS-Zuordnung, stückweise TLS-Puffer, Erweiterungsparser und die Op-Tabellen der Kurvenarithmetik sind ohne Befund. Drei Fehler blieben, alle drei sind behoben, jeder mit einem Testbau vorher und nachher belegt.
+
+- *Der Zeilensammler setzte sich nie zurück.* Am Zeilenende blieb die Länge im Sammler stehen, und keine Stelle löschte `http_line` oder `tls_line` für die nächste Verbindung. Sichtbar erst bei einer zweiten Verbindung, also genau beim geplanten Terminal. Testbau mit zwei HTTP-Verbindungen nacheinander: vorher meldet die zweite `HTTP/1.1 200 OKHTTP/1.1 200 OK`, nachher zweimal `HTTP/1.1 200 OK`. Eine Zeile.
+- *Beendete die Gegenstelle die Verbindung, während eigene Daten unterwegs waren, gingen die Daten verloren.* Bei fremdem FIN sendete `tcp_handle_fin` sofort den eigenen FIN, ohne auf den Sendepuffer zu schauen; die Wiederholung außerhalb von ESTABLISHED wiederholte nur den FIN, nie die Daten. Jetzt gibt es den Zustand CLOSE_WAIT: bei fremdem FIN mit unbestätigten Daten nur bestätigen und das Schließen vormerken, den FIN erst senden, wenn alles bestätigt ist, und in CLOSE_WAIT werden Daten wiederholt und gesendet wie in ESTABLISHED. Testbau: die Anfrage wird beim ersten Senden verworfen, die Gegenstelle ist ein QEMU-Weiterleitungsziel, das sofort schließt (`guestfwd` auf `/usr/bin/true`). Vorher `TCP KEINE ANTWORT` nach 6 s, nachher `TCP GESCHLOSSEN` nach der Wiederholung bei 1,5 s.
+- *Handshake-Nachrichten nach dem ServerHello wurden auch im Klartext angenommen.* Der Zustand wurde nur am Record-Anfang geprüft, der Sammler lief danach über alle weiteren Nachrichten desselben unverschlüsselten Records. RFC 8446 verlangt Verschlüsselung ab dem ServerHello. Ausnutzbar war es nicht, CertificateVerify und Finished brauchen die Geheimnisse der echten Gegenstelle, aber ein Regelverstoß. Jetzt trägt jeder Aufruf des Sammlers ein Klartext-Merkmal, und nach einer Klartext-Nachricht muss der Record leer sein. Testbau, der eine gültige EncryptedExtensions-Nachricht hinter das ServerHello im selben Klartext-Record hängt: vorher wird sie geschluckt (Marker im Protokoll) und die Verbindung scheitert erst an der echten, verschlüsselten Nachricht; nachher `unerwartete Handshake-Nachricht` direkt im Klartext-Record.
+
+**Widerlegt, damit es nicht wieder aufkommt:** DNS-Zeigerschleife (ein Zeiger beendet `dns_skip_name` sofort), Überlesen nach der DNS-Frage (jede Runde prüft die Grenze vor dem Zugriff), Pfadlängenzählung in der Kette (der Schleifenindex ist genau die Zahl der Zwischenzertifikate unter dem Aussteller), veralteter Abschlussaufruf im Animationsplatz (`anim_start` nullt ihn), NEON-Einblendung mit `dup` (bei voller Deckkraft läuft der Kopierpfad, darunter passt der Faktor in 16 Bit), rahmenlose Tastenroutinen (Blattroutinen ohne Aufruf), Überlauf der Konturtabelle (Konturzahl auf 16 geprüft), Wettlauf in `tcp_finish` (die Hauptschleife ist der einzige Aufrufer), Körperhöhe mit voller Fensterhöhe (Absicht, der Puffer wird immer voll gerastert), Restbytes im Zufallspuffer (sofort kopiert).
+
+**Benannt, nicht gebaut:** ein defekter Empfangseintrag wird nicht neu eingereiht (`net_poll_bad`), der Tastenring verwirft bei Überlauf stumm, die DHCP-Kennung ist eine Konstante, und `net_send` wartet doppelt (Rückgabe des vorigen und des eigenen Rahmens), jede Sendung blockiert damit die Hauptschleife bis zur Rückgabe.
+
+| Kennzahl | Runde 23 | Runde 24 |
+|---|---|---|
+| Größe des fertigen Systems | 69.833 Byte | **69.929 Byte** (+96 für CLOSE_WAIT und das Klartext-Merkmal) |
+| Zeilen Assembler | 19.395 | 19.424 |
+| Sprungmarken | 2.001 | 2.002 |
+| Bildvergleich | gleich | gleich, 0 abweichende Bildpunkte außerhalb der Maske |
+| Gegenproben | 9 | 3 Testbauten, je vorher und nachher |

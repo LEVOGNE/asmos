@@ -327,6 +327,7 @@
 .equ TCP_STATE_LAST_ACK,    3
 .equ TCP_STATE_FIN_WAIT_1,  4
 .equ TCP_STATE_FIN_WAIT_2,  5
+.equ TCP_STATE_CLOSE_WAIT,  6
 .equ TCP_MAX,               4
 .equ TCP_TX_BUF_SIZE,       1024
 .equ TCB_STATE,             0
@@ -10166,6 +10167,7 @@ tcp_flush:
 tcp_flush_loop:
     ldrb    w0, [x19, #TCB_STATE]
     cmp     w0, #TCP_STATE_ESTABLISHED
+    ccmp    w0, #TCP_STATE_CLOSE_WAIT, #4, ne
     b.ne    tcp_flush_done
     ldr     w1, [x19, #TCB_SND_NXT]
     ldr     w2, [x19, #TCB_SND_UNA]
@@ -10199,6 +10201,7 @@ tcp_close:
     mov     x19, x0
     ldrb    w0, [x19, #TCB_STATE]
     cmp     w0, #TCP_STATE_ESTABLISHED
+    ccmp    w0, #TCP_STATE_CLOSE_WAIT, #4, ne
     b.ne    tcp_close_done
     ldr     w0, [x19, #TCB_TX_LEN]
     cbz     w0, tcp_close_fin
@@ -10216,7 +10219,11 @@ tcp_close_fin:
     ldr     w0, [x19, #TCB_SND_NXT]
     add     w0, w0, #1
     str     w0, [x19, #TCB_SND_NXT]
-    mov     w0, #TCP_STATE_FIN_WAIT_1
+    ldrb    w0, [x19, #TCB_STATE]
+    cmp     w0, #TCP_STATE_CLOSE_WAIT
+    mov     w1, #TCP_STATE_LAST_ACK
+    mov     w2, #TCP_STATE_FIN_WAIT_1
+    csel    w0, w1, w2, eq
     strb    w0, [x19, #TCB_STATE]
 
 tcp_close_done:
@@ -10541,6 +10548,8 @@ tcp_handle_fin:
     b.eq    tcp_handle_fin_final
     cmp     w0, #TCP_STATE_FIN_WAIT_1
     b.eq    tcp_handle_fin_both
+    ldr     w0, [x26, #TCB_TX_LEN]
+    cbnz    w0, tcp_handle_fin_wait
     mov     x0, x26
     mov     w1, #(TCP_FLAG_FIN | TCP_FLAG_ACK)
     mov     x2, #0
@@ -10552,6 +10561,15 @@ tcp_handle_fin:
     str     w0, [x26, #TCB_SND_NXT]
     mov     w0, #TCP_STATE_LAST_ACK
     strb    w0, [x26, #TCB_STATE]
+    b       tcp_handle_done
+
+tcp_handle_fin_wait:
+    mov     x0, x26
+    bl      tcp_ack_out
+    mov     w0, #TCP_STATE_CLOSE_WAIT
+    strb    w0, [x26, #TCB_STATE]
+    mov     w0, #1
+    strb    w0, [x26, #TCB_CLOSING]
     b       tcp_handle_done
 
 tcp_handle_fin_both:
@@ -10625,6 +10643,7 @@ tcp_tick_loop:
     ldrb    w0, [x19, #TCB_STATE]
     cbz     w0, tcp_tick_loop
     cmp     w0, #TCP_STATE_ESTABLISHED
+    ccmp    w0, #TCP_STATE_CLOSE_WAIT, #4, ne
     b.ne    tcp_tick_wait
     ldr     w1, [x19, #TCB_SND_NXT]
     ldr     w2, [x19, #TCB_SND_UNA]
@@ -10653,6 +10672,7 @@ tcp_tick_wait:
 
 tcp_tick_resend:
     cmp     w0, #TCP_STATE_ESTABLISHED
+    ccmp    w0, #TCP_STATE_CLOSE_WAIT, #4, ne
     b.ne    tcp_tick_resend_fin
     ldr     w3, [x19, #TCB_TX_LEN]
     mov     w4, #TCP_MSS
@@ -10740,7 +10760,7 @@ line_collect_open:
 line_collect_end:
     add     x5, x0, #4
     strb    wzr, [x5, x3]
-    str     w3, [x0]
+    str     wzr, [x0]
     mov     w0, #1
     ret
 
@@ -12744,6 +12764,7 @@ tls_process_record_plain:
     b.ne    tls_process_record_unexpected
     add     x0, x20, #5
     mov     w1, w21
+    mov     w2, #1
     bl      tls_handshake_append
     b       tls_process_record_done
 
@@ -12789,6 +12810,7 @@ tls_process_record_strip:
 tls_process_record_inner_hs:
     add     x0, x20, #5
     mov     w1, w22
+    mov     w2, #0
     bl      tls_handshake_append
     b       tls_process_record_done
 
@@ -12877,12 +12899,14 @@ tls_alert_done:
     ret
 
 tls_handshake_append:
-    stp     x29, x30, [sp, #-48]!
+    stp     x29, x30, [sp, #-64]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
+    str     x23, [sp, #48]
     ladr    x19, tls_ctx
     mov     x20, x0
     mov     w21, w1
+    mov     w23, w2
 
 tls_handshake_take:
     cbz     w21, tls_handshake_done
@@ -12939,16 +12963,21 @@ tls_handshake_copy:
     ldrb    w0, [x19, #TLS_STATE]
     cmp     w0, #TLS_STATE_CLOSED
     b.eq    tls_handshake_done
-    b       tls_handshake_take
+    cbz     w23, tls_handshake_take
+    cbz     w21, tls_handshake_done
+    ladr    x0, tls_badmsg_msg
+    bl      tls_fail
+    b       tls_handshake_done
 
 tls_handshake_overflow:
     ladr    x0, tls_overflow_msg
     bl      tls_fail
 
 tls_handshake_done:
+    ldr     x23, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #48
+    ldp     x29, x30, [sp], #64
     ret
 
 tls_hs_mark:
