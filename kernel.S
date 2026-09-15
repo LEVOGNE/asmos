@@ -356,6 +356,7 @@
 .equ TLS_REC_CCS,           20
 .equ TLS_REC_ALERT,         21
 .equ TLS_REC_APPDATA,       23
+.equ TLS_ALERT_USER_CANCELED, 90
 .equ TLS_HS_CLIENT_HELLO,   1
 .equ TLS_HS_SERVER_HELLO,   2
 .equ TLS_HS_TICKET,         4
@@ -13025,24 +13026,49 @@ tls_process_record_done:
     ret
 
 tls_alert:
-    stp     x29, x30, [sp, #-32]!
+    stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
     mov     x19, x0
     mov     w20, w1
+    cmp     w20, #2
+    b.ne    tls_alert_bad
+    ldrb    w21, [x19, #1]
+    cbz     w21, tls_alert_notify
+    cmp     w21, #TLS_ALERT_USER_CANCELED
+    b.eq    tls_alert_done
     ladr    x0, tls_alert_msg
     bl      uart_puts
-    cmp     w20, #2
-    b.lo    tls_alert_close
     ldrb    w0, [x19]
     bl      uart_putdec
     mov     w0, #0x20
     bl      uart_putc
-    ldrb    w0, [x19, #1]
+    mov     w0, w21
     bl      uart_putdec
-
-tls_alert_close:
     ladr    x0, uart_newline
     bl      uart_puts
+    ladr    x0, tls_alert_fatal_msg
+    bl      tls_fail
+    b       tls_alert_done
+
+tls_alert_bad:
+    ladr    x0, tls_alert_len_msg
+    bl      tls_fail
+    b       tls_alert_done
+
+tls_alert_notify:
+    ladr    x0, tls_notify_msg
+    bl      uart_puts
+    ladr    x9, tls_ctx
+    ldrb    w0, [x9, #TLS_STATE]
+    cmp     w0, #TLS_STATE_HANDSHAKE
+    b.lo    tls_alert_close
+    mov     w0, #TLS_REC_ALERT
+    ladr    x1, tls_close_notify
+    mov     w2, #2
+    bl      tls_send_record
+
+tls_alert_close:
     ladr    x9, tls_ctx
     mov     w0, #TLS_STATE_CLOSED
     strb    w0, [x9, #TLS_STATE]
@@ -13055,8 +13081,9 @@ tls_alert_close:
     bl      tcp_close
 
 tls_alert_done:
+    ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #32
+    ldp     x29, x30, [sp], #48
     ret
 
 tls_handshake_append:
@@ -18935,6 +18962,14 @@ tls_truncated_msg:
     .asciz  "TLS ABBRUCH OHNE CLOSE_NOTIFY\n"
 tls_locked_msg:
     .asciz  "TLS GESPERRT, Kryptografie nicht bereit\n"
+tls_notify_msg:
+    .asciz  "TLS CLOSE_NOTIFY EMPFANGEN, sende close_notify\n"
+tls_alert_fatal_msg:
+    .asciz  "Alert vom Server"
+tls_alert_len_msg:
+    .asciz  "Alert mit falscher Laenge"
+tls_close_notify:
+    .byte   1, 0
 crypto_ready_msg:
     .asciz  "KRYPTO BEREIT\n"
 crypto_blocked_msg:
