@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-62.984%20Byte-brightgreen?style=flat-square" alt="62984 Byte">
+<img src="https://img.shields.io/badge/Kernel-65.352%20Byte-brightgreen?style=flat-square" alt="65352 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>62.984&nbsp;Byte</b> groß, also <b>61&nbsp;KB</b>.<br>
+Das fertige System ist <b>65.352&nbsp;Byte</b> groß, also <b>64&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>416 KB · 16915 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>432 KB · 17562 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,11 +146,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 16915 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 17562 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1701 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1779 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -180,7 +180,7 @@ In `kernel.S` stecken **1701 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **62.984 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **65.352 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -350,10 +350,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 424 KB in drei Dateien |
-| Zeilen Assembler | 16915 |
-| Sprungmarken | 1701 |
-| **Fertiges Betriebssystem** | **62.984 Byte** |
+| Eigener Quelltext | 440 KB in drei Dateien |
+| Zeilen Assembler | 17562 |
+| Sprungmarken | 1779 |
+| **Fertiges Betriebssystem** | **65.352 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -651,6 +651,23 @@ Jetzt liest der Kernel beim Start aus dem Device Tree, welcher Controller verbau
 | Größe des fertigen Systems | 49.106 Byte | 49.597 Byte (+491) |
 
 Das Bild ist byteweise gleich der Referenz. Der Raspberry Pi 5 hat einen GICv2 (GIC-400), der bisherige Pfad bleibt also der wichtigere; der GICv3-Pfad ist die Eintrittskarte für schnelle Läufe auf dem Mac und für spätere Boards mit GICv3.
+
+### Stand 15.09.2026, zwanzigste Runde: Zertifikatskette bis zur Wurzel
+
+Bisher prüfte asmOS nur, dass der Server den Schlüssel zum vorgezeigten Zertifikat besitzt. Jetzt prüft es auch, ob dieses Zertifikat etwas wert ist: Die Kette wird bis zu einer Wurzel verfolgt, die als Datei `ROOT.DER` auf dem Datenträger liegt (`make disk` legt das Wurzelzertifikat "SSL.com TLS ECC Root CA 2022" dorthin, die Datei selbst liegt im Repository unter `roots/`). Beim Start wird sie gelesen und zerlegt, die serielle Ausgabe meldet `TLS WURZEL ROOT.DER geladen, 574 Byte, ECDSA P-384`.
+
+Der Zertifikatsparser kennt jetzt beide Kurven (prime256v1, secp384r1) und beide Signaturarten (ECDSA mit SHA-256 und mit SHA-384), merkt sich Aussteller- und Inhabernamen als DER-Bytes und die Erweiterungen. Die Certificate-Nachricht wird vollständig zerlegt (bis zu vier Zertifikate); das vierte, das der Server mitschickt, ist ein RSA-signiertes Kreuzzertifikat und wird ohne Fehler übergangen, weil die Kette schon vorher an der Wurzel ankommt. Für jedes Glied gilt: Aussteller des Kindes muss byteweise dem Inhaber des Elternteils gleichen, dann wird der TBS-Teil mit dem passenden Hash gehasht und mit dem Elternschlüssel auf dessen Kurve geprüft. Der Name kommt aus der SAN-Erweiterung (nur dNSName), Vergleich ohne Groß und Klein, ein Platzhalter `*.` deckt genau eine Ebene ab.
+
+Ergebnis am laufenden System: `TLS KETTE GEPRUEFT: 3 Zertifikate bis zur Wurzel, Name example.com passt`, dann wie bisher `TLS SIGNATUR GEPRUEFT` und `HTTPS HTTP/1.1 200 OK`, unter TCG (GICv2 und v3) und hvf. Vier Gegenproben, jede mit eigenem Datenträger oder Testbau: ohne `ROOT.DER` bricht die Verbindung mit `keine Wurzel geladen` ab; eine Wurzel mit einem gekippten Bit im Schlüssel liefert `ZERTIFIKATSKETTE UNGUELTIG`; ein fremdes Zertifikat als Wurzel liefert `AUSSTELLER UNBEKANNT`; ein Bau mit dem Hostnamen `example.org` liefert `NAME PASST NICHT ZUM ZERTIFIKAT`. In keinem der vier Fälle kam eine HTTPS-Antwort zustande. Der Selbsttest beim Start zerlegt das eingebaute Blattzertifikat und prüft `example.com`, `www.EXAMPLE.com` (Platzhalter, Groß und Klein) und die Ablehnung von `example.org`.
+
+| Kennzahl | vorher | nachher |
+|---|---|---|
+| Größe des fertigen Systems | 62.984 Byte | **65.352 Byte** (+2.368) |
+| Befehle bis Ruhe, 8 s | 575,0 Mio. | 599,1 Mio.; die Kette kostet zwei P-384-Prüfungen und eine P-256-Prüfung |
+| Montgomery-Multiplikation | 48,2 Mio. (8,4 %) | 82,2 Mio. (13,7 %) |
+| Geprüft auf | TCG, hvf | TCG, hvf, plus vier Gegenproben |
+
+Das Referenzbild wurde einmalig neu gesetzt: Das Dateifenster zeigt jetzt `ROOT.DER`, und der neu erzeugte Datenträger enthält keinen macOS-Rest (`FSEVEN~2`) mehr. Außerhalb des Dateifensters ist das Bild byteweise gleich. Noch offen: der Gültigkeitszeitraum, dafür fehlt eine Uhr (pl031).
 
 ### Stand 14.09.2026, neunzehnte Runde: SHA-384 und P-384
 

@@ -447,7 +447,25 @@
 .equ X509_KEY,              16
 .equ X509_SIG,              24
 .equ X509_SIG_LEN,          32
-.equ X509_INFO_SIZE,        40
+.equ X509_KEY_CURVE,        40
+.equ X509_SIG_HASH,         48
+.equ X509_ISSUER,           56
+.equ X509_ISSUER_LEN,       64
+.equ X509_SUBJECT,          72
+.equ X509_SUBJECT_LEN,      80
+.equ X509_EXT,              88
+.equ X509_EXT_LEN,          96
+.equ X509_INFO_SIZE,        104
+.equ X509_CURVE_P256,       0
+.equ X509_CURVE_P384,       1
+.equ X509_HASH_SHA256,      0
+.equ X509_HASH_SHA384,      1
+.equ ASN1_BOOLEAN,          0x01
+.equ ASN1_OCTET_STRING,     0x04
+.equ ASN1_CONTEXT_3,        0xa3
+.equ ASN1_DNS_NAME,         0x82
+.equ TLS_CHAIN_MAX,         4
+.equ TLS_ROOT_SIZE,         2048
 .equ NET_STATE_IDLE,        0
 .equ NET_STATE_ARP_SENT,    1
 .equ NET_STATE_ARP_OK,      2
@@ -1112,6 +1130,7 @@ boot_memory_ready:
     bl      blk_init
     bl      fat_init
     bl      font_init
+    bl      tls_root_init
     bl      files_scan
     ladr    x0, fb_fade
     str     wzr, [x0]
@@ -10596,6 +10615,7 @@ crypto_selftest:
     bl      x25519_selftest
     bl      sha384_selftest
     bl      ecdsa_selftest
+    bl      x509_selftest
     ldp     x29, x30, [sp], #16
     ret
 
@@ -13426,126 +13446,6 @@ asn1_expect_done:
     ldp     x29, x30, [sp], #32
     ret
 
-x509_parse:
-    stp     x29, x30, [sp, #-64]!
-    stp     x19, x20, [sp, #16]
-    stp     x21, x22, [sp, #32]
-    str     x23, [sp, #48]
-    mov     x19, x2
-    add     x1, x0, x1
-    mov     w2, #ASN1_SEQUENCE
-    bl      asn1_expect
-    tbnz    w2, #31, x509_parse_fail
-    mov     x23, x3
-    mov     x20, x0
-    add     x1, x0, x1
-    mov     w2, #ASN1_SEQUENCE
-    bl      asn1_expect
-    tbnz    w2, #31, x509_parse_fail
-    sub     x4, x0, x20
-    add     x4, x4, x1
-    str     x20, [x19, #X509_TBS]
-    str     x4, [x19, #X509_TBS_LEN]
-    mov     x22, x3
-    add     x21, x0, x1
-    mov     x1, x21
-    bl      asn1_next
-    tbnz    w2, #31, x509_parse_fail
-    cmp     w2, #ASN1_CONTEXT_0
-    b.ne    x509_parse_serial
-    mov     x0, x3
-    mov     x1, x21
-    bl      asn1_next
-    tbnz    w2, #31, x509_parse_fail
-
-x509_parse_serial:
-    mov     w20, #4
-
-x509_parse_skip:
-    mov     x0, x3
-    mov     x1, x21
-    bl      asn1_next
-    tbnz    w2, #31, x509_parse_fail
-    sub     w20, w20, #1
-    cbnz    w20, x509_parse_skip
-    mov     x0, x3
-    mov     x1, x21
-    mov     w2, #ASN1_SEQUENCE
-    bl      asn1_expect
-    tbnz    w2, #31, x509_parse_fail
-    mov     x1, x21
-    mov     w2, #ASN1_SEQUENCE
-    bl      asn1_expect
-    tbnz    w2, #31, x509_parse_fail
-    mov     x20, x3
-    mov     x1, x21
-    mov     w2, #ASN1_OID
-    bl      asn1_expect
-    tbnz    w2, #31, x509_parse_fail
-    cmp     x1, #7
-    b.ne    x509_parse_fail
-    mov     x22, x3
-    ladr    x1, oid_ec_public_key
-    mov     w2, #7
-    bl      mem_equal
-    cbz     w0, x509_parse_fail
-    mov     x0, x22
-    mov     x1, x21
-    mov     w2, #ASN1_OID
-    bl      asn1_expect
-    tbnz    w2, #31, x509_parse_fail
-    cmp     x1, #8
-    b.ne    x509_parse_fail
-    ladr    x1, oid_prime256v1
-    mov     w2, #8
-    bl      mem_equal
-    cbz     w0, x509_parse_fail
-    mov     x0, x20
-    mov     x1, x21
-    mov     w2, #ASN1_BIT_STRING
-    bl      asn1_expect
-    tbnz    w2, #31, x509_parse_fail
-    cmp     x1, #66
-    b.ne    x509_parse_fail
-    ldrb    w4, [x0]
-    cbnz    w4, x509_parse_fail
-    ldrb    w4, [x0, #1]
-    cmp     w4, #4
-    b.ne    x509_parse_fail
-    add     x0, x0, #2
-    str     x0, [x19, #X509_KEY]
-    ldr     x0, [x19, #X509_TBS]
-    ldr     x1, [x19, #X509_TBS_LEN]
-    add     x0, x0, x1
-    mov     x1, x23
-    bl      asn1_next
-    tbnz    w2, #31, x509_parse_fail
-    mov     x0, x3
-    mov     x1, x23
-    mov     w2, #ASN1_BIT_STRING
-    bl      asn1_expect
-    tbnz    w2, #31, x509_parse_fail
-    cmp     x1, #2
-    b.lo    x509_parse_fail
-    ldrb    w4, [x0]
-    cbnz    w4, x509_parse_fail
-    add     x0, x0, #1
-    sub     x1, x1, #1
-    str     x0, [x19, #X509_SIG]
-    str     x1, [x19, #X509_SIG_LEN]
-    mov     w0, #0
-    b       x509_parse_done
-
-x509_parse_fail:
-    mov     w0, #1
-
-x509_parse_done:
-    ldr     x23, [sp, #48]
-    ldp     x21, x22, [sp, #32]
-    ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #64
-    ret
-
 tls_certificate:
     stp     x29, x30, [sp, #-96]!
     stp     x19, x20, [sp, #16]
@@ -13581,15 +13481,6 @@ tls_certificate:
     add     x0, x20, x22
     cmp     x0, x1
     b.hi    tls_certificate_short
-    mov     x0, x20
-    mov     x1, x22
-    add     x2, sp, #48
-    bl      x509_parse
-    cbnz    w0, tls_certificate_bad
-    ldr     x0, [sp, #(48 + X509_KEY)]
-    add     x1, x19, #TLS_SERVER_Q
-    mov     w2, #64
-    bl      mem_copy
     ladr    x0, tls_cert_msg
     bl      uart_puts
     mov     x0, x21
@@ -13600,6 +13491,17 @@ tls_certificate:
     bl      uart_putdec
     ladr    x0, tls_cert_tail2
     bl      uart_puts
+    ladr    x0, tls_cert_buf
+    mov     w1, w21
+    bl      tls_chain_verify
+    cbnz    w0, tls_certificate_done
+    ladr    x0, tls_chain_infos
+    ldr     x1, [x0, #X509_KEY_CURVE]
+    cbnz    x1, tls_certificate_bad
+    ldr     x0, [x0, #X509_KEY]
+    add     x1, x19, #TLS_SERVER_Q
+    mov     w2, #64
+    bl      mem_copy
     mov     w0, #0
     b       tls_certificate_done
 
@@ -15127,6 +15029,702 @@ ecdsa_selftest_done:
     ldp     x29, x30, [sp], #176
     ret
 
+
+x509_parse:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     x19, x2
+    stp     x0, x1, [sp, #-16]!
+    mov     x0, x2
+    mov     w1, #X509_INFO_SIZE
+    bl      mem_wipe
+    ldp     x0, x1, [sp], #16
+    add     x1, x0, x1
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    mov     x23, x3
+    mov     x20, x0
+    add     x1, x0, x1
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    sub     x4, x0, x20
+    add     x4, x4, x1
+    str     x20, [x19, #X509_TBS]
+    str     x4, [x19, #X509_TBS_LEN]
+    mov     x22, x3
+    add     x21, x0, x1
+    mov     x1, x21
+    bl      asn1_next
+    tbnz    w2, #31, x509_parse_fail
+    cmp     w2, #ASN1_CONTEXT_0
+    b.ne    x509_parse_serial
+    mov     x0, x3
+    mov     x1, x21
+    bl      asn1_next
+    tbnz    w2, #31, x509_parse_fail
+
+x509_parse_serial:
+    mov     x0, x3
+    mov     x1, x21
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    mov     x24, x3
+    add     x1, x0, x1
+    mov     w2, #ASN1_OID
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    bl      x509_sig_hash
+    tbnz    w0, #31, x509_parse_fail
+    str     x0, [x19, #X509_SIG_HASH]
+    mov     x20, x24
+    mov     x0, x24
+    mov     x1, x21
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    str     x20, [x19, #X509_ISSUER]
+    sub     x4, x3, x20
+    str     x4, [x19, #X509_ISSUER_LEN]
+    mov     x0, x3
+    mov     x1, x21
+    bl      asn1_next
+    tbnz    w2, #31, x509_parse_fail
+    mov     x20, x3
+    mov     x0, x3
+    mov     x1, x21
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    str     x20, [x19, #X509_SUBJECT]
+    sub     x4, x3, x20
+    str     x4, [x19, #X509_SUBJECT_LEN]
+    mov     x0, x3
+    mov     x1, x21
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    mov     x24, x3
+    mov     x1, x21
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    mov     x20, x3
+    mov     x1, x21
+    mov     w2, #ASN1_OID
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    cmp     x1, #7
+    b.ne    x509_parse_fail
+    mov     x22, x3
+    ladr    x1, oid_ec_public_key
+    mov     w2, #7
+    bl      mem_equal
+    cbz     w0, x509_parse_fail
+    mov     x0, x22
+    mov     x1, x21
+    mov     w2, #ASN1_OID
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    bl      x509_curve_oid
+    tbnz    w0, #31, x509_parse_fail
+    str     x0, [x19, #X509_KEY_CURVE]
+    mov     w22, #66
+    cbz     w0, x509_parse_keylen
+    mov     w22, #98
+
+x509_parse_keylen:
+    mov     x0, x20
+    mov     x1, x21
+    mov     w2, #ASN1_BIT_STRING
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    cmp     x1, x22
+    b.ne    x509_parse_fail
+    ldrb    w4, [x0]
+    cbnz    w4, x509_parse_fail
+    ldrb    w4, [x0, #1]
+    cmp     w4, #4
+    b.ne    x509_parse_fail
+    add     x0, x0, #2
+    str     x0, [x19, #X509_KEY]
+    mov     x3, x24
+
+x509_parse_tail:
+    cmp     x3, x21
+    b.hs    x509_parse_sig
+    mov     x0, x3
+    mov     x1, x21
+    bl      asn1_next
+    tbnz    w2, #31, x509_parse_fail
+    cmp     w2, #ASN1_CONTEXT_3
+    b.ne    x509_parse_tail
+    str     x0, [x19, #X509_EXT]
+    str     x1, [x19, #X509_EXT_LEN]
+    b       x509_parse_tail
+
+x509_parse_sig:
+    ldr     x0, [x19, #X509_TBS]
+    ldr     x1, [x19, #X509_TBS_LEN]
+    add     x0, x0, x1
+    mov     x1, x23
+    bl      asn1_next
+    tbnz    w2, #31, x509_parse_fail
+    mov     x0, x3
+    mov     x1, x23
+    mov     w2, #ASN1_BIT_STRING
+    bl      asn1_expect
+    tbnz    w2, #31, x509_parse_fail
+    cmp     x1, #2
+    b.lo    x509_parse_fail
+    ldrb    w4, [x0]
+    cbnz    w4, x509_parse_fail
+    add     x0, x0, #1
+    sub     x1, x1, #1
+    str     x0, [x19, #X509_SIG]
+    str     x1, [x19, #X509_SIG_LEN]
+    mov     w0, #0
+    b       x509_parse_done
+
+x509_parse_fail:
+    mov     w0, #1
+
+x509_parse_done:
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+    ret
+
+x509_sig_hash:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x1
+    cmp     x20, #8
+    b.ne    x509_sig_hash_none
+    mov     x0, x19
+    ladr    x1, oid_ecdsa_sha256
+    mov     w2, #8
+    bl      mem_equal
+    cbz     w0, x509_sig_hash_384
+    mov     w0, #X509_HASH_SHA256
+    b       x509_sig_hash_done
+
+x509_sig_hash_384:
+    mov     x0, x19
+    ladr    x1, oid_ecdsa_sha384
+    mov     w2, #8
+    bl      mem_equal
+    cbz     w0, x509_sig_hash_none
+    mov     w0, #X509_HASH_SHA384
+    b       x509_sig_hash_done
+
+x509_sig_hash_none:
+    mov     w0, #-1
+
+x509_sig_hash_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+x509_curve_oid:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x1
+    cmp     x20, #8
+    b.ne    x509_curve_oid_384
+    mov     x0, x19
+    ladr    x1, oid_prime256v1
+    mov     w2, #8
+    bl      mem_equal
+    cbz     w0, x509_curve_oid_none
+    mov     w0, #X509_CURVE_P256
+    b       x509_curve_oid_done
+
+x509_curve_oid_384:
+    cmp     x20, #5
+    b.ne    x509_curve_oid_none
+    mov     x0, x19
+    ladr    x1, oid_secp384r1
+    mov     w2, #5
+    bl      mem_equal
+    cbz     w0, x509_curve_oid_none
+    mov     w0, #X509_CURVE_P384
+    b       x509_curve_oid_done
+
+x509_curve_oid_none:
+    mov     w0, #-1
+
+x509_curve_oid_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+x509_san_match:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     x19, x0
+    mov     x20, x1
+    mov     w21, w2
+    ldr     x0, [x19, #X509_EXT]
+    cbz     x0, x509_san_no
+    ldr     x1, [x19, #X509_EXT_LEN]
+    add     x1, x0, x1
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_san_no
+    add     x22, x0, x1
+    mov     x3, x0
+
+x509_san_ext:
+    cmp     x3, x22
+    b.hs    x509_san_no
+    mov     x0, x3
+    mov     x1, x22
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_san_no
+    mov     x23, x3
+    add     x24, x0, x1
+    mov     x1, x24
+    mov     w2, #ASN1_OID
+    bl      asn1_expect
+    tbnz    w2, #31, x509_san_no
+    cmp     x1, #3
+    b.ne    x509_san_ext_next
+    ldrb    w4, [x0]
+    ldrb    w5, [x0, #1]
+    ldrb    w6, [x0, #2]
+    cmp     w4, #0x55
+    b.ne    x509_san_ext_next
+    cmp     w5, #0x1d
+    b.ne    x509_san_ext_next
+    cmp     w6, #0x11
+    b.ne    x509_san_ext_next
+    mov     x0, x3
+    mov     x1, x24
+    bl      asn1_next
+    tbnz    w2, #31, x509_san_no
+    cmp     w2, #ASN1_BOOLEAN
+    b.ne    x509_san_value
+    mov     x0, x3
+    mov     x1, x24
+    bl      asn1_next
+    tbnz    w2, #31, x509_san_no
+
+x509_san_value:
+    cmp     w2, #ASN1_OCTET_STRING
+    b.ne    x509_san_no
+    add     x1, x0, x1
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_san_no
+    add     x22, x0, x1
+    mov     x3, x0
+
+x509_san_names:
+    cmp     x3, x22
+    b.hs    x509_san_no
+    mov     x0, x3
+    mov     x1, x22
+    bl      asn1_next
+    tbnz    w2, #31, x509_san_no
+    cmp     w2, #ASN1_DNS_NAME
+    b.ne    x509_san_names
+    str     x3, [sp, #-16]!
+    mov     x2, x20
+    mov     w3, w21
+    bl      x509_name_match
+    ldr     x3, [sp], #16
+    cbz     w0, x509_san_names
+    mov     w0, #1
+    b       x509_san_done
+
+x509_san_ext_next:
+    mov     x3, x23
+    b       x509_san_ext
+
+x509_san_no:
+    mov     w0, #0
+
+x509_san_done:
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+    ret
+
+x509_name_match:
+    cmp     x1, #2
+    b.lo    x509_name_exact
+    ldrb    w4, [x0]
+    cmp     w4, #0x2a
+    b.ne    x509_name_exact
+    ldrb    w4, [x0, #1]
+    cmp     w4, #0x2e
+    b.ne    x509_name_exact
+    add     x0, x0, #2
+    sub     x1, x1, #2
+
+x509_name_wild:
+    cbz     w3, x509_name_no
+    ldrb    w4, [x2], #1
+    sub     w3, w3, #1
+    cmp     w4, #0x2e
+    b.ne    x509_name_wild
+    cbz     w3, x509_name_no
+
+x509_name_exact:
+    cmp     x1, x3
+    b.ne    x509_name_no
+
+x509_name_loop:
+    cbz     x1, x509_name_yes
+    ldrb    w4, [x0], #1
+    ldrb    w5, [x2], #1
+    orr     w4, w4, #0x20
+    orr     w5, w5, #0x20
+    cmp     w4, w5
+    b.ne    x509_name_no
+    sub     x1, x1, #1
+    b       x509_name_loop
+
+x509_name_yes:
+    mov     w0, #1
+    ret
+
+x509_name_no:
+    mov     w0, #0
+    ret
+
+x509_hash_tbs:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x1
+    ldr     x0, [x19, #X509_SIG_HASH]
+    cbnz    x0, x509_hash_tbs_384
+    ladr    x0, sha_ctx
+    bl      sha256_init
+    ladr    x0, sha_ctx
+    ldr     x1, [x19, #X509_TBS]
+    ldr     x2, [x19, #X509_TBS_LEN]
+    bl      sha256_update
+    ladr    x0, sha_ctx
+    mov     x1, x20
+    bl      sha256_final
+    mov     w0, #SHA_DIGEST_SIZE
+    b       x509_hash_tbs_done
+
+x509_hash_tbs_384:
+    ladr    x0, sha512_ctx
+    bl      sha384_init
+    ladr    x0, sha512_ctx
+    ldr     x1, [x19, #X509_TBS]
+    ldr     x2, [x19, #X509_TBS_LEN]
+    bl      sha384_update
+    ladr    x0, sha512_ctx
+    mov     x1, x20
+    bl      sha384_final
+    mov     w0, #SHA384_DIGEST_SIZE
+
+x509_hash_tbs_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+x509_verify_with:
+    stp     x29, x30, [sp, #-192]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x0
+    mov     x20, x1
+    add     x0, sp, #48
+    mov     w1, #144
+    bl      mem_wipe
+    mov     x0, x19
+    add     x1, sp, #144
+    bl      x509_hash_tbs
+    mov     w21, w0
+    ladr    x22, p256_curve
+    ldr     x0, [x20, #X509_KEY_CURVE]
+    cbz     x0, x509_verify_with_curve
+    ladr    x22, p384_curve
+
+x509_verify_with_curve:
+    ldr     x4, [x22, #EC_BYTES]
+    ldr     x0, [x19, #X509_SIG]
+    ldr     x1, [x19, #X509_SIG_LEN]
+    add     x2, sp, #48
+    add     x3, sp, #96
+    bl      ecdsa_sig_decode
+    cbnz    w0, x509_verify_with_fail
+    mov     x0, x22
+    ldr     x1, [x20, #X509_KEY]
+    add     x2, sp, #144
+    mov     w3, w21
+    add     x4, sp, #48
+    add     x5, sp, #96
+    bl      ecdsa_verify
+    b       x509_verify_with_done
+
+x509_verify_with_fail:
+    mov     w0, #1
+
+x509_verify_with_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #192
+    ret
+
+x509_names_equal:
+    ldr     x2, [x0, #X509_ISSUER_LEN]
+    ldr     x3, [x1, #X509_SUBJECT_LEN]
+    cmp     x2, x3
+    b.ne    x509_names_equal_no
+    ldr     x0, [x0, #X509_ISSUER]
+    ldr     x1, [x1, #X509_SUBJECT]
+    b       mem_equal
+
+x509_names_equal_no:
+    mov     w0, #0
+    ret
+
+tls_root_init:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, tls_root_name
+    ladr    x1, tls_root_buf
+    mov     w2, #TLS_ROOT_SIZE
+    bl      fat_load
+    cmp     w0, #64
+    b.lo    tls_root_init_missing
+    str     x0, [sp, #-16]!
+    mov     x1, x0
+    ladr    x0, tls_root_buf
+    ladr    x2, tls_root_info
+    bl      x509_parse
+    ldr     x1, [sp], #16
+    cbnz    w0, tls_root_init_missing
+    str     x1, [sp, #-16]!
+    ladr    x0, tls_root_msg
+    bl      uart_puts
+    ldr     x0, [sp], #16
+    bl      uart_putdec
+    ladr    x0, tls_root_tail
+    bl      uart_puts
+    ladr    x0, tls_root_info
+    ldr     x0, [x0, #X509_KEY_CURVE]
+    bl      tls_put_curve
+    ladr    x0, tls_root_ok
+    mov     w1, #1
+    strb    w1, [x0]
+    b       tls_root_init_done
+
+tls_root_init_missing:
+    ladr    x0, tls_root_missing_msg
+    bl      uart_puts
+
+tls_root_init_done:
+    ldp     x29, x30, [sp], #16
+    ret
+
+tls_put_curve:
+    ladr    x1, tls_curve_p256
+    ladr    x2, tls_curve_p384
+    cmp     x0, #0
+    csel    x0, x1, x2, eq
+    b       uart_puts
+
+tls_chain_verify:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     x20, x0
+    mov     w21, w1
+    ladr    x0, tls_root_ok
+    ldrb    w0, [x0]
+    cbz     w0, tls_chain_no_root
+    ldrb    w0, [x20]
+    add     x20, x20, #1
+    add     x20, x20, x0
+    ladr    x22, tls_cert_buf
+    add     x22, x22, x21
+    add     x0, x20, #3
+    cmp     x0, x22
+    b.hi    tls_chain_short
+    add     x20, x20, #3
+    mov     w23, #0
+
+tls_chain_parse:
+    add     x0, x20, #3
+    cmp     x0, x22
+    b.hi    tls_chain_parsed
+    cmp     w23, #TLS_CHAIN_MAX
+    b.hs    tls_chain_parsed
+    ldrb    w2, [x20]
+    ldrb    w3, [x20, #1]
+    ldrb    w4, [x20, #2]
+    lsl     w2, w2, #16
+    orr     w2, w2, w3, lsl #8
+    orr     w24, w2, w4
+    add     x20, x20, #3
+    add     x0, x20, x24
+    cmp     x0, x22
+    b.hi    tls_chain_short
+    mov     x0, x20
+    mov     x1, x24
+    ladr    x2, tls_chain_infos
+    mov     x3, #X509_INFO_SIZE
+    madd    x2, x23, x3, x2
+    bl      x509_parse
+    cbnz    w0, tls_chain_unsupported
+    add     x20, x20, x24
+    add     x0, x20, #2
+    cmp     x0, x22
+    b.hi    tls_chain_short
+    ldrb    w2, [x20]
+    ldrb    w3, [x20, #1]
+    orr     w2, w3, w2, lsl #8
+    add     x20, x20, #2
+    add     x20, x20, x2
+    add     w23, w23, #1
+    b       tls_chain_parse
+
+tls_chain_unsupported:
+    cbz     w23, tls_chain_bad_cert
+
+tls_chain_parsed:
+    cbz     w23, tls_chain_short
+    ladr    x0, tls_chain_infos
+    ladr    x1, tls_host
+    mov     w2, #(tls_host_end - tls_host)
+    bl      x509_san_match
+    cbz     w0, tls_chain_name
+    mov     w19, #0
+
+tls_chain_loop:
+    ladr    x0, tls_chain_infos
+    mov     x3, #X509_INFO_SIZE
+    madd    x21, x19, x3, x0
+    mov     x0, x21
+    ladr    x1, tls_root_info
+    bl      x509_names_equal
+    cbnz    w0, tls_chain_root
+    add     w2, w19, #1
+    cmp     w2, w23
+    b.hs    tls_chain_orphan
+    mov     x0, x21
+    add     x1, x21, #X509_INFO_SIZE
+    bl      x509_names_equal
+    cbz     w0, tls_chain_orphan
+    mov     x0, x21
+    add     x1, x21, #X509_INFO_SIZE
+    bl      x509_verify_with
+    cbnz    w0, tls_chain_invalid
+    add     w19, w19, #1
+    b       tls_chain_loop
+
+tls_chain_root:
+    mov     x0, x21
+    ladr    x1, tls_root_info
+    bl      x509_verify_with
+    cbnz    w0, tls_chain_invalid
+    ladr    x0, tls_chain_ok_msg
+    bl      uart_puts
+    add     w0, w19, #1
+    bl      uart_putdec
+    ladr    x0, tls_chain_ok_tail
+    bl      uart_puts
+    mov     w0, #0
+    b       tls_chain_done
+
+tls_chain_no_root:
+    ladr    x0, tls_chain_noroot_msg
+    b       tls_chain_fail
+
+tls_chain_short:
+    ladr    x0, tls_short_msg
+    b       tls_chain_fail
+
+tls_chain_bad_cert:
+    ladr    x0, tls_certbad_msg
+    b       tls_chain_fail
+
+tls_chain_name:
+    ladr    x0, tls_chain_name_msg
+    b       tls_chain_fail
+
+tls_chain_orphan:
+    ladr    x0, tls_chain_orphan_msg
+    b       tls_chain_fail
+
+tls_chain_invalid:
+    ladr    x0, tls_chain_invalid_msg
+
+tls_chain_fail:
+    bl      tls_fail
+    mov     w0, #1
+
+tls_chain_done:
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+    ret
+
+x509_selftest:
+    stp     x29, x30, [sp, #-144]!
+    str     x19, [sp, #16]
+    mov     w19, #1
+    ladr    x0, x509_test_cert
+    mov     x1, #(x509_test_cert_end - x509_test_cert)
+    add     x2, sp, #32
+    bl      x509_parse
+    cbnz    w0, x509_selftest_fail
+    mov     w19, #2
+    add     x0, sp, #32
+    ladr    x1, tls_host
+    mov     w2, #(tls_host_end - tls_host)
+    bl      x509_san_match
+    cbz     w0, x509_selftest_fail
+    mov     w19, #3
+    add     x0, sp, #32
+    ladr    x1, x509_test_host_wild
+    mov     w2, #(x509_test_host_wild_end - x509_test_host_wild)
+    bl      x509_san_match
+    cbz     w0, x509_selftest_fail
+    mov     w19, #4
+    add     x0, sp, #32
+    ladr    x1, x509_test_host_bad
+    mov     w2, #(x509_test_host_bad_end - x509_test_host_bad)
+    bl      x509_san_match
+    cbnz    w0, x509_selftest_fail
+    ladr    x0, x509_ok_msg
+    bl      uart_puts
+    b       x509_selftest_done
+
+x509_selftest_fail:
+    ladr    x0, x509_fail_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+
+x509_selftest_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #144
+    ret
+
 .section .text.vectors
 .balign VEC_TABLE_ALIGN
 .global vec_table
@@ -16189,7 +16787,47 @@ ecdsa_ok_msg:
 ecdsa_fail_msg:
     .asciz  "ECDSA FEHLER Test "
 tls_cert_tail2:
-    .asciz  " Byte, ECDSA P-256\r\n"
+    .asciz  " Byte\r\n"
+tls_root_name:
+    .ascii  "ROOT    DER"
+tls_root_msg:
+    .asciz  "TLS WURZEL ROOT.DER geladen, "
+tls_root_tail:
+    .asciz  " Byte, "
+tls_root_missing_msg:
+    .asciz  "TLS WURZEL FEHLT (ROOT.DER), keine Kettenpruefung moeglich\r\n"
+tls_curve_p256:
+    .asciz  "ECDSA P-256\r\n"
+tls_curve_p384:
+    .asciz  "ECDSA P-384\r\n"
+tls_chain_ok_msg:
+    .asciz  "TLS KETTE GEPRUEFT: "
+tls_chain_ok_tail:
+    .asciz  " Zertifikate bis zur Wurzel, Name example.com passt\r\n"
+tls_chain_noroot_msg:
+    .asciz  "keine Wurzel geladen, Kette nicht pruefbar"
+tls_chain_name_msg:
+    .asciz  "NAME PASST NICHT ZUM ZERTIFIKAT"
+tls_chain_orphan_msg:
+    .asciz  "AUSSTELLER UNBEKANNT, keine Verbindung zur Wurzel"
+tls_chain_invalid_msg:
+    .asciz  "ZERTIFIKATSKETTE UNGUELTIG"
+x509_ok_msg:
+    .asciz  "X509 OK, Kette und Namen geparst, SAN mit Platzhalter\r\n"
+x509_fail_msg:
+    .asciz  "X509 FEHLER Test "
+x509_test_host_wild:
+    .ascii  "www.EXAMPLE.com"
+x509_test_host_wild_end:
+x509_test_host_bad:
+    .ascii  "example.org"
+x509_test_host_bad_end:
+oid_ecdsa_sha256:
+    .byte   0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02
+oid_ecdsa_sha384:
+    .byte   0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03
+oid_secp384r1:
+    .byte   0x2b, 0x81, 0x04, 0x00, 0x22
 tls_certbig_msg:
     .asciz  "Zertifikat zu gross"
 tls_certbad_msg:
@@ -16702,6 +17340,15 @@ tls_hs_buf:
     .space  TLS_HS_SIZE
 tls_cert_buf:
     .space  TLS_CERT_SIZE
+tls_root_buf:
+    .space  TLS_ROOT_SIZE
+.balign 8
+tls_root_info:
+    .space  X509_INFO_SIZE
+tls_chain_infos:
+    .space  (X509_INFO_SIZE * TLS_CHAIN_MAX)
+tls_root_ok:
+    .space  1
 .balign 16
 vin_tablet:
     .space  VIN_SIZE

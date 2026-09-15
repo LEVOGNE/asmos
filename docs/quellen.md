@@ -1890,3 +1890,21 @@ Nachweis: QMP `input-send-event` mit `qcode`-Tasten und Tablet-Klick (`typetest.
 | Vektor P-384 | RFC 6979, Anhang A.2.6, SHA-384, Nachricht `sample`: `r = 94EDBB92…`, `s = 99EF4AEB…` | mit Python-Referenz und `cryptography` nachgeprüft |
 
 Gefundene Fehler beim Bau: `ec_mul` reservierte für den Eingabepunkt 96 Byte, schreibt aber `EC_POINT_SIZE` = 144 (Rahmen jetzt 352); `mp_add_mod`/`mp_sub_mod` mit zwei Zwischenwerten je `MP_BYTES_MAX` = 48 brauchen 144 Byte Rahmen, nicht 112. Beide schrieben in die gesicherten Register des Aufrufers (`elr = 0xfffffffe`). Gemessen: `SHA384 OK, 3 Testvektoren`, `ECDSA OK, P-256 und P-384, RFC 6979 und echtes Zertifikat` unter TCG und hvf; P-384-Prüfung rund 14 Mio. Befehle; Start 575,0 Mio.; Bild unverändert.
+
+## TLS, Zertifikat Schritt B2: Kette, Wurzel, Name (15.09.2026)
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| `oid_ecdsa_sha256` | `2a 86 48 ce 3d 04 03 02` (1.2.840.10045.4.3.2) | RFC 5758, Abschnitt 3.2; RFC 5480 |
+| `oid_ecdsa_sha384` | `2a 86 48 ce 3d 04 03 03` (1.2.840.10045.4.3.3) | RFC 5758, Abschnitt 3.2 |
+| `oid_secp384r1` | `2b 81 04 00 22` (1.3.132.0.34) | RFC 5480, Abschnitt 2.1.1.1; SEC 2, A.2 |
+| Certificate-Nachricht | `certificate_request_context<0..2^8-1>`, `certificate_list<0..2^24-1>` aus `cert_data<1..2^24-1>` und `extensions<0..2^16-1>`; die Reihenfolge ist Blatt zuerst, jedes folgende Zertifikat beglaubigt das vorherige | RFC 8446, Abschnitt 4.4.2 |
+| TBSCertificate | `[0] version`, `serialNumber`, `signature` (AlgorithmIdentifier), `issuer`, `validity`, `subject`, `subjectPublicKeyInfo`, optional `[1]`, `[2]`, `[3] extensions`; die Signatur des Zertifikats geht über die DER-Bytes des gesamten TBSCertificate | RFC 5280, Abschnitte 4.1 und 4.1.1.3 |
+| Namensvergleich | Aussteller des Kindes gegen Inhaber des Elternteils als vollständige DER-Bytes des `Name`; die Normalisierung nach RFC 5280 7.1 ist nicht umgesetzt, was bei CA-Zertifikaten in der Praxis identische Kodierung bedeutet (RFC 5280, 4.1.2.4: "The issuer field MUST match the subject field of the issuing CA, byte for byte" gilt seit RFC 5280 ausdrücklich für die DER-Kodierung) | RFC 5280, Abschnitt 4.1.2.4 |
+| SubjectAltName | OID 2.5.29.17 = `55 1d 11`, `GeneralNames ::= SEQUENCE OF GeneralName`, `dNSName [2] IA5String` = Tag `0x82`; Extension = `SEQUENCE { extnID, critical BOOLEAN DEFAULT FALSE, extnValue OCTET STRING }` | RFC 5280, Abschnitt 4.2.1.6 und Anhang A |
+| Platzhalter | `*.` nur ganz links, deckt genau eine Ebene; Vergleich ohne Groß/Klein | RFC 6125, Abschnitt 6.4.3; RFC 9525, Abschnitt 6.3 |
+| Hash für die Signaturprüfung | SHA-256 bei `ecdsa-with-SHA256`, SHA-384 bei `ecdsa-with-SHA384`, jeweils über den TBS-Teil; die Kurve kommt aus dem Elternschlüssel, nicht aus dem Signaturalgorithmus | RFC 5758, Abschnitt 3.2 |
+| Wurzel auf dem Datenträger | `ROOT.DER` als 8.3-Name `ROOT    DER`, Puffer `TLS_ROOT_SIZE` 2048; die Datei ist `roots/sslcom-tls-ecc-root-ca-2022.der` (574 Byte, aus dem macOS-Systemschlüsselbund) | Festlegung; Zertifikat siehe Commit 086cea9 |
+| Kette von example.com | Blatt (P-256, `ecdsa-with-SHA256`) ← "Cloudflare TLS Issuing ECC CA 3" (P-256, `ecdsa-with-SHA384`) ← "SSL.com TLS Transit ECC CA R2" (P-384, `ecdsa-with-SHA384`) ← Wurzel (P-384); viertes Zertifikat der Nachricht: Kreuzzertifikat der Wurzel durch "AAA Certificate Services" (RSA, `sha256WithRSAEncryption`), wird nicht geparst | mit `openssl x509 -text` an den mitgeschnittenen Zertifikaten geprüft |
+
+Gegenproben (15.09.2026): ohne `ROOT.DER` → `keine Wurzel geladen`; Wurzel mit gekipptem Bit im Schlüssel → `ZERTIFIKATSKETTE UNGUELTIG`; Blattzertifikat als Wurzel → `AUSSTELLER UNBEKANNT`; Testbau mit `example.org` → `NAME PASST NICHT ZUM ZERTIFIKAT`. Positiv: `TLS KETTE GEPRUEFT: 3 Zertifikate bis zur Wurzel` unter TCG GICv2, GICv3 und hvf. Start 599,1 Mio. Befehle, `mp_mont_mul` 82,2 Mio.

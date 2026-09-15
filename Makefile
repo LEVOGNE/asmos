@@ -128,6 +128,7 @@ disk: font-store
 	  : > "$$MP/EMPTY.TXT"; \
 	  python3 -c "print(''.join('Zeile %04d ABCDEFGHIJKLMNOPQRSTUVWXYZ\n' % i for i in range(60)), end='')" > "$$MP/BIG.TXT"; \
 	  cp "$(FONT_SRC)" "$$MP/FONT.TTF"; \
+	  cp roots/sslcom-tls-ecc-root-ca-2022.der "$$MP/ROOT.DER"; \
 	  dot_clean -m "$$MP" 2>/dev/null || true; \
 	  rm -rf "$$MP"/._* "$$MP"/.DS_Store "$$MP"/.fseventsd "$$MP"/.Spotlight-V100 "$$MP"/.Trashes; \
 	  hdiutil detach "$$MP" >/dev/null; MP=; \
