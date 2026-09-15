@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-69.929%20Byte-brightgreen?style=flat-square" alt="69929 Byte">
+<img src="https://img.shields.io/badge/Kernel-70.961%20Byte-brightgreen?style=flat-square" alt="70961 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,8 +22,8 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>69.929&nbsp;Byte</b> groß, also <b>68&nbsp;KB</b>.<br>
-Mit Systemschrift und Wurzelzertifikat sind es <b>118&nbsp;KB</b> auf dem Datenträger.<br>
+Das fertige System ist <b>70.961&nbsp;Byte</b> groß, also <b>69&nbsp;KB</b>.<br>
+Mit Systemschrift und Wurzelzertifikat sind es <b>119&nbsp;KB</b> auf dem Datenträger.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -97,7 +97,8 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 | `make run` | Startet mit Fenster, Konsole im Terminal. Emuliert einen Cortex-A72 in Software |
 | `make fast` | Wie `make run`, aber mit Hardware-Beschleunigung, rund 4,4-mal schneller |
 | `make serial` | Startet nur mit Textkonsole, ohne Fenster |
-| `make check` | Startet drei Sekunden, schreibt alles mit, prüft und meldet OK oder FEHLER |
+| `make check` | Startet drei Sekunden, schreibt alles mit, prüft auf `BOOT OK` und meldet OK oder FEHLER |
+| `make check-net` | Startet sechs Sekunden und verlangt die ganze Kette: `KRYPTO BEREIT`, geprüfte Zertifikatskette, fertiger Handshake, `HTTPS HTTP/1.1 200 OK`; jede Sperr- oder Fehlermeldung lässt den Lauf durchfallen |
 | `make shot` | Macht ein Bildschirmfoto nach `screen.png` und beendet sich selbst |
 | `make debug` | Startet angehalten mit Debugger-Anschluss auf Port 1234 |
 | `make trace` | Misst sechs Sekunden unsichtbar: Instruktionen je Routine, Aufrufreihenfolge der Bildausgabe, Speicherzugriffe je Region. Baut beim ersten Mal drei QEMU-Plugins aus dem QEMU-Quellpaket nach `build/`. `python3 tools/trace.py scenes` misst zusätzlich die Kosten je Mausbewegung und je Ziehschritt, die Eingabe kommt über QMP |
@@ -107,7 +108,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 | `make clean` | Räumt Bauartefakte auf |
 | `make distclean` | Räumt zusätzlich den Testdatenträger weg |
 
-`make check` und `make shot` laufen ohne Zutun und beenden sich selbst. Sie sind dafür gedacht, dass später ein Programm das System prüfen kann, ohne dass ein Mensch danebensitzt.
+`make check`, `make check-net` und `make shot` laufen ohne Zutun und beenden sich selbst. Sie sind dafür gedacht, dass später ein Programm das System prüfen kann, ohne dass ein Mensch danebensitzt.
 
 </details>
 
@@ -119,7 +120,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>475 KB · 19.424 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>482 KB · 19.706 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -148,11 +149,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 19.424 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 19.706 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **2.002 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **2.026 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -181,7 +182,7 @@ In `kernel.S` stecken **2.002 Sprungmarken**. Jede gehört zu einem Zuständigke
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **69.929 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 56.992 Byte Code, 12.937 Byte Konstanten |
+| **`kernel.bin`** | **70.961 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 57.896 Byte Code, 13.057 Byte Konstanten |
 | `kernel.elf` | 254 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -197,10 +198,10 @@ Wollte man asmOS heute auf ein Gerät bringen, wären es genau drei Dateien:
 
 | Datei | Größe | Wozu |
 |---|---:|---|
-| `kernel.bin` | 69.929 Byte | das gesamte Betriebssystem |
+| `kernel.bin` | 70.961 Byte | das gesamte Betriebssystem |
 | `FONT.TTF` | 50.516 Byte | die Systemschrift, vom Kernel selbst ausgewertet |
 | `ROOT.DER` | 574 Byte | das Wurzelzertifikat für die TLS-Kettenprüfung |
-| **zusammen** | **121.019 Byte, also 118 KB** | |
+| **zusammen** | **122.051 Byte, also 119 KB** | |
 
 Das 64-MB-Abbild `disk.img` ist nur der leere FAT32-Testdatenträger, auf dem diese Dateien liegen. Die Selbsttests samt Testvektoren machen rund 9 KB des Kernels aus, ein Auslieferungsbau könnte sie weglassen. Dass es trotzdem noch nicht auf echter Hardware läuft, steht im nächsten Abschnitt.
 
@@ -211,7 +212,7 @@ Das 64-MB-Abbild `disk.img` ist nur der leere FAT32-Testdatenträger, auf dem di
 | Ausgabebild für die Grafikkarte | 25,2 MB | 3840 × 1600 mit 4 Byte je Punkt, aufgerundet auf 2-MB-Blöcke |
 | Internes Bild und Fensterpuffer | 41,4 MB | 24,6 MB Bild mit 4 Byte je Punkt, 16 MB Arena für die Fensterinhalte |
 | Variablen, Puffer, Stack | 266 KB | Schrifttabellen, TLS-Puffer, Netzringe, Seitenverwaltung, Animationsliste |
-| Kernel selbst | 68 KB | |
+| Kernel selbst | 69 KB | |
 | **zusammen** | **rund 67 MB** | |
 
 99,8 % davon sind Bildspeicher, und der hängt allein an der Auflösung: bei 1920 × 1080 wären es 17 MB, bei 1280 × 720 rund 8 MB. Beim Start genullt wird nur der Ausgabepuffer, denn das interne Bild wird ohnehin in der ersten Bildausgabe vollständig überschrieben.
@@ -374,11 +375,11 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 483 KB in drei Dateien |
-| Zeilen Assembler | 19.424 |
-| Sprungmarken | 2.002 |
-| **Fertiges Betriebssystem** | **69.929 Byte** |
-| Auf dem Datenträger mit Schrift und Wurzelzertifikat | 118 KB |
+| Eigener Quelltext | 490 KB in drei Dateien |
+| Zeilen Assembler | 19.706 |
+| Sprungmarken | 2.026 |
+| **Fertiges Betriebssystem** | **70.961 Byte** |
+| Auf dem Datenträger mit Schrift und Wurzelzertifikat | 119 KB |
 | Speicherbedarf im Betrieb | rund 67 MB: 25,2 MB Ausgabebild, 24,6 MB internes Bild, 16 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 171 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -395,7 +396,7 @@ Dieser Abschnitt wird nach jeder Messung fortgeschrieben. Alle Zahlen stammen au
 
 ### Die Runden im Überblick
 
-Vom 14. bis 15.09.2026 sind 24 Runden gelaufen. Jede Zeile nennt, was dazukam, wie groß das System danach war und die eine Zahl, die die Runde geprägt hat. Die ausführlichen Berichte der Runden 1 bis 21 stehen in der Versionsgeschichte dieser Datei.
+Vom 14. bis 15.09.2026 sind 25 Runden gelaufen. Jede Zeile nennt, was dazukam, wie groß das System danach war und die eine Zahl, die die Runde geprägt hat. Die ausführlichen Berichte der Runden 1 bis 21 stehen in der Versionsgeschichte dieser Datei.
 
 | Runde | Was | Größe danach | Die Zahl der Runde |
 |---:|---|---:|---|
@@ -422,7 +423,8 @@ Vom 14. bis 15.09.2026 sind 24 Runden gelaufen. Jede Zeile nennt, was dazukam, w
 | 21 | Echtzeituhr pl031 aus dem Device Tree, Kalender, Gültigkeitszeitraum, sieben Gegenproben | 67.904 Byte | Start 601,7 Mio. Befehle |
 | 22 | Kompression, Fensterklassen, Knöpfe, Animation, Fehlersuche, siehe unten | 66.977 Byte | Start 606,6 Mio. Befehle |
 | 23 | Alle Befunde der Fehlersuche behoben, dazu sechs weitere: Handshake-Folge, CA-Berechtigungen, virtio-rng, DNS-Zuordnung, TCP, virtio, Kalender, Tasten, Pufferverdichtung, siehe unten | 69.833 Byte | Start 606,6 Mio. Befehle, neun Gegenproben |
-| 24 | Dritte Fehlersuche, acht Durchsichten: drei Befunde behoben, zehn Behauptungen widerlegt, siehe unten | **69.929 Byte** | drei Gegenproben, je vorher und nachher |
+| 24 | Dritte Fehlersuche, acht Durchsichten: drei Befunde behoben, zehn Behauptungen widerlegt, siehe unten | 69.929 Byte | drei Gegenproben, je vorher und nachher |
+| 25 | Vierte Fehlersuche mit Stackmessung, dann fünf Pakete aus einer fremden Durchsicht: Netz-Härtung, DNS-Bindung, TLS-Alerts, `make check-net`, Regeltreue, siehe unten | **70.961 Byte** | Stack 3.312 von 16.384 Byte belegt, elf Gegenproben |
 
 ### Was aus den Runden bleibt
 
@@ -523,3 +525,28 @@ Acht Durchsichten, je eine pro Block (Fenster, Animation, Netz und Zufall, TCP, 
 | Sprungmarken | 2.001 | 2.002 |
 | Bildvergleich | gleich | gleich, 0 abweichende Bildpunkte außerhalb der Maske |
 | Gegenproben | 9 | 3 Testbauten, je vorher und nachher |
+
+### Stand 15.09.2026, Runde 25: Stackmessung und fünf Pakete aus einer fremden Durchsicht
+
+**Vierte Fehlersuche.** Vier Durchsichten (Konsole und Maus, FAT und Block, Boot und MMU, der Code aus Runde 24) und zwei mechanische Prüfungen über die ganze Datei: ein Skript vergleicht für alle 239 Prologe die Rahmengröße mit jedem Epilog, jede Sicherung und jeden Zugriff mit dem Rahmen und jedes gesicherte Register mit seiner Wiederherstellung, ohne Befund; ein zweites sucht Aufrufe in rahmenlosen Routinen, alle 93 Treffer sind Startcode, Panik, Abschalten, Interrupt-Einstieg oder Fehlerpfade, die nach `boot_park` gehen. Kein Codefehler bestätigt. Widerlegt: NEON-Register im Interrupt ungesichert (der Interruptpfad benutzt kein v-Register, geprüft über alle Routinen), Stackfehler in `tls_root_init`, `mov` mit `FAT_EOC` (gültiges logisches Immediate), Dateinamenüberlauf im Dateienfenster.
+
+**Stackbedarf gemessen.** CLAUDE.md nannte die 16 KB einen gewählten Startwert ohne gemessenen Bedarf. Ein Testbau füllt den Stack nach der bss-Nullung mit einem Muster, nach neun Sekunden Betrieb bis `HTTPS HTTP/1.1 200 OK` wird der Bereich über den QEMU-Monitor (`pmemsave`) gesichert und ausgezählt: **3.312 von 16.384 Byte berührt, 20 %**, der tiefste Pfad ist die Kettenprüfung über `ecdsa_verify`, `ec_mul`, `ec_add` und `mp_mont_mul`. Der Stack liegt laut `linker.ld` direkt über dem Ende von `.bss` ohne Wächter; bei Faktor 5 Reserve kein Fehler, ein Wächterwort bleibt notiert.
+
+**Fünf Pakete.** Eine fremde Durchsicht lieferte zwölf Punkte, neun stimmten, zwei enthielten je eine falsche Teilbehauptung, einer war eine Testlücke. Alles Bestätigte ist gebaut, jedes Paket einzeln committet und gegengeprüft:
+
+- *A, Netz-Härtung.* RST außerhalb von SYN_SENT nur bei `SEQ == RCV_NXT` (RFC 5961, bisher als offen geführt). FIN_WAIT_2 nullt seinen Zeitgeber und wartet damit vier volle Intervalle statt 48 Ticks. Abgeschnittene IP-Datagramme (Gesamtlänge größer als empfangen) werden verworfen statt gekürzt. DHCP: Option 53 nur mit Länge 1, Kennung je Vorgang aus dem Zufall statt Konstante, Antworten nur von Quellport 67 mit eigener MAC im `chaddr`, das ACK muss Server-ID und Adresse des angenommenen Angebots tragen. Die FIN_WAIT_2-Gegenprobe blieb unentschieden, weil slirp einen FIN erst mit dem Ende des Weiterleitungsziels bestätigt; der Fix ist am Code eindeutig, der HTTPS-Abbau läuft weiter durch FIN_WAIT_2.
+- *B, DNS-Bindung.* Antworten zählen nur mit Klasse IN und wenn der Owner-Name des Records byteweise dem angefragten Namen oder dem letzten bestätigten CNAME-Ziel entspricht, ohne Groß- und Kleinschreibung. `dns_name_equal` löst Kompressionszeiger mit Sprunggrenze 16 und Grenzprüfung je Byte auf. Gegenprobe: Testbau, der den Zielnamen nach der Fragenprüfung auf `fxample.com` verstellt: vorher `DNS example.com = 172.66.147.243`, nachher `DNS OHNE A-RECORD`.
+- *C, TLS-Alerts.* Nur ein Alert mit Länge 2 und Beschreibung 0 ist ein sauberes Ende; dann wird ein eigenes verschlüsseltes close_notify gesendet und erst danach TCP geschlossen. `user_canceled` wird übergangen, jeder andere Alert ist `TLS FEHLER: Alert vom Server`, eine falsche Länge ebenso. Belegt im Mitschnitt: nach dem close_notify des Servers (Record 23/19) folgt unser 24-Byte-Record und dann erst der FIN. Testbau mit verfälschter Beschreibung 40: `TLS ALERT 1 40`, `TLS FEHLER: Alert vom Server`.
+- *D, Prüfziel.* `make check-net` verlangt `KRYPTO BEREIT`, `TLS KETTE GEPRUEFT`, `TLS HANDSHAKE FERTIG` und `HTTPS HTTP/1.1 200 OK` und verbietet `PANIC`, `GESPERRT`, `TLS FEHLER`, `KEINE ANTWORT`, `PRUEFSUMME`. `CHECK_KERNEL` erlaubt Testbauten. Gegenprobe: mit erzwungen gesperrter Kryptografie fällt der Lauf durch, `make check` hätte ihn bestanden.
+- *E, Regeltreue.* ServerHello: `legacy_version` 0x0303, leere Session-ID als Echo, Kompression 0, keine doppelten Extensions, innere key_share-Länge 32, Extension-Vektor endet genau an der Nachricht. CertificateVerify ohne Bytes hinter der Signatur. CCS nur zwischen ClientHello und Finished, genau einmal, Länge 1, Inhalt 0x01 (der echte Server schickt genau eines). Unbekannter innerer Record-Typ ist ein Fehler. X.509: innerer und äußerer Signaturalgorithmus müssen DER-gleich sein. Schlüssel werden auch bei fehlgeschlagenem Zufall oder `tcp_open` gelöscht, `rng_get` löscht seinen Puffer bei Fehlern. Ping-Antworten zählen nur mit Code 0, eigener Kennung, Folge 1 und dem Gateway als Absender. Drei Testbauten: Session-ID verstellt, ein Byte zu viel hinter der Signatur, CCS doppelt; alle drei enden in `TLS FEHLER`.
+
+| Kennzahl | Runde 24 | Runde 25 |
+|---|---|---|
+| Größe des fertigen Systems | 69.929 Byte | **70.961 Byte** (+1.032 für fünf Pakete) |
+| Zeilen Assembler | 19.424 | 19.706 |
+| Sprungmarken | 2.002 | 2.026 |
+| Stack belegt | nicht gemessen | 3.312 von 16.384 Byte |
+| Bildvergleich | gleich | gleich, 0 abweichende Bildpunkte außerhalb der Maske |
+| Gegenproben | 3 | 11 Testbauten und Mitschnitte |
+
+**Nicht gebaut:** der Stackwächter, die Kleinigkeiten aus Runde 24 (`net_poll_bad`, Tastenring, doppeltes Warten in `net_send`), die Einblendung (Netzkette erst nach der Einblendung, Netzfenster nur um die neue Zeile ergänzen). Bewusst offen wie zuvor: TCP-Empfangsfenster, TIME_WAIT, Sperrlisten, Namensbeschränkungen, Sitzungswiederaufnahme.
