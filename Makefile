@@ -22,10 +22,14 @@ DEVICES := -m 256M -device ramfb -device virtio-tablet-device -device virtio-key
 DISPLAY_OPT := -display cocoa,zoom-interpolation=on
 
 CHECK_SECONDS := 3
+CHECK_NET_SECONDS := 6
 TRACE_SECONDS := 6
 CHECK_EXPECT  := BOOT OK
 CHECK_FORBID  := PANIC
+CHECK_NET_EXPECT := "KRYPTO BEREIT" "TLS KETTE GEPRUEFT" "TLS HANDSHAKE FERTIG" "HTTPS HTTP/1.1 200 OK"
+CHECK_NET_FORBID := "PANIC" "GESPERRT" "TLS FEHLER" "KEINE ANTWORT" "PRUEFSUMME"
 CHECK_LOG     := serial.log
+CHECK_KERNEL  ?= kernel.bin
 SHOT          := screen.png
 
 ASFLAGS := -g
@@ -80,6 +84,23 @@ check: kernel.bin disk-required
 	else \
 	  echo "FEHLER: '$(CHECK_EXPECT)' nicht erreicht"; exit 1; \
 	fi
+
+check-net: kernel.bin disk-required
+	@rm -f $(CHECK_LOG)
+	@$(QEMU) -machine $(MACHINE)$(MACHINE_EXTRA) -cpu $(CPU) $(DEVICES) -display none -serial file:$(CHECK_LOG) -kernel $(CHECK_KERNEL) & \
+	  QPID=$$!; sleep $(CHECK_NET_SECONDS); kill $$QPID 2>/dev/null; wait $$QPID 2>/dev/null; true
+	@echo "--- $(CHECK_LOG) ---"
+	@cat $(CHECK_LOG) 2>/dev/null || echo "(leer)"
+	@echo "--------------------"
+	@rc=0; \
+	  for s in $(CHECK_NET_EXPECT); do \
+	    if grep -qa "$$s" $(CHECK_LOG) 2>/dev/null; then echo "  ok: $$s"; else echo "  FEHLT: $$s"; rc=1; fi; \
+	  done; \
+	  for s in $(CHECK_NET_FORBID); do \
+	    if grep -qa "$$s" $(CHECK_LOG) 2>/dev/null; then echo "  VERBOTEN: $$s"; rc=1; fi; \
+	  done; \
+	  if [ $$rc -eq 0 ]; then echo "OK: Netz und Kryptografie vollstaendig"; else echo "FEHLER: check-net"; fi; \
+	  exit $$rc
 
 disk-required:
 	@test -f "$(DISK)" || { echo "FEHLER: $(DISK) fehlt. Zuerst make disk ausfuehren."; exit 1; }
@@ -150,4 +171,4 @@ distclean: clean
 	rm -f $(DISK)
 	rm -rf build
 
-.PHONY: all run fast serial debug check shot disk disk-required font-store font-rescue dtb trace clean distclean
+.PHONY: all run fast serial debug check check-net shot disk disk-required font-store font-rescue dtb trace clean distclean
