@@ -382,6 +382,16 @@
 .equ TLS_RX_SIZE,           (TLS_REC_MAX + 5)
 .equ TLS_HS_SIZE,           16384
 .equ TLS_OUT_SIZE,          512
+.equ TLSP_HOST,             0
+.equ TLSP_REQ,              16
+.equ TLSP_APP,              32
+.equ TLSP_SIZE,             40
+.equ TLS_SNI_HDR,           9
+.equ TERM_WRAP,             (TERM_COLS - 1)
+.equ CURL_HOST_MAX,         63
+.equ CURL_PATH_MAX,         200
+.equ CURL_REQ_MAX,          384
+.equ CURL_MAX_LINES,        200
 .equ TLS_STATE_IDLE,        0
 .equ TLS_STATE_HELLO_SENT,  1
 .equ TLS_STATE_HANDSHAKE,   2
@@ -8474,6 +8484,35 @@ net_start:
     cbnz    x0, dhcp_discover
     ret
 
+net_demo_resolved:
+    cbz     w0, net_demo_resolved_none
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     w19, w0
+    mov     w1, #HTTP_PORT
+    ladr    x2, http_on_data
+    bl      tcp_open
+    cbz     x0, net_demo_resolved_tls
+    ladr    x1, http_request
+    mov     w2, #(http_request_end - http_request)
+    bl      tcp_write
+
+net_demo_resolved_tls:
+    ladr    x0, tls_host
+    mov     w1, #(tls_host_end - tls_host)
+    ladr    x2, http_request
+    mov     w3, #(http_request_end - http_request)
+    ladr    x4, tls_demo_app
+    bl      tls_configure
+    mov     w0, w19
+    mov     w1, #HTTPS_PORT
+    bl      tls_connect
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+
+net_demo_resolved_none:
+    ret
+
 net_put_mac:
     stp     x29, x30, [sp, #-32]!
     stp     x19, x20, [sp, #16]
@@ -9387,6 +9426,7 @@ net_ip_handle_proto:
     ladr    x0, net_ping_msg
     bl      uart_puts
     ladr    x0, dns_test_name
+    ladr    x1, net_demo_resolved
     bl      dns_resolve
     b       net_ip_handle_done
 
@@ -9937,6 +9977,8 @@ dhcp_handle_ret:
 
 
 dns_resolve:
+    ladr    x2, dns_name
+    stp     x0, x1, [x2]
     ladr    x1, dns_tries
     strb    wzr, [x1]
 
@@ -10201,7 +10243,8 @@ dns_handle_answer_a:
     mov     x21, x0
     ladr    x0, dns_msg
     bl      uart_puts
-    ladr    x0, dns_test_name
+    ladr    x0, dns_name
+    ldr     x0, [x0]
     bl      uart_puts
     ladr    x0, dns_equals
     bl      uart_puts
@@ -10210,16 +10253,7 @@ dns_handle_answer_a:
     ladr    x0, uart_newline
     bl      uart_puts
     mov     w0, w21
-    mov     w1, #HTTP_PORT
-    ladr    x2, http_on_data
-    bl      tcp_open
-    cbz     x0, dns_handle_done
-    ladr    x1, http_request
-    mov     w2, #(http_request_end - http_request)
-    bl      tcp_write
-    mov     w0, w21
-    mov     w1, #HTTPS_PORT
-    bl      tls_connect
+    bl      dns_notify
     b       dns_handle_done
 
 dns_handle_answer_next:
@@ -10236,6 +10270,8 @@ dns_handle_rcode:
     bl      uart_putdec
     ladr    x0, uart_newline
     bl      uart_puts
+    mov     w0, #0
+    bl      dns_notify
     b       dns_handle_done
 
 dns_handle_noanswer:
@@ -10243,6 +10279,8 @@ dns_handle_noanswer:
     strb    wzr, [x0]
     ladr    x0, dns_noanswer_msg
     bl      uart_puts
+    mov     w0, #0
+    bl      dns_notify
 
 dns_handle_done:
     ldr     x23, [sp, #48]
@@ -10251,6 +10289,15 @@ dns_handle_done:
     ldp     x29, x30, [sp], #80
 
 dns_handle_ret:
+    ret
+
+dns_notify:
+    ladr    x1, dns_handler
+    ldr     x1, [x1]
+    cbz     x1, dns_notify_none
+    br      x1
+
+dns_notify_none:
     ret
 
 dns_name_equal:
@@ -10357,7 +10404,8 @@ dns_tick:
     strb    w3, [x2]
     cmp     w3, #DNS_RETRY_MAX
     b.hs    dns_tick_giveup
-    ladr    x0, dns_test_name
+    ladr    x0, dns_name
+    ldr     x0, [x0]
     bl      dns_query
     b       dns_tick_done
 
@@ -10365,6 +10413,8 @@ dns_tick_giveup:
     strb    wzr, [x0]
     ladr    x0, dns_fail_msg
     bl      uart_puts
+    mov     w0, #0
+    bl      dns_notify
 
 dns_tick_done:
     ldp     x29, x30, [sp], #16
@@ -12911,6 +12961,8 @@ tls_connect_allowed:
     mov     x0, x19
     mov     w1, #TLS_CTX_SIZE
     bl      mem_wipe
+    ladr    x0, tls_line
+    str     wzr, [x0]
     add     x0, x19, #TLS_PRIV
     mov     w1, #32
     bl      rng_get
@@ -12944,6 +12996,7 @@ tls_connect_allowed:
     strb    w0, [x19, #TLS_STATE]
     ladr    x0, tls_hello_msg
     bl      uart_puts
+    mov     x0, #1
 
 tls_connect_done:
     ldp     x21, x22, [sp, #32]
@@ -12951,25 +13004,106 @@ tls_connect_done:
     ldp     x29, x30, [sp], #48
     ret
 
+tls_configure:
+    ladr    x9, tls_params
+    mov     w1, w1
+    mov     w3, w3
+    stp     x0, x1, [x9, #TLSP_HOST]
+    stp     x2, x3, [x9, #TLSP_REQ]
+    str     x4, [x9, #TLSP_APP]
+    ret
+
 tls_build_client_hello:
-    stp     x29, x30, [sp, #-32]!
-    str     x19, [sp, #16]
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
     ladr    x19, tls_ctx
+    ladr    x20, tls_out_buf
+    ladr    x9, tls_params
+    ldp     x21, x22, [x9, #TLSP_HOST]
     ladr    x0, tls_hello_tpl
-    ladr    x1, tls_out_buf
-    mov     w2, #(tls_hello_end - tls_hello_tpl)
+    mov     x1, x20
+    mov     w2, #(tls_hello_ext - tls_hello_tpl)
     bl      mem_copy
     add     x0, x19, #TLS_RANDOM
-    ladr    x1, tls_out_buf+(tls_hello_random-tls_hello_tpl)
+    add     x1, x20, #(tls_hello_random - tls_hello_tpl)
     mov     w2, #32
     bl      mem_copy
+    add     x1, x20, #(tls_hello_ext - tls_hello_tpl)
+    strb    wzr, [x1]
+    strb    wzr, [x1, #1]
+    add     w2, w22, #5
+    lsr     w3, w2, #8
+    strb    w3, [x1, #2]
+    strb    w2, [x1, #3]
+    add     w2, w22, #3
+    lsr     w3, w2, #8
+    strb    w3, [x1, #4]
+    strb    w2, [x1, #5]
+    strb    wzr, [x1, #6]
+    lsr     w3, w22, #8
+    strb    w3, [x1, #7]
+    strb    w22, [x1, #8]
+    add     x1, x1, #TLS_SNI_HDR
+    mov     x0, x21
+    mov     w2, w22
+    bl      mem_copy
+    add     x1, x20, #(tls_hello_ext - tls_hello_tpl + TLS_SNI_HDR)
+    add     x1, x1, x22
+    ladr    x0, tls_host_end
+    mov     w2, #(tls_hello_end - tls_host_end)
+    bl      mem_copy
+    mov     w9, #(tls_hello_ext - tls_hello_tpl + TLS_SNI_HDR + (tls_hello_end - tls_host_end))
+    add     w21, w9, w22
     add     x0, x19, #TLS_PUB
-    ladr    x1, tls_out_buf+(tls_hello_pub-tls_hello_tpl)
+    sub     w1, w21, #32
+    add     x1, x20, x1
     mov     w2, #32
     bl      mem_copy
-    mov     w0, #(tls_hello_end - tls_hello_tpl)
-    ldr     x19, [sp, #16]
-    ldp     x29, x30, [sp], #32
+    sub     w0, w21, #5
+    lsr     w1, w0, #8
+    strb    w1, [x20, #3]
+    strb    w0, [x20, #4]
+    sub     w0, w21, #9
+    lsr     w1, w0, #16
+    strb    w1, [x20, #6]
+    lsr     w1, w0, #8
+    strb    w1, [x20, #7]
+    strb    w0, [x20, #8]
+    sub     w0, w21, #(tls_hello_ext - tls_hello_tpl)
+    lsr     w1, w0, #8
+    strb    w1, [x20, #(tls_hello_ext - tls_hello_tpl - 2)]
+    strb    w0, [x20, #(tls_hello_ext - tls_hello_tpl - 1)]
+    mov     w0, w21
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+tls_demo_app:
+    cbz     w2, tls_demo_app_none
+    stp     x29, x30, [sp, #-16]!
+    ladr    x9, tls_ctx
+    ldrb    w0, [x9, #TLS_SEEN]
+    cbnz    w0, tls_demo_app_done
+    ladr    x0, tls_line
+    bl      line_collect
+    cbz     w0, tls_demo_app_done
+    ladr    x9, tls_ctx
+    mov     w0, #1
+    strb    w0, [x9, #TLS_SEEN]
+    ladr    x0, tls_https_msg
+    bl      uart_puts
+    ladr    x0, tls_line
+    add     x0, x0, #4
+    bl      uart_puts
+    ladr    x0, uart_newline
+    bl      uart_puts
+
+tls_demo_app_done:
+    ldp     x29, x30, [sp], #16
+
+tls_demo_app_none:
     ret
 
 tls_send_record:
@@ -13030,7 +13164,18 @@ tls_on_data:
     ladr    x19, tls_ctx
     mov     x20, x1
     mov     w21, w2
+    ldr     x9, [x19, #TLS_TCB]
+    cmp     x0, x9
+    b.ne    tls_on_data_done
     cbnz    w21, tls_on_data_append
+    ladr    x9, tls_params
+    ldr     x9, [x9, #TLSP_APP]
+    cbz     x9, tls_on_data_closed
+    mov     x1, #0
+    mov     w2, #0
+    blr     x9
+
+tls_on_data_closed:
     ldrb    w22, [x19, #TLS_STATE]
     cmp     w22, #TLS_STATE_CLOSED
     b.eq    tls_on_data_done
@@ -13223,22 +13368,12 @@ tls_process_record_inner_app:
     cmp     w0, #TLS_STATE_CONNECTED
     b.ne    tls_process_record_done
     cbz     w22, tls_process_record_done
-    ldrb    w0, [x19, #TLS_SEEN]
-    cbnz    w0, tls_process_record_done
-    ladr    x0, tls_line
+    ladr    x9, tls_params
+    ldr     x9, [x9, #TLSP_APP]
+    cbz     x9, tls_process_record_done
     add     x1, x20, #5
     mov     w2, w22
-    bl      line_collect
-    cbz     w0, tls_process_record_done
-    mov     w0, #1
-    strb    w0, [x19, #TLS_SEEN]
-    ladr    x0, tls_https_msg
-    bl      uart_puts
-    ladr    x0, tls_line
-    add     x0, x0, #4
-    bl      uart_puts
-    ladr    x0, uart_newline
-    bl      uart_puts
+    blr     x9
     b       tls_process_record_done
 
 tls_process_record_empty:
@@ -13850,8 +13985,8 @@ tls_keys_finish:
     ladr    x0, tls_done_msg
     bl      uart_puts
     mov     w0, #TLS_REC_APPDATA
-    ladr    x1, http_request
-    mov     w2, #(http_request_end - http_request)
+    ladr    x9, tls_params
+    ldp     x1, x2, [x9, #TLSP_REQ]
     bl      tls_send_record
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
@@ -15115,6 +15250,9 @@ term_input:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
     mov     w19, w0
+    ladr    x1, term_busy
+    ldrb    w1, [x1]
+    cbnz    w1, term_input_done
     cmp     w19, #ASCII_BS
     b.eq    term_input_back
     cmp     w19, #ASCII_DEL
@@ -15154,24 +15292,17 @@ term_input_back:
     b       term_input_mark
 
 term_input_enter:
-    ladr    x1, term_row
-    ldr     w2, [x1]
-    add     w2, w2, #1
-    cmp     w2, #TERM_ROWS
-    b.lo    term_input_enter_row
-    ladr    x0, term_buf
-    add     x0, x0, #TERM_STRIDE
-    ladr    x1, term_buf
-    mov     w2, #((TERM_ROWS - 1) * TERM_STRIDE)
-    bl      mem_copy
-    mov     w2, #(TERM_ROWS - 1)
-    ladr    x1, term_row
-
-term_input_enter_row:
-    str     w2, [x1]
     bl      term_line
-    mov     w1, #TERM_STRIDE
-    bl      mem_wipe
+    add     x0, x0, #TERM_PROMPT_LEN
+    ladr    x1, term_cmd
+    mov     w2, #(TERM_STRIDE - TERM_PROMPT_LEN)
+    bl      mem_copy
+    bl      term_advance
+    ladr    x0, term_cmd
+    bl      term_command
+    ladr    x0, term_busy
+    ldrb    w0, [x0]
+    cbnz    w0, term_input_mark
     bl      term_prompt
 
 term_input_mark:
@@ -15182,6 +15313,551 @@ term_input_mark:
 term_input_done:
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
+    ret
+
+term_advance:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x1, term_row
+    ldr     w2, [x1]
+    add     w2, w2, #1
+    cmp     w2, #TERM_ROWS
+    b.lo    term_advance_row
+    ladr    x0, term_buf
+    add     x0, x0, #TERM_STRIDE
+    ladr    x1, term_buf
+    mov     w2, #((TERM_ROWS - 1) * TERM_STRIDE)
+    bl      mem_copy
+    mov     w2, #(TERM_ROWS - 1)
+    ladr    x1, term_row
+
+term_advance_row:
+    str     w2, [x1]
+    bl      term_line
+    mov     w1, #TERM_STRIDE
+    bl      mem_wipe
+    ladr    x0, term_col
+    str     wzr, [x0]
+    ladr    x0, term_dirty
+    mov     w1, #1
+    strb    w1, [x0]
+    ldp     x29, x30, [sp], #16
+    ret
+
+term_print:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+
+term_print_row:
+    bl      term_line
+    mov     x20, x0
+    mov     w2, #0
+
+term_print_char:
+    ldrb    w3, [x19]
+    cbz     w3, term_print_end
+    cmp     w2, #TERM_WRAP
+    b.hs    term_print_wrap
+    strb    w3, [x20, x2]
+    add     x19, x19, #1
+    add     w2, w2, #1
+    b       term_print_char
+
+term_print_wrap:
+    strb    wzr, [x20, x2]
+    bl      term_advance
+    b       term_print_row
+
+term_print_end:
+    strb    wzr, [x20, x2]
+    bl      term_advance
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+term_command:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     x19, x0
+
+term_command_skip:
+    ldrb    w0, [x19]
+    cmp     w0, #ASCII_SPACE
+    b.ne    term_command_word
+    add     x19, x19, #1
+    b       term_command_skip
+
+term_command_word:
+    cbz     w0, term_command_done
+    mov     x0, x19
+    ladr    x1, term_cmd_curl
+    mov     w2, #(term_cmd_help - term_cmd_curl)
+    bl      mem_equal
+    cbz     w0, term_command_help
+    add     x0, x19, #(term_cmd_help - term_cmd_curl)
+    bl      curl_start
+    b       term_command_done
+
+term_command_help:
+    mov     x0, x19
+    ladr    x1, term_cmd_help
+    mov     w2, #(term_help_1 - term_cmd_help)
+    bl      mem_equal
+    cbz     w0, term_command_unknown
+    ladr    x0, term_help_1
+    bl      term_print
+    ladr    x0, term_help_2
+    bl      term_print
+    ladr    x0, term_help_3
+    bl      term_print
+    b       term_command_done
+
+term_command_unknown:
+    ladr    x0, term_unknown_msg
+    bl      term_print
+
+term_command_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+term_append:
+    ldrb    w2, [x1], #1
+    cbz     w2, term_append_done
+    strb    w2, [x0], #1
+    b       term_append
+
+term_append_done:
+    strb    wzr, [x0]
+    ret
+
+term_put_dec:
+    stp     x29, x30, [sp, #-32]!
+    add     x3, sp, #32
+    mov     w4, #10
+    mov     w5, w1
+
+term_put_dec_digit:
+    udiv    w6, w5, w4
+    msub    w7, w6, w4, w5
+    add     w7, w7, #ASCII_ZERO
+    strb    w7, [x3, #-1]!
+    mov     w5, w6
+    cbnz    w5, term_put_dec_digit
+    add     x2, sp, #32
+
+term_put_dec_copy:
+    cmp     x3, x2
+    b.hs    term_put_dec_done
+    ldrb    w7, [x3], #1
+    strb    w7, [x0], #1
+    b       term_put_dec_copy
+
+term_put_dec_done:
+    strb    wzr, [x0]
+    ldp     x29, x30, [sp], #32
+    ret
+
+term_put_ip:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     w19, w1
+    mov     w20, #24
+
+term_put_ip_octet:
+    lsr     w1, w19, w20
+    and     w1, w1, #0xff
+    bl      term_put_dec
+    cbz     w20, term_put_ip_done
+    mov     w2, #0x2e
+    strb    w2, [x0], #1
+    sub     w20, w20, #8
+    b       term_put_ip_octet
+
+term_put_ip_done:
+    strb    wzr, [x0]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+curl_start:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x0
+    ladr    x0, net_dns
+    ldr     w0, [x0]
+    ladr    x1, curl_nonet_msg
+    cbz     w0, curl_start_fail
+    ladr    x0, dns_state
+    ldrb    w0, [x0]
+    cmp     w0, #DNS_STATE_SENT
+    ladr    x1, curl_dnsbusy_msg
+    b.eq    curl_start_fail
+    mov     w20, #0
+    mov     x0, x19
+    ladr    x1, curl_http_prefix
+    mov     w2, #(curl_https_prefix - curl_http_prefix)
+    bl      mem_equal
+    cbz     w0, curl_start_https
+    add     x19, x19, #(curl_https_prefix - curl_http_prefix)
+    b       curl_start_host
+
+curl_start_https:
+    mov     x0, x19
+    ladr    x1, curl_https_prefix
+    mov     w2, #(curl_req_get - curl_https_prefix)
+    bl      mem_equal
+    cbz     w0, curl_start_host
+    add     x19, x19, #(curl_req_get - curl_https_prefix)
+    mov     w20, #1
+
+curl_start_host:
+    ladr    x21, curl_host
+    mov     w22, #0
+
+curl_start_host_char:
+    ldrb    w0, [x19]
+    cbz     w0, curl_start_host_end
+    cmp     w0, #0x2f
+    b.eq    curl_start_host_end
+    cmp     w0, #ASCII_SPACE
+    b.eq    curl_start_host_end
+    sub     w1, w0, #0x41
+    cmp     w1, #25
+    b.hi    curl_start_host_check
+    add     w0, w0, #0x20
+
+curl_start_host_check:
+    sub     w1, w0, #0x61
+    cmp     w1, #25
+    b.ls    curl_start_host_store
+    sub     w1, w0, #ASCII_ZERO
+    cmp     w1, #9
+    b.ls    curl_start_host_store
+    cmp     w0, #0x2e
+    b.eq    curl_start_host_store
+    cmp     w0, #0x2d
+    b.ne    curl_start_bad
+
+curl_start_host_store:
+    cmp     w22, #CURL_HOST_MAX
+    b.hs    curl_start_bad
+    strb    w0, [x21, x22]
+    add     w22, w22, #1
+    add     x19, x19, #1
+    b       curl_start_host_char
+
+curl_start_host_end:
+    cbz     w22, curl_start_bad
+    strb    wzr, [x21, x22]
+    ladr    x0, curl_host_len
+    str     w22, [x0]
+    ladr    x21, curl_request
+    mov     x0, x21
+    ladr    x1, curl_req_get
+    bl      term_append
+    ldrb    w1, [x19]
+    cmp     w1, #0x2f
+    b.eq    curl_start_path
+    ladr    x1, curl_req_slash
+    bl      term_append
+
+curl_start_path:
+    mov     w22, #0
+
+curl_start_path_char:
+    ldrb    w1, [x19]
+    cbz     w1, curl_start_path_end
+    cmp     w1, #ASCII_SPACE
+    b.eq    curl_start_path_end
+    cmp     w22, #CURL_PATH_MAX
+    b.hs    curl_start_bad
+    strb    w1, [x0], #1
+    add     x19, x19, #1
+    add     w22, w22, #1
+    b       curl_start_path_char
+
+curl_start_path_end:
+    ladr    x1, curl_req_host
+    bl      term_append
+    ladr    x1, curl_host
+    bl      term_append
+    ladr    x1, curl_req_tail
+    bl      term_append
+    sub     x0, x0, x21
+    ladr    x1, curl_request_len
+    str     w0, [x1]
+    ladr    x0, curl_https
+    strb    w20, [x0]
+    ladr    x0, curl_header
+    mov     w1, #1
+    strb    w1, [x0]
+    ladr    x0, curl_status_seen
+    strb    wzr, [x0]
+    ladr    x0, curl_line_len
+    stp     wzr, wzr, [x0]
+    str     wzr, [x0, #8]
+    ladr    x0, curl_state
+    mov     w1, #1
+    strb    w1, [x0]
+    ladr    x0, term_busy
+    strb    w1, [x0]
+    ladr    x0, curl_msg
+    ladr    x1, curl_resolve_msg
+    bl      term_append
+    ladr    x1, curl_host
+    bl      term_append
+    ladr    x1, curl_resolve_tail
+    bl      term_append
+    ladr    x0, curl_msg
+    bl      term_print
+    ladr    x0, curl_host
+    ladr    x1, curl_resolved
+    bl      dns_resolve
+    b       curl_start_done
+
+curl_start_bad:
+    ladr    x1, curl_bad_url_msg
+
+curl_start_fail:
+    mov     x0, x1
+    bl      term_print
+
+curl_start_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+curl_resolved:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     w19, w0
+    ladr    x0, curl_state
+    ldrb    w0, [x0]
+    cbz     w0, curl_resolved_done
+    ladr    x1, curl_dnsfail_msg
+    cbz     w19, curl_resolved_fail
+    ladr    x0, curl_https
+    ldrb    w20, [x0]
+    cbz     w20, curl_resolved_msg
+    ladr    x9, tls_ctx
+    ldrb    w0, [x9, #TLS_STATE]
+    sub     w0, w0, #TLS_STATE_HELLO_SENT
+    cmp     w0, #(TLS_STATE_CONNECTED - TLS_STATE_HELLO_SENT)
+    ladr    x1, curl_tlsbusy_msg
+    b.ls    curl_resolved_fail
+
+curl_resolved_msg:
+    ladr    x0, curl_msg
+    ladr    x1, curl_connect_msg
+    bl      term_append
+    mov     w1, w19
+    bl      term_put_ip
+    cbz     w20, curl_resolved_print
+    ladr    x1, curl_https_tail
+    bl      term_append
+
+curl_resolved_print:
+    ladr    x0, curl_msg
+    bl      term_print
+    cbnz    w20, curl_resolved_tls
+    mov     w0, w19
+    mov     w1, #HTTP_PORT
+    ladr    x2, curl_http_on_data
+    bl      tcp_open
+    ladr    x1, curl_conn_fail_msg
+    cbz     x0, curl_resolved_fail
+    ladr    x1, curl_request
+    ladr    x2, curl_request_len
+    ldr     w2, [x2]
+    bl      tcp_write
+    b       curl_resolved_done
+
+curl_resolved_tls:
+    ladr    x0, curl_host
+    ladr    x1, curl_host_len
+    ldr     w1, [x1]
+    ladr    x2, curl_request
+    ladr    x3, curl_request_len
+    ldr     w3, [x3]
+    ladr    x4, curl_tls_app
+    bl      tls_configure
+    mov     w0, w19
+    mov     w1, #HTTPS_PORT
+    bl      tls_connect
+    ladr    x1, curl_conn_fail_msg
+    cbnz    x0, curl_resolved_done
+
+curl_resolved_fail:
+    mov     x0, x1
+    bl      term_print
+    bl      curl_abort
+
+curl_resolved_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+curl_http_on_data:
+    cbz     w2, curl_finish
+    b       curl_feed
+
+curl_tls_app:
+    cbz     w2, curl_finish
+    b       curl_feed
+
+curl_feed:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     x19, x1
+    mov     w20, w2
+    ladr    x0, curl_state
+    ldrb    w0, [x0]
+    cbz     w0, curl_feed_done
+
+curl_feed_byte:
+    cbz     w20, curl_feed_done
+    ldrb    w21, [x19], #1
+    sub     w20, w20, #1
+    ladr    x9, curl_header
+    ldrb    w9, [x9]
+    cbnz    w9, curl_feed_char
+    ladr    x9, curl_bytes
+    ldr     w10, [x9]
+    add     w10, w10, #1
+    str     w10, [x9]
+
+curl_feed_char:
+    cmp     w21, #ASCII_CR
+    b.eq    curl_feed_byte
+    cmp     w21, #ASCII_LF
+    b.eq    curl_feed_eol
+    cmp     w21, #0x09
+    mov     w9, #ASCII_SPACE
+    csel    w21, w9, w21, eq
+    sub     w9, w21, #ASCII_SPACE
+    cmp     w9, #(ASCII_DEL - ASCII_SPACE)
+    mov     w9, #0x3f
+    csel    w21, w9, w21, hs
+    ladr    x9, curl_line_len
+    ldr     w10, [x9]
+    cmp     w10, #TERM_WRAP
+    b.hs    curl_feed_wrap
+    ladr    x11, curl_line
+    strb    w21, [x11, x10]
+    add     w10, w10, #1
+    str     w10, [x9]
+    b       curl_feed_byte
+
+curl_feed_wrap:
+    bl      curl_line_end
+    ladr    x11, curl_line
+    strb    w21, [x11]
+    ladr    x9, curl_line_len
+    mov     w10, #1
+    str     w10, [x9]
+    b       curl_feed_byte
+
+curl_feed_eol:
+    bl      curl_line_end
+    b       curl_feed_byte
+
+curl_feed_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+curl_line_end:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x9, curl_line_len
+    ldr     w10, [x9]
+    str     wzr, [x9]
+    ladr    x11, curl_line
+    strb    wzr, [x11, x10]
+    ladr    x0, curl_header
+    ldrb    w1, [x0]
+    cbz     w1, curl_line_end_print
+    cbnz    w10, curl_line_end_header
+    strb    wzr, [x0]
+    b       curl_line_end_done
+
+curl_line_end_header:
+    ladr    x0, curl_status_seen
+    ldrb    w1, [x0]
+    cbnz    w1, curl_line_end_done
+    mov     w1, #1
+    strb    w1, [x0]
+
+curl_line_end_print:
+    ladr    x0, curl_lines
+    ldr     w1, [x0]
+    add     w2, w1, #1
+    str     w2, [x0]
+    cmp     w1, #CURL_MAX_LINES
+    b.hi    curl_line_end_done
+    ladr    x0, curl_cut_msg
+    b.eq    curl_line_end_out
+    ladr    x0, curl_line
+
+curl_line_end_out:
+    bl      term_print
+
+curl_line_end_done:
+    ldp     x29, x30, [sp], #16
+    ret
+
+curl_abort:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, curl_state
+    strb    wzr, [x0]
+    b       curl_finish_prompt
+
+curl_finish:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, curl_state
+    ldrb    w1, [x0]
+    cbz     w1, curl_finish_done
+    ladr    x0, curl_line_len
+    ldr     w1, [x0]
+    cbz     w1, curl_finish_report
+    bl      curl_line_end
+
+curl_finish_report:
+    ladr    x0, curl_state
+    strb    wzr, [x0]
+    ladr    x0, curl_status_seen
+    ldrb    w0, [x0]
+    cbnz    w0, curl_finish_bytes
+    ladr    x0, curl_noanswer_msg
+    bl      term_print
+    b       curl_finish_prompt
+
+curl_finish_bytes:
+    ladr    x0, curl_msg
+    ladr    x1, curl_done_msg
+    bl      term_append
+    ladr    x1, curl_bytes
+    ldr     w1, [x1]
+    bl      term_put_dec
+    ladr    x1, curl_done_tail
+    bl      term_append
+    ladr    x0, curl_msg
+    bl      term_print
+
+curl_finish_prompt:
+    ladr    x0, term_busy
+    strb    wzr, [x0]
+    bl      term_prompt
+    ladr    x0, term_dirty
+    mov     w1, #1
+    strb    w1, [x0]
+
+curl_finish_done:
+    ldp     x29, x30, [sp], #16
     ret
 
 term_draw:
@@ -17329,8 +18005,8 @@ tls_chain_unsupported:
 tls_chain_parsed:
     cbz     w23, tls_chain_short
     ladr    x0, tls_chain_infos
-    ladr    x1, tls_host
-    mov     w2, #(tls_host_end - tls_host)
+    ladr    x9, tls_params
+    ldp     x1, x2, [x9, #TLSP_HOST]
     bl      x509_san_match
     cbz     w0, tls_chain_name
     ladr    x0, tls_chain_infos
@@ -19282,6 +19958,58 @@ x509_test_cert:
 x509_test_cert_end:
 term_prompt_text:
     .ascii  "asmOS> "
+term_cmd_curl:
+    .ascii  "curl "
+term_cmd_help:
+    .asciz  "hilfe"
+term_help_1:
+    .asciz  "curl http://host/pfad    Seite ueber HTTP holen"
+term_help_2:
+    .asciz  "curl https://host/pfad   Seite ueber TLS 1.3 holen, Kette bis ROOT.DER"
+term_help_3:
+    .asciz  "hilfe                    diese Liste"
+term_unknown_msg:
+    .asciz  "unbekannter Befehl, hilfe zeigt die Befehle"
+curl_http_prefix:
+    .ascii  "http://"
+curl_https_prefix:
+    .ascii  "https://"
+curl_req_get:
+    .asciz  "GET "
+curl_req_slash:
+    .asciz  "/"
+curl_req_host:
+    .asciz  " HTTP/1.0\r\nHost: "
+curl_req_tail:
+    .asciz  "\r\nUser-Agent: asmOS\r\nConnection: close\r\n\r\n"
+curl_resolve_msg:
+    .asciz  "curl: loese "
+curl_resolve_tail:
+    .asciz  " auf"
+curl_connect_msg:
+    .asciz  "curl: verbinde mit "
+curl_https_tail:
+    .asciz  ", TLS 1.3"
+curl_done_msg:
+    .asciz  "curl: fertig, "
+curl_done_tail:
+    .asciz  " Byte Inhalt"
+curl_cut_msg:
+    .asciz  "curl: Ausgabe gekuerzt"
+curl_noanswer_msg:
+    .asciz  "curl: Verbindung ohne Antwort beendet, Details im Netzwerkfenster"
+curl_bad_url_msg:
+    .asciz  "curl: Adresse ungueltig, erlaubt sind a-z 0-9 . - und ein Pfad ohne Leerzeichen"
+curl_nonet_msg:
+    .asciz  "curl: Netz ohne Adresse"
+curl_dnsbusy_msg:
+    .asciz  "curl: Namensaufloesung laeuft noch, bitte gleich erneut"
+curl_dnsfail_msg:
+    .asciz  "curl: Name nicht aufgeloest"
+curl_conn_fail_msg:
+    .asciz  "curl: Verbindung nicht moeglich, Details im Netzwerkfenster"
+curl_tlsbusy_msg:
+    .asciz  "curl: TLS-Sitzung belegt, bitte gleich erneut"
 netlog_intro_1:
     .asciz  "Schnittstelle virtio-net, Kabel (kein WLAN unter QEMU)"
 netlog_intro_2:
@@ -19898,6 +20626,10 @@ dns_question:
 .balign 8
 dns_target:
     .space  24
+dns_name:
+    .space  8
+dns_handler:
+    .space  8
 .balign 16
 rng_base:
     .space  8
@@ -19921,6 +20653,40 @@ http_line:
 .balign 4
 tls_line:
     .space  (4 + TCP_LINE_MAX)
+.balign 8
+tls_params:
+    .space  TLSP_SIZE
+term_busy:
+    .space  1
+curl_state:
+    .space  1
+curl_https:
+    .space  1
+curl_header:
+    .space  1
+curl_status_seen:
+    .space  1
+.balign 4
+curl_host_len:
+    .space  4
+curl_request_len:
+    .space  4
+curl_line_len:
+    .space  4
+curl_bytes:
+    .space  4
+curl_lines:
+    .space  4
+term_cmd:
+    .space  TERM_STRIDE
+curl_host:
+    .space  (CURL_HOST_MAX + 1)
+curl_request:
+    .space  CURL_REQ_MAX
+curl_line:
+    .space  TERM_STRIDE
+curl_msg:
+    .space  TERM_STRIDE
 win_btn_armed:
     .space  1
 crypto_ready:
