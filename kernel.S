@@ -237,6 +237,7 @@
 .equ ICMP_ECHO_REPLY,       0
 .equ ICMP_ECHO_REQUEST,     8
 .equ ICMP_PAYLOAD,          32
+.equ ICMP_ECHO_ID,          0x0a5b
 .equ NET_IP_BROADCAST,      0xffffffff
 .equ IP_PROTO_UDP,          17
 .equ IP_IHL_MASK,           0x0f
@@ -465,7 +466,9 @@
 .equ X509_NOT_AFTER,        112
 .equ X509_FLAGS,            120
 .equ X509_PATHLEN,          124
-.equ X509_INFO_SIZE,        128
+.equ X509_SIGALG,           128
+.equ X509_SIGALG_LEN,       136
+.equ X509_INFO_SIZE,        144
 .equ X509_F_CA,             1
 .equ X509_F_PATHLEN,        2
 .equ X509_F_KU,             4
@@ -9007,6 +9010,9 @@ rng_get_ok:
     b       rng_get_done
 
 rng_get_fail:
+    ladr    x0, rng_buf
+    mov     w1, #RNG_BUF_SIZE
+    bl      mem_wipe
     mov     w0, #1
 
 rng_get_done:
@@ -9176,7 +9182,7 @@ net_ping_send:
     strh    wzr, [x20, #ICMP_CHECKSUM]
     mov     x0, x20
     mov     x1, #ICMP_ID
-    mov     w2, #0x0a5b
+    mov     w2, #ICMP_ECHO_ID
     bl      mem_write16be
     mov     x0, x20
     mov     x1, #ICMP_SEQ
@@ -9277,6 +9283,25 @@ net_ip_handle_proto:
     cbnz    w0, net_ip_handle_bad_icmp
     ldrb    w0, [x19, x21]
     cmp     w0, #ICMP_ECHO_REPLY
+    b.ne    net_ip_handle_done
+    add     x0, x19, x21
+    ldrb    w1, [x0, #ICMP_CODE]
+    cbnz    w1, net_ip_handle_done
+    mov     x1, #ICMP_ID
+    bl      mem_read16be
+    mov     w1, #ICMP_ECHO_ID
+    cmp     w0, w1
+    b.ne    net_ip_handle_done
+    add     x0, x19, x21
+    mov     x1, #ICMP_SEQ
+    bl      mem_read16be
+    cmp     w0, #1
+    b.ne    net_ip_handle_done
+    ladr    x0, net_last_src
+    ldr     w0, [x0]
+    ladr    x1, net_gw
+    ldr     w1, [x1]
+    cmp     w0, w1
     b.ne    net_ip_handle_done
     ladr    x0, net_state
     ldrb    w1, [x0]
@@ -12684,6 +12709,11 @@ tls_connect:
 tls_connect_entropy:
     ladr    x0, tls_entropy_msg
     bl      uart_puts
+
+tls_connect_wipe:
+    add     x0, x19, #TLS_PRIV
+    mov     w1, #(TLS_CTX_SIZE - TLS_PRIV)
+    bl      mem_wipe
     mov     x0, #0
     b       tls_connect_done
 
@@ -12708,7 +12738,7 @@ tls_connect_allowed:
     mov     w1, w21
     ladr    x2, tls_on_data
     bl      tcp_open
-    cbz     x0, tls_connect_done
+    cbz     x0, tls_connect_wipe
     str     x0, [x19, #TLS_TCB]
     bl      tls_build_client_hello
     mov     w20, w0
@@ -12903,7 +12933,7 @@ tls_process_record:
     ladr    x19, tls_ctx
     ldrb    w0, [x20]
     cmp     w0, #TLS_REC_CCS
-    b.eq    tls_process_record_done
+    b.eq    tls_process_record_ccs
     cmp     w0, #TLS_REC_ALERT
     b.eq    tls_process_record_alert
     cmp     w0, #TLS_REC_HANDSHAKE
@@ -12967,6 +12997,22 @@ tls_process_record_strip:
     b.eq    tls_process_record_inner_app
     cmp     w0, #TLS_REC_ALERT
     b.eq    tls_process_record_inner_alert
+    b       tls_process_record_unexpected
+
+tls_process_record_ccs:
+    ldrb    w0, [x19, #TLS_STATE]
+    sub     w0, w0, #TLS_STATE_HELLO_SENT
+    cmp     w0, #1
+    b.hi    tls_process_record_unexpected
+    cmp     w21, #1
+    b.ne    tls_process_record_unexpected
+    ldrb    w0, [x20, #5]
+    cmp     w0, #1
+    b.ne    tls_process_record_unexpected
+    mov     w0, #0x10
+    mov     w1, #0
+    bl      tls_hs_mark
+    cbnz    w0, tls_process_record_unexpected
     b       tls_process_record_done
 
 tls_process_record_inner_hs:
@@ -13329,14 +13375,20 @@ tls_parse_server_hello:
     add     x0, x20, #38
     cmp     x0, x21
     b.hi    tls_parse_sh_short
+    ldrb    w0, [x20]
+    ldrb    w1, [x20, #1]
+    orr     w0, w1, w0, lsl #8
+    mov     w1, #TLS_VERSION_12
+    cmp     w0, w1
+    b.ne    tls_parse_sh_bad
     add     x0, x20, #2
     ladr    x1, tls_hrr_random
     mov     w2, #32
     bl      mem_equal
     cbnz    w0, tls_parse_sh_hrr
     ldrb    w0, [x20, #34]
+    cbnz    w0, tls_parse_sh_bad
     add     x20, x20, #35
-    add     x20, x20, x0
     add     x0, x20, #5
     cmp     x0, x21
     b.hi    tls_parse_sh_short
@@ -13346,14 +13398,15 @@ tls_parse_server_hello:
     mov     w1, #TLS_SUITE_AES128_SHA256
     cmp     w0, w1
     b.ne    tls_parse_sh_suite
+    ldrb    w0, [x20, #2]
+    cbnz    w0, tls_parse_sh_bad
     ldrb    w0, [x20, #3]
     ldrb    w1, [x20, #4]
     orr     w0, w1, w0, lsl #8
     add     x20, x20, #5
     add     x1, x20, x0
     cmp     x1, x21
-    b.hi    tls_parse_sh_short
-    mov     x21, x1
+    b.ne    tls_parse_sh_bad
 
 tls_parse_sh_ext:
     add     x0, x20, #4
@@ -13384,10 +13437,14 @@ tls_parse_sh_versions:
     mov     w2, #TLS_VERSION_13
     cmp     w0, w2
     b.ne    tls_parse_sh_version
+    tst     w22, #1
+    b.ne    tls_parse_sh_bad
     orr     w22, w22, #1
     b       tls_parse_sh_next
 
 tls_parse_sh_key_share:
+    tst     w22, #2
+    b.ne    tls_parse_sh_bad
     cmp     w1, #36
     b.ne    tls_parse_sh_short
     ldrb    w0, [x20]
@@ -13395,6 +13452,11 @@ tls_parse_sh_key_share:
     orr     w0, w2, w0, lsl #8
     cmp     w0, #TLS_GROUP_X25519
     b.ne    tls_parse_sh_group
+    ldrb    w0, [x20, #2]
+    cbnz    w0, tls_parse_sh_bad
+    ldrb    w0, [x20, #3]
+    cmp     w0, #32
+    b.ne    tls_parse_sh_bad
     add     x0, x20, #4
     add     x1, x19, #TLS_SERVER_PUB
     mov     w2, #32
@@ -13411,10 +13473,16 @@ tls_parse_sh_next:
     b       tls_parse_sh_ext
 
 tls_parse_sh_end:
+    cmp     x20, x21
+    b.ne    tls_parse_sh_bad
     cmp     w22, #3
     b.ne    tls_parse_sh_missing
     mov     w0, #0
     b       tls_parse_sh_done
+
+tls_parse_sh_bad:
+    ladr    x0, tls_sh_bad_msg
+    b       tls_parse_sh_fail
 
 tls_parse_sh_hrr:
     ladr    x0, tls_hrr_msg
@@ -14207,7 +14275,7 @@ tls_cert_verify:
     orr     w22, w1, w0, lsl #8
     add     w0, w22, #4
     cmp     w0, w21
-    b.hi    tls_cert_verify_short
+    b.ne    tls_cert_verify_short
     add     x0, x20, #4
     mov     x1, x22
     add     x2, sp, #48
@@ -16081,6 +16149,8 @@ x509_parse_serial:
     bl      asn1_expect
     tbnz    w2, #31, x509_parse_fail
     mov     x24, x3
+    str     x0, [x19, #X509_SIGALG]
+    str     x1, [x19, #X509_SIGALG_LEN]
     add     x1, x0, x1
     mov     w2, #ASN1_OID
     bl      asn1_expect
@@ -16200,7 +16270,16 @@ x509_parse_sig:
     mov     x1, x23
     bl      asn1_next
     tbnz    w2, #31, x509_parse_fail
-    mov     x0, x3
+    cmp     w2, #ASN1_SEQUENCE
+    b.ne    x509_parse_fail
+    ldr     x2, [x19, #X509_SIGALG_LEN]
+    cmp     x1, x2
+    b.ne    x509_parse_fail
+    mov     x24, x3
+    ldr     x1, [x19, #X509_SIGALG]
+    bl      mem_equal
+    cbz     w0, x509_parse_fail
+    mov     x0, x24
     mov     x1, x23
     mov     w2, #ASN1_BIT_STRING
     bl      asn1_expect
@@ -18970,6 +19049,8 @@ tls_alert_len_msg:
     .asciz  "Alert mit falscher Laenge"
 tls_close_notify:
     .byte   1, 0
+tls_sh_bad_msg:
+    .asciz  "ServerHello-Felder ungueltig"
 crypto_ready_msg:
     .asciz  "KRYPTO BEREIT\n"
 crypto_blocked_msg:
