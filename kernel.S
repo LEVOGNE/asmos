@@ -793,6 +793,8 @@
 .equ TERM_STRIDE,           100
 .equ TERM_PROMPT_LEN,       7
 .equ NETLOG_ROWS,           24
+.equ NETLOG_ASCENT,         30
+.equ NETLOG_BAND_Y,         (WIN_BORDER + WIN_TITLEBAR_H + FILES_PAD_Y - NETLOG_ASCENT)
 .equ GUI_LINE_MAX,          96
 .equ KEY_RING_SIZE,         32
 .equ KEY_RING_MASK,         31
@@ -1182,21 +1184,6 @@ boot_memory_ready:
 .if WIN_SELFTEST
     bl      win_selftest
 .endif
-    mov     x0, #WIN_MAX
-    mov     w1, #ANIM_PROP_SCREEN
-    mov     x2, #0
-    mov     x3, #1
-    lsl     x3, x3, #ANIM_SHIFT
-    mov     w4, #SCREEN_FADE_MS
-    mov     w5, #ANIM_EASE_QUAD_OUT
-    bl      anim_start
-    cbnz    x0, boot_fade_ok
-    ladr    x0, fb_fade
-    mov     w1, #FADE_ONE
-    str     w1, [x0]
-    bl      fb_present_all
-
-boot_fade_ok:
     bl      cursor_render
     bl      cursor_show
     bl      cursor_present
@@ -1229,6 +1216,7 @@ boot_fade_ok:
     msr     daifclr, #DAIF_I
     bl      net_init
     bl      crypto_selftest
+    bl      desktop_start
 
 .if BOOT_SELFTEST
     brk     #0
@@ -4474,6 +4462,30 @@ win_selftest:
 .endif
     ldp     x29, x30, [sp], #16
     ret
+
+desktop_start:
+    stp     x29, x30, [sp, #-16]!
+    mov     x0, #WIN_MAX
+    mov     w1, #ANIM_PROP_SCREEN
+    mov     x2, #0
+    mov     x3, #1
+    lsl     x3, x3, #ANIM_SHIFT
+    mov     w4, #SCREEN_FADE_MS
+    mov     w5, #ANIM_EASE_QUAD_OUT
+    bl      anim_start
+    cbz     x0, desktop_start_now
+    ladr    x1, net_start
+    bl      anim_set_done
+    ldp     x29, x30, [sp], #16
+    ret
+
+desktop_start_now:
+    ladr    x0, fb_fade
+    mov     w1, #FADE_ONE
+    str     w1, [x0]
+    bl      fb_present_all
+    ldp     x29, x30, [sp], #16
+    b       net_start
 
 win_demo:
     stp     x29, x30, [sp, #-16]!
@@ -8016,13 +8028,17 @@ console_drain_repaint:
     bl      cursor_hide
     bl      win_repaint_render
     bl      cursor_show
+    ladr    x0, fb_fade_dirty
+    bl      console_take_flag
+    cbnz    w0, console_drain_fade
     bl      win_repaint_present
     bl      cursor_present
-    ladr    x0, fb_fade_dirty
-    ldrb    w1, [x0]
-    cbz     w1, console_drain_blink
-    strb    wzr, [x0]
+    b       console_drain_blink
+
+console_drain_fade:
+    bl      dirty_reset
     bl      fb_present_all
+    bl      cursor_present
 console_drain_blink:
     ladr    x0, console_blink_pending
     bl      console_take_flag
@@ -8384,7 +8400,6 @@ net_init_mac:
     bl      net_put_mac
     ladr    x0, uart_newline
     bl      uart_puts
-    bl      dhcp_discover
     b       net_init_done
 
 net_init_fail:
@@ -8404,6 +8419,12 @@ net_init_missing:
 net_init_done:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
+    ret
+
+net_start:
+    ladr    x0, net_base
+    ldr     x0, [x0]
+    cbnz    x0, dhcp_discover
     ret
 
 net_put_mac:
@@ -14848,9 +14869,15 @@ gui_refresh_loop:
     mov     w0, w20
     blr     x9
     cbz     w0, gui_refresh_next
+    cmp     w0, #1
     mov     w0, w20
-    bl      win_mark
     mov     w19, #1
+    b.ne    gui_refresh_blit
+    bl      win_mark
+    b       gui_refresh_next
+
+gui_refresh_blit:
+    bl      win_dirty_rect
 
 gui_refresh_next:
     add     w20, w20, #1
@@ -15054,12 +15081,120 @@ netlog_init:
     bl      netlog_add
     ladr    x0, netlog_dirty
     strb    wzr, [x0]
+    ladr    x0, netlog_new
+    stp     wzr, wzr, [x0]
     ldp     x29, x30, [sp], #16
     ret
 
-netlog_take_dirty:
+netlog_refresh:
+    stp     x29, x30, [sp, #-96]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    str     x27, [sp, #80]
+    mov     w19, w0
     ladr    x0, netlog_dirty
-    b       console_take_flag
+    bl      console_take_flag
+    cbz     w0, netlog_refresh_done
+    ladr    x9, netlog_new
+    ldp     w21, w22, [x9]
+    stp     wzr, wzr, [x9]
+    ladr    x20, win_list
+    mov     x9, #WIN_SIZE
+    madd    x20, x19, x9, x20
+    mov     w0, #1
+    ldr     x23, [x20, #WIN_BUF]
+    cbz     x23, netlog_refresh_done
+    ldrb    w9, [x20, #WIN_BUF_DIRTY]
+    cbnz    w9, netlog_refresh_done
+    cmp     w21, #NETLOG_ROWS
+    b.hs    netlog_refresh_done
+    mov     w0, #0
+    cbz     w21, netlog_refresh_done
+    ladr    x0, fb_clip
+    ldp     x24, x25, [x0]
+    mov     x0, x23
+    ldr     w1, [x20, #WIN_W]
+    lsl     x1, x1, #2
+    bl      fb_target_set
+    mov     w0, #WIN_BORDER
+    mov     w1, #(WIN_BORDER + WIN_TITLEBAR_H)
+    ldr     w2, [x20, #WIN_W]
+    sub     w2, w2, #(WIN_BORDER * 2)
+    ldr     w3, [x20, #WIN_H_FULL]
+    sub     w3, w3, #(WIN_BORDER * 2 + WIN_TITLEBAR_H)
+    bl      fb_clip_set
+    ladr    x0, win_color_fade
+    strb    wzr, [x0]
+    ladr    x0, netlog_count
+    ldr     w26, [x0]
+    sub     w27, w26, w21
+    cbz     w22, netlog_refresh_fill
+    cbz     w27, netlog_refresh_fill
+    ldr     w4, [x20, #WIN_W]
+    lsl     x4, x4, #2
+    mov     x9, #NETLOG_BAND_Y
+    mul     x9, x9, x4
+    add     x0, x23, x9
+    add     x0, x0, #(WIN_BORDER * FB_BPP)
+    mov     w9, #FILES_LINE_H
+    mul     w10, w22, w9
+    mul     x10, x10, x4
+    add     x1, x0, x10
+    ldr     w2, [x20, #WIN_W]
+    sub     w2, w2, #(WIN_BORDER * 2)
+    mul     w3, w27, w9
+    mov     x5, x4
+    bl      fb_copy
+
+netlog_refresh_fill:
+    ldr     x0, =COLOR_WIN_BODY
+    bl      win_fade_color
+    mov     x4, x0
+    mov     w9, #FILES_LINE_H
+    mul     w1, w27, w9
+    add     w1, w1, #NETLOG_BAND_Y
+    mov     w0, #WIN_BORDER
+    ldr     w2, [x20, #WIN_W]
+    sub     w2, w2, #(WIN_BORDER * 2)
+    mul     w3, w21, w9
+    bl      fb_fill_rect
+    ldr     x0, =COLOR_FILES_TEXT
+    bl      win_fade_color
+    mov     x21, x0
+
+netlog_refresh_row:
+    cmp     w27, w26
+    b.hs    netlog_refresh_drawn
+    mov     w9, #FILES_LINE_H
+    mul     w1, w27, w9
+    add     w1, w1, #(WIN_BORDER + WIN_TITLEBAR_H + FILES_PAD_Y)
+    mov     w0, #(WIN_BORDER + FILES_PAD_X)
+    ladr    x2, netlog_buf
+    mov     w9, #TERM_STRIDE
+    madd    x2, x27, x9, x2
+    mov     w3, #FILES_TEXT_SIZE
+    mov     x4, x21
+    bl      font_text
+    add     w27, w27, #1
+    b       netlog_refresh_row
+
+netlog_refresh_drawn:
+    bl      fb_target_screen
+    mov     x0, x24
+    mov     x1, x25
+    bl      fb_clip_restore
+    mov     w0, #2
+
+netlog_refresh_done:
+    ldr     x27, [sp, #80]
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #96
+    ret
 
 netlog_add:
     stp     x29, x30, [sp, #-32]!
@@ -15074,9 +15209,17 @@ netlog_add:
     ladr    x1, netlog_buf
     mov     w2, #((NETLOG_ROWS - 1) * TERM_STRIDE)
     bl      mem_copy
+    ladr    x0, netlog_new
+    ldr     w2, [x0, #4]
+    add     w2, w2, #1
+    str     w2, [x0, #4]
     mov     w1, #(NETLOG_ROWS - 1)
 
 netlog_add_row:
+    ladr    x0, netlog_new
+    ldr     w2, [x0]
+    add     w2, w2, #1
+    str     w2, [x0]
     ladr    x0, netlog_count
     add     w2, w1, #1
     str     w2, [x0]
@@ -19150,7 +19293,7 @@ win_class_base:
 win_class_term:
     .quad   win_class_base, term_draw, term_input, term_focus, term_take_dirty, 0
 win_class_net:
-    .quad   win_class_base, netlog_draw, 0, 0, netlog_take_dirty, 0
+    .quad   win_class_base, netlog_draw, 0, 0, netlog_refresh, 0
 win_class_files:
     .quad   win_class_base, files_draw, 0, 0, 0, 0
 icon_x:
@@ -19519,6 +19662,9 @@ term_col:
     .space  4
 netlog_count:
     .space  4
+.balign 4
+netlog_new:
+    .space  8
 gui_line_len:
     .space  4
 gui_line:
