@@ -267,6 +267,9 @@
 .equ DHCP_OPT_ROUTER,       3
 .equ DHCP_OPT_DNS,          6
 .equ DHCP_OPT_REQ_IP,       50
+.equ DHCP_OPT_LEASE,        51
+.equ DHCP_CIADDR,           12
+.equ DHCP_NAK,              6
 .equ DHCP_OPT_MSG_TYPE,     53
 .equ DHCP_OPT_SERVER_ID,    54
 .equ DHCP_OPT_PARAM_LIST,   55
@@ -8086,6 +8089,7 @@ console_drain_blink:
     bl      console_take_flag
     cbz     w0, console_drain_done
     bl      pmm_stack_check
+    bl      dhcp_lease_check
     bl      console_draw_cursor
 console_drain_done:
     ldp     x19, x20, [sp, #16]
@@ -9540,6 +9544,19 @@ dhcp_build_clear:
     strb    w21, [x0], #1
     cmp     w21, #DHCP_REQUEST
     b.ne    dhcp_build_params
+    ladr    x1, dhcp_renewing
+    ldrb    w1, [x1]
+    cbz     w1, dhcp_build_select
+    ladr    x1, net_ip
+    ldr     w2, [x1]
+    mov     x1, #DHCP_CIADDR
+    stp     x0, x19, [sp, #-16]!
+    mov     x0, x19
+    bl      mem_write32be
+    ldp     x0, x19, [sp], #16
+    b       dhcp_build_params
+
+dhcp_build_select:
     mov     w1, #DHCP_OPT_REQ_IP
     strb    w1, [x0], #1
     mov     w1, #4
@@ -9586,6 +9603,69 @@ dhcp_build_params:
     ldp     x29, x30, [sp], #48
     ret
 
+dhcp_lease_arm:
+    ladr    x0, dhcp_lease_new
+    ldr     w1, [x0]
+    ladr    x2, dhcp_renew_at
+    stp     xzr, xzr, [x2]
+    cbz     w1, dhcp_lease_arm_done
+    cmn     w1, #1
+    b.eq    dhcp_lease_arm_done
+    mrs     x3, cntfrq_el0
+    cbz     x3, dhcp_lease_arm_done
+    mrs     x4, cntvct_el0
+    mul     x5, x1, x3
+    add     x6, x4, x5
+    lsr     x5, x5, #1
+    add     x5, x4, x5
+    stp     x5, x6, [x2]
+
+dhcp_lease_arm_done:
+    ret
+
+dhcp_lease_check:
+    ladr    x0, dhcp_renew_at
+    ldp     x1, x2, [x0]
+    cbz     x2, dhcp_lease_arm_done
+    mrs     x3, cntvct_el0
+    cmp     x3, x2
+    b.hs    dhcp_lease_expired
+    cbz     x1, dhcp_lease_arm_done
+    cmp     x3, x1
+    b.lo    dhcp_lease_arm_done
+    ladr    x4, dhcp_state
+    ldrb    w5, [x4]
+    cmp     w5, #DHCP_STATE_BOUND
+    b.ne    dhcp_lease_arm_done
+    str     xzr, [x0]
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, dhcp_renewing
+    mov     w1, #1
+    strb    w1, [x0]
+    ladr    x0, dhcp_tries
+    strb    wzr, [x0]
+    ladr    x0, dhcp_renew_msg
+    bl      uart_puts
+    mov     w0, #DHCP_REQUEST
+    bl      dhcp_build
+    ladr    x0, dhcp_state
+    mov     w1, #DHCP_STATE_REQUEST
+    strb    w1, [x0]
+    ldp     x29, x30, [sp], #16
+    ret
+
+dhcp_lease_expired:
+    stp     xzr, xzr, [x0]
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, dhcp_renewing
+    strb    wzr, [x0]
+    ladr    x0, dhcp_tries
+    strb    wzr, [x0]
+    ladr    x0, dhcp_expired_msg
+    bl      uart_puts
+    ldp     x29, x30, [sp], #16
+    b       dhcp_discover
+
 dhcp_discover:
     stp     x29, x30, [sp, #-16]!
     ladr    x0, net_ip
@@ -9631,8 +9711,19 @@ dhcp_tick_request:
     b       dhcp_tick_done
 
 dhcp_tick_giveup:
+    ladr    x1, dhcp_renewing
+    ldrb    w2, [x1]
+    cbnz    w2, dhcp_tick_giveup_renew
     strb    wzr, [x0]
     ladr    x0, dhcp_timeout_msg
+    bl      uart_puts
+    b       dhcp_tick_done
+
+dhcp_tick_giveup_renew:
+    strb    wzr, [x1]
+    mov     w2, #DHCP_STATE_BOUND
+    strb    w2, [x0]
+    ladr    x0, dhcp_renew_fail_msg
     bl      uart_puts
 
 dhcp_tick_done:
@@ -9683,6 +9774,8 @@ dhcp_handle:
     mov     w22, #0
     mov     w23, #0
     mov     w24, #0
+    ladr    x0, dhcp_lease_new
+    str     wzr, [x0]
     mov     x0, x19
     mov     x1, #DHCP_YIADDR
     bl      mem_read32be
@@ -9727,6 +9820,13 @@ dhcp_handle_opt_ip:
     csel    w23, w0, w23, eq
     cmp     w3, #DHCP_OPT_DNS
     csel    w24, w0, w24, eq
+    cmp     w3, #DHCP_OPT_LEASE
+    b.ne    dhcp_handle_opt_mask
+    ladr    x1, dhcp_lease_new
+    str     w0, [x1]
+    b       dhcp_handle_next
+
+dhcp_handle_opt_mask:
     cmp     w3, #DHCP_OPT_SUBNET
     b.ne    dhcp_handle_next
     ladr    x1, net_mask
@@ -9747,13 +9847,15 @@ dhcp_handle_parsed:
     ldrb    w2, [x1]
     cmp     w21, #DHCP_OFFER
     b.eq    dhcp_handle_offer
-    cmp     w21, #DHCP_ACK
-    b.ne    dhcp_handle_done
     cmp     w2, #DHCP_STATE_REQUEST
     b.ne    dhcp_handle_done
     ladr    x1, dhcp_server
     ldr     w1, [x1]
     cmp     w22, w1
+    b.ne    dhcp_handle_done
+    cmp     w21, #DHCP_NAK
+    b.eq    dhcp_handle_nak
+    cmp     w21, #DHCP_ACK
     b.ne    dhcp_handle_done
     ladr    x1, dhcp_offer
     ldr     w1, [x1]
@@ -9768,6 +9870,23 @@ dhcp_handle_parsed:
     str     w23, [x1]
     ladr    x1, net_dns
     str     w24, [x1]
+    bl      dhcp_lease_arm
+    ladr    x0, dhcp_renewing
+    bl      console_take_flag
+    cbz     w0, dhcp_handle_bound
+    ladr    x0, dhcp_renewed_msg
+    bl      uart_puts
+    b       dhcp_handle_done
+
+dhcp_handle_nak:
+    ladr    x0, dhcp_nak_msg
+    bl      uart_puts
+    ladr    x0, dhcp_renewing
+    strb    wzr, [x0]
+    bl      dhcp_discover
+    b       dhcp_handle_done
+
+dhcp_handle_bound:
     ladr    x0, dhcp_msg
     bl      uart_puts
     ladr    x0, net_ip
@@ -13497,7 +13616,7 @@ tls_parse_sh_ext:
     b.eq    tls_parse_sh_versions
     cmp     w0, #TLS_EXT_KEY_SHARE
     b.eq    tls_parse_sh_key_share
-    b       tls_parse_sh_next
+    b       tls_parse_sh_bad
 
 tls_parse_sh_versions:
     cmp     w1, #2
@@ -14219,6 +14338,12 @@ asn1_next_long:
     sub     w6, w6, #1
     cbnz    w6, asn1_next_long
     sub     x5, x7, x0
+    mov     x6, #0x80
+    mov     x8, #0x100
+    cmp     x5, #3
+    csel    x6, x6, x8, eq
+    cmp     x4, x6
+    b.lo    asn1_next_error
 
 asn1_next_length:
     add     x0, x0, x5
@@ -16537,14 +16662,26 @@ x509_ext_loop:
     tbnz    w2, #31, x509_ext_bad
     mov     x20, x0
     mov     w21, w1
-    mov     x0, x3
+    str     x3, [sp, #72]
+    mov     x0, x23
+    mov     x1, x22
+    mov     x2, x20
+    mov     w3, w21
+    bl      x509_ext_duplicate
+    cbnz    w0, x509_ext_bad
+    ldr     x0, [sp, #72]
     mov     x1, x24
     bl      asn1_next
     tbnz    w2, #31, x509_ext_bad
     mov     w25, #0
     cmp     w2, #ASN1_BOOLEAN
     b.ne    x509_ext_value
+    cmp     x1, #1
+    b.ne    x509_ext_bad
     ldrb    w25, [x0]
+    add     w5, w25, #1
+    tst     w5, #0xfe
+    b.ne    x509_ext_bad
     mov     x0, x3
     mov     x1, x24
     bl      asn1_next
@@ -16590,7 +16727,12 @@ x509_ext_bc:
     tbnz    w2, #31, x509_ext_bad
     cmp     w2, #ASN1_BOOLEAN
     b.ne    x509_ext_bc_len
+    cmp     x1, #1
+    b.ne    x509_ext_bad
     ldrb    w5, [x0]
+    add     w6, w5, #1
+    tst     w6, #0xfe
+    b.ne    x509_ext_bad
     cbz     w5, x509_ext_bc_after
     ldr     w5, [x19, #X509_FLAGS]
     orr     w5, w5, #X509_F_CA
@@ -16695,6 +16837,46 @@ x509_ext_done:
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #80
+    ret
+
+x509_ext_duplicate:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    mov     w22, w3
+
+x509_ext_duplicate_loop:
+    cmp     x19, x20
+    b.hs    x509_ext_duplicate_no
+    mov     x0, x19
+    mov     x1, x20
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_ext_duplicate_no
+    mov     x19, x3
+    add     x1, x0, x1
+    mov     w2, #ASN1_OID
+    bl      asn1_expect
+    tbnz    w2, #31, x509_ext_duplicate_no
+    cmp     x1, x22
+    b.ne    x509_ext_duplicate_loop
+    mov     x1, x21
+    mov     w2, w22
+    bl      mem_equal
+    cbz     w0, x509_ext_duplicate_loop
+    mov     w0, #1
+    b       x509_ext_duplicate_done
+
+x509_ext_duplicate_no:
+    mov     w0, #0
+
+x509_ext_duplicate_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
     ret
 
 x509_issuer_ok:
@@ -18261,6 +18443,16 @@ dhcp_mask_label:
     .asciz  " mask "
 dhcp_timeout_msg:
     .asciz  "DHCP KEINE ANTWORT, Netz ohne Adresse\r\n"
+dhcp_renew_msg:
+    .asciz  "DHCP ERNEUERE LEASE\r\n"
+dhcp_renewed_msg:
+    .asciz  "DHCP LEASE ERNEUERT\r\n"
+dhcp_renew_fail_msg:
+    .asciz  "DHCP ERNEUERUNG OHNE ANTWORT, Lease laeuft weiter\r\n"
+dhcp_expired_msg:
+    .asciz  "DHCP LEASE ABGELAUFEN, neue Anfrage\r\n"
+dhcp_nak_msg:
+    .asciz  "DHCP NAK vom Server, neue Anfrage\r\n"
 net_dot:
     .asciz  "."
 dns_msg:
@@ -19581,6 +19773,13 @@ dhcp_xid:
     .space  4
 dhcp_timer:
     .space  4
+dhcp_lease_new:
+    .space  4
+dhcp_renewing:
+    .space  1
+.balign 8
+dhcp_renew_at:
+    .space  16
 dns_timer:
     .space  4
 dns_result:
