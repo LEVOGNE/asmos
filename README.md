@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-65.352%20Byte-brightgreen?style=flat-square" alt="65352 Byte">
+<img src="https://img.shields.io/badge/Kernel-67.904%20Byte-brightgreen?style=flat-square" alt="67904 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>65.352&nbsp;Byte</b> groß, also <b>64&nbsp;KB</b>.<br>
+Das fertige System ist <b>67.904&nbsp;Byte</b> groß, also <b>66&nbsp;KB</b>.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -117,7 +117,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>432 KB · 17562 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>444 KB · 18105 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -146,11 +146,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 17562 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 18105 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **1779 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **1829 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -180,7 +180,7 @@ In `kernel.S` stecken **1779 Sprungmarken**. Jede gehört zu einem Zuständigkei
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **65.352 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
+| **`kernel.bin`** | **67.904 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt |
 | `kernel.elf` | 143 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -350,10 +350,10 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 440 KB in drei Dateien |
-| Zeilen Assembler | 17562 |
-| Sprungmarken | 1779 |
-| **Fertiges Betriebssystem** | **65.352 Byte** |
+| Eigener Quelltext | 452 KB in drei Dateien |
+| Zeilen Assembler | 18105 |
+| Sprungmarken | 1829 |
+| **Fertiges Betriebssystem** | **67.904 Byte** |
 | Speicherbedarf im Betrieb | 64,6 MB: zwei Bildpuffer je 23,4 MB, 14,6 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 98 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -651,6 +651,23 @@ Jetzt liest der Kernel beim Start aus dem Device Tree, welcher Controller verbau
 | Größe des fertigen Systems | 49.106 Byte | 49.597 Byte (+491) |
 
 Das Bild ist byteweise gleich der Referenz. Der Raspberry Pi 5 hat einen GICv2 (GIC-400), der bisherige Pfad bleibt also der wichtigere; der GICv3-Pfad ist die Eintrittskarte für schnelle Läufe auf dem Mac und für spätere Boards mit GICv3.
+
+### Stand 15.09.2026, einundzwanzigste Runde: die Uhr und der Gültigkeitszeitraum
+
+Ein Zertifikat gilt nur zwischen zwei Zeitpunkten. Um das zu prüfen, braucht das System eine Uhr, und die `virt`-Maschine hat eine: den PL031 von ARM, eine Echtzeituhr, die in einem Register die Sekunden seit dem 1. Januar 1970 (UTC) liefert. Der Kernel sucht sie wie den Interrupt-Controller im Device Tree (Knoten `pl031`, Eigenschaft `reg`) statt eine Adresse fest einzutragen, und meldet beim Start `RTC pl031 an 0x0000000009010000, Zeit 2026-09-15 02:45:07 UTC`. Fehlt der Knoten, sagt er das, und jede TLS-Verbindung scheitert dann mit `keine Uhr, Gueltigkeit nicht pruefbar`, denn eine Kette ohne Zeitprüfung wäre nur halb geprüft.
+
+Dazu kam die Datumsrechnung in beide Richtungen: aus Jahr, Monat, Tag, Stunde, Minute, Sekunde die Sekundenzahl und zurück, nach dem bekannten Verfahren mit 400-Jahre-Zyklen, das Schaltjahre ohne Tabellen richtig macht. Sechs Vektoren beim Start, darunter der 29. Februar 2000, die 32-Bit-Grenze am 19. Januar 2038 und der 1. März 2100 (2100 ist kein Schaltjahr), alle gegen Pythons `calendar.timegm` gerechnet, jeweils hin und zurück. Der Zertifikatsparser liest `notBefore` und `notAfter` als UTCTime (`JJMMTTHHMMSSZ`, Jahre ab 50 gelten als 19xx) oder GeneralizedTime (`JJJJMMTTHHMMSSZ`) und speichert beide als Sekundenzahl; die Kettenprüfung vergleicht jedes Glied und die Wurzel mit der Uhr.
+
+Ergebnis: `TLS KETTE GEPRUEFT: 3 Zertifikate bis zur Wurzel, Name example.com, gueltig am 2026-09-15`. Die Gegenproben laufen ohne Umbau, weil QEMU die Uhr stellen kann (`-rtc base=…`): Uhr auf 2030 liefert `ZERTIFIKAT ABGELAUFEN`, Uhr auf 2020 liefert `ZERTIFIKAT NOCH NICHT GUELTIG`, Uhr sechs Sekunden vor Ablauf des Blattzertifikats (27.10.2026, 22:17:21 UTC) liefert noch die geprüfte Kette und `HTTPS HTTP/1.1 200 OK`. Unter TCG (GICv2, v3) und hvf gleich.
+
+| Kennzahl | vorher | nachher |
+|---|---|---|
+| Größe des fertigen Systems | 65.352 Byte | **67.904 Byte** (+2.552) |
+| Befehle bis Ruhe, 8 s | 599,1 Mio. | 601,7 Mio. |
+| Montgomery-Multiplikation | 82,2 Mio. (13,7 %) | 82,3 Mio. (13,7 %) |
+| Geprüft auf | TCG, hvf, vier Gegenproben | TCG, hvf, sieben Gegenproben |
+
+Damit ist die Zertifikatsprüfung vollständig: Schlüsselbesitz (CertificateVerify), Kette bis zur Wurzel vom Datenträger, Name, Zeitraum. Nicht enthalten: Sperrlisten und OCSP, Namensbeschränkungen, Pfadlängen, und die Wurzel wird der Datei geglaubt, die auf dem Datenträger liegt.
 
 ### Stand 15.09.2026, zwanzigste Runde: Zertifikatskette bis zur Wurzel
 

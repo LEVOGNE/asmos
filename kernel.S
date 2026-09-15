@@ -455,7 +455,14 @@
 .equ X509_SUBJECT_LEN,      80
 .equ X509_EXT,              88
 .equ X509_EXT_LEN,          96
-.equ X509_INFO_SIZE,        104
+.equ X509_NOT_BEFORE,       104
+.equ X509_NOT_AFTER,        112
+.equ X509_INFO_SIZE,        120
+.equ ASN1_UTC_TIME,         0x17
+.equ ASN1_GENERAL_TIME,     0x18
+.equ RTC_DR,                0x00
+.equ TIME_VECTOR_SIZE,      56
+.equ TIME_VECTORS,          6
 .equ X509_CURVE_P256,       0
 .equ X509_CURVE_P384,       1
 .equ X509_HASH_SHA256,      0
@@ -1130,6 +1137,7 @@ boot_memory_ready:
     bl      blk_init
     bl      fat_init
     bl      font_init
+    bl      rtc_init
     bl      tls_root_init
     bl      files_scan
     ladr    x0, fb_fade
@@ -10616,6 +10624,7 @@ crypto_selftest:
     bl      sha384_selftest
     bl      ecdsa_selftest
     bl      x509_selftest
+    bl      time_selftest
     ldp     x29, x30, [sp], #16
     ret
 
@@ -15092,10 +15101,26 @@ x509_parse_serial:
     str     x4, [x19, #X509_ISSUER_LEN]
     mov     x0, x3
     mov     x1, x21
-    bl      asn1_next
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
     tbnz    w2, #31, x509_parse_fail
     mov     x20, x3
-    mov     x0, x3
+    add     x22, x0, x1
+    mov     x1, x22
+    bl      asn1_next
+    tbnz    w2, #31, x509_parse_fail
+    mov     x24, x3
+    bl      asn1_time
+    tbnz    w1, #31, x509_parse_fail
+    str     x0, [x19, #X509_NOT_BEFORE]
+    mov     x0, x24
+    mov     x1, x22
+    bl      asn1_next
+    tbnz    w2, #31, x509_parse_fail
+    bl      asn1_time
+    tbnz    w1, #31, x509_parse_fail
+    str     x0, [x19, #X509_NOT_AFTER]
+    mov     x0, x20
     mov     x1, x21
     mov     w2, #ASN1_SEQUENCE
     bl      asn1_expect
@@ -15609,12 +15634,22 @@ tls_chain_parsed:
     mov     w2, #(tls_host_end - tls_host)
     bl      x509_san_match
     cbz     w0, tls_chain_name
+    bl      rtc_now
+    cbz     x0, tls_chain_no_clock
+    mov     x24, x0
     mov     w19, #0
 
 tls_chain_loop:
     ladr    x0, tls_chain_infos
     mov     x3, #X509_INFO_SIZE
     madd    x21, x19, x3, x0
+    mov     x0, x21
+    mov     x1, x24
+    bl      x509_time_valid
+    cmp     w0, #1
+    b.eq    tls_chain_early
+    cmp     w0, #2
+    b.eq    tls_chain_expired
     mov     x0, x21
     ladr    x1, tls_root_info
     bl      x509_names_equal
@@ -15634,6 +15669,13 @@ tls_chain_loop:
     b       tls_chain_loop
 
 tls_chain_root:
+    ladr    x0, tls_root_info
+    mov     x1, x24
+    bl      x509_time_valid
+    cmp     w0, #1
+    b.eq    tls_chain_early
+    cmp     w0, #2
+    b.eq    tls_chain_expired
     mov     x0, x21
     ladr    x1, tls_root_info
     bl      x509_verify_with
@@ -15644,11 +15686,27 @@ tls_chain_root:
     bl      uart_putdec
     ladr    x0, tls_chain_ok_tail
     bl      uart_puts
+    mov     x0, x24
+    bl      rtc_put_date
+    ladr    x0, uart_newline
+    bl      uart_puts
     mov     w0, #0
     b       tls_chain_done
 
 tls_chain_no_root:
     ladr    x0, tls_chain_noroot_msg
+    b       tls_chain_fail
+
+tls_chain_no_clock:
+    ladr    x0, tls_chain_noclock_msg
+    b       tls_chain_fail
+
+tls_chain_early:
+    ladr    x0, tls_chain_early_msg
+    b       tls_chain_fail
+
+tls_chain_expired:
+    ladr    x0, tls_chain_expired_msg
     b       tls_chain_fail
 
 tls_chain_short:
@@ -15682,7 +15740,7 @@ tls_chain_done:
     ret
 
 x509_selftest:
-    stp     x29, x30, [sp, #-144]!
+    stp     x29, x30, [sp, #-176]!
     str     x19, [sp, #16]
     mov     w19, #1
     ladr    x0, x509_test_cert
@@ -15708,6 +15766,30 @@ x509_selftest:
     mov     w2, #(x509_test_host_bad_end - x509_test_host_bad)
     bl      x509_san_match
     cbnz    w0, x509_selftest_fail
+    mov     w19, #5
+    ldr     x0, [sp, #(32 + X509_NOT_BEFORE)]
+    ldr     x1, =1785363008
+    cmp     x0, x1
+    b.ne    x509_selftest_fail
+    ldr     x0, [sp, #(32 + X509_NOT_AFTER)]
+    ldr     x1, =1793139441
+    cmp     x0, x1
+    b.ne    x509_selftest_fail
+    mov     w19, #6
+    add     x0, sp, #32
+    ldr     x1, =1785363007
+    bl      x509_time_valid
+    cmp     w0, #1
+    b.ne    x509_selftest_fail
+    add     x0, sp, #32
+    ldr     x1, =1793139442
+    bl      x509_time_valid
+    cmp     w0, #2
+    b.ne    x509_selftest_fail
+    add     x0, sp, #32
+    ldr     x1, =1789446896
+    bl      x509_time_valid
+    cbnz    w0, x509_selftest_fail
     ladr    x0, x509_ok_msg
     bl      uart_puts
     b       x509_selftest_done
@@ -15722,7 +15804,431 @@ x509_selftest_fail:
 
 x509_selftest_done:
     ldr     x19, [sp, #16]
-    ldp     x29, x30, [sp], #144
+    ldp     x29, x30, [sp], #176
+    ret
+
+
+x509_time_valid:
+    ldr     x2, [x0, #X509_NOT_BEFORE]
+    cmp     x1, x2
+    b.lt    x509_time_valid_early
+    ldr     x2, [x0, #X509_NOT_AFTER]
+    cmp     x1, x2
+    b.gt    x509_time_valid_late
+    mov     w0, #0
+    ret
+
+x509_time_valid_early:
+    mov     w0, #1
+    ret
+
+x509_time_valid_late:
+    mov     w0, #2
+    ret
+
+.macro asn1_time_two dst
+    ldrb    w12, [x9], #1
+    sub     w12, w12, #ASCII_ZERO
+    cmp     w12, #9
+    b.hi    asn1_time_fail
+    ldrb    w13, [x9], #1
+    sub     w13, w13, #ASCII_ZERO
+    cmp     w13, #9
+    b.hi    asn1_time_fail
+    mov     w14, #10
+    madd    \dst, x12, x14, x13
+.endm
+
+asn1_time:
+    stp     x29, x30, [sp, #-16]!
+    mov     x9, x0
+    mov     x10, #0
+    cmp     w2, #ASN1_UTC_TIME
+    b.eq    asn1_time_utc
+    cmp     w2, #ASN1_GENERAL_TIME
+    b.ne    asn1_time_fail
+    cmp     x1, #15
+    b.ne    asn1_time_fail
+    mov     w11, #4
+    b       asn1_time_year
+
+asn1_time_utc:
+    cmp     x1, #13
+    b.ne    asn1_time_fail
+    mov     w11, #2
+
+asn1_time_year:
+    ldrb    w12, [x9], #1
+    sub     w12, w12, #ASCII_ZERO
+    cmp     w12, #9
+    b.hi    asn1_time_fail
+    mov     w13, #10
+    madd    x10, x10, x13, x12
+    sub     w11, w11, #1
+    cbnz    w11, asn1_time_year
+    cmp     w2, #ASN1_UTC_TIME
+    b.ne    asn1_time_fields
+    cmp     x10, #50
+    b.lo    asn1_time_2000
+    add     x10, x10, #1900
+    b       asn1_time_fields
+
+asn1_time_2000:
+    add     x10, x10, #2000
+
+asn1_time_fields:
+    mov     x0, x10
+    asn1_time_two x1
+    asn1_time_two x2
+    asn1_time_two x3
+    asn1_time_two x4
+    asn1_time_two x5
+    ldrb    w12, [x9]
+    cmp     w12, #0x5a
+    b.ne    asn1_time_fail
+    sub     x12, x1, #1
+    cmp     x12, #11
+    b.hi    asn1_time_fail
+    sub     x12, x2, #1
+    cmp     x12, #30
+    b.hi    asn1_time_fail
+    cmp     x3, #23
+    b.hi    asn1_time_fail
+    cmp     x4, #59
+    b.hi    asn1_time_fail
+    cmp     x5, #59
+    b.hi    asn1_time_fail
+    bl      time_from_civil
+    mov     w1, #0
+    b       asn1_time_done
+
+asn1_time_fail:
+    mov     w1, #-1
+
+asn1_time_done:
+    ldp     x29, x30, [sp], #16
+    ret
+
+time_from_civil:
+    cmp     x1, #2
+    b.gt    time_from_civil_era
+    sub     x0, x0, #1
+
+time_from_civil_era:
+    mov     x6, #400
+    sdiv    x7, x0, x6
+    msub    x8, x7, x6, x0
+    cmp     x1, #2
+    b.gt    time_from_civil_month
+    add     x9, x1, #9
+    b       time_from_civil_doy
+
+time_from_civil_month:
+    sub     x9, x1, #3
+
+time_from_civil_doy:
+    mov     x6, #153
+    mul     x9, x9, x6
+    add     x9, x9, #2
+    mov     x6, #5
+    udiv    x9, x9, x6
+    add     x9, x9, x2
+    sub     x9, x9, #1
+    mov     x6, #365
+    mul     x10, x8, x6
+    lsr     x11, x8, #2
+    add     x10, x10, x11
+    mov     x6, #100
+    udiv    x11, x8, x6
+    sub     x10, x10, x11
+    add     x10, x10, x9
+    ldr     x6, =146097
+    mul     x7, x7, x6
+    add     x10, x10, x7
+    ldr     x6, =719468
+    sub     x10, x10, x6
+    ldr     x6, =86400
+    mul     x0, x10, x6
+    mov     x6, #3600
+    madd    x0, x3, x6, x0
+    mov     x6, #60
+    madd    x0, x4, x6, x0
+    add     x0, x0, x5
+    ret
+
+civil_from_time:
+    ldr     x6, =86400
+    udiv    x7, x0, x6
+    msub    x8, x7, x6, x0
+    mov     x6, #3600
+    udiv    x3, x8, x6
+    msub    x8, x3, x6, x8
+    mov     x6, #60
+    udiv    x4, x8, x6
+    msub    x5, x4, x6, x8
+    ldr     x6, =719468
+    add     x7, x7, x6
+    ldr     x6, =146097
+    udiv    x9, x7, x6
+    msub    x10, x9, x6, x7
+    mov     x6, #1460
+    udiv    x11, x10, x6
+    sub     x12, x10, x11
+    mov     x6, #36524
+    udiv    x11, x10, x6
+    add     x12, x12, x11
+    ldr     x6, =146096
+    udiv    x11, x10, x6
+    sub     x12, x12, x11
+    mov     x6, #365
+    udiv    x12, x12, x6
+    mov     x6, #400
+    madd    x0, x9, x6, x12
+    mov     x6, #365
+    mul     x11, x12, x6
+    lsr     x13, x12, #2
+    add     x11, x11, x13
+    mov     x6, #100
+    udiv    x13, x12, x6
+    sub     x11, x11, x13
+    sub     x11, x10, x11
+    mov     x6, #5
+    mul     x13, x11, x6
+    add     x13, x13, #2
+    mov     x6, #153
+    udiv    x13, x13, x6
+    mul     x2, x13, x6
+    add     x2, x2, #2
+    mov     x6, #5
+    udiv    x2, x2, x6
+    sub     x2, x11, x2
+    add     x2, x2, #1
+    cmp     x13, #10
+    b.lo    civil_from_time_month
+    sub     x1, x13, #9
+    b       civil_from_time_year
+
+civil_from_time_month:
+    add     x1, x13, #3
+
+civil_from_time_year:
+    cmp     x1, #2
+    b.gt    civil_from_time_done
+    add     x0, x0, #1
+
+civil_from_time_done:
+    ret
+
+rtc_init:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x0, fdt_base
+    ldr     x0, [x0]
+    ladr    x1, rtc_node_name
+    mov     w2, #5
+    ladr    x3, fdt_reg_name
+    bl      fdt_find_prop
+    cbz     x0, rtc_init_missing
+    cmp     w1, #16
+    b.lo    rtc_init_missing
+    ldr     w1, [x0]
+    rev     w1, w1
+    ldr     w2, [x0, #4]
+    rev     w2, w2
+    orr     x19, x2, x1, lsl #32
+    ladr    x0, rtc_base
+    str     x19, [x0]
+    ladr    x0, rtc_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_puthex
+    ladr    x0, rtc_msg_tail
+    bl      uart_puts
+    bl      rtc_now
+    bl      rtc_put_time
+    ladr    x0, rtc_utc_msg
+    bl      uart_puts
+    b       rtc_init_done
+
+rtc_init_missing:
+    ladr    x0, rtc_missing_msg
+    bl      uart_puts
+
+rtc_init_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+rtc_now:
+    ladr    x1, rtc_base
+    ldr     x1, [x1]
+    cbz     x1, rtc_now_none
+    ldr     w0, [x1, #RTC_DR]
+    ret
+
+rtc_now_none:
+    mov     x0, #0
+    ret
+
+rtc_put_time:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    bl      civil_from_time
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    mov     x22, x3
+    mov     x23, x4
+    mov     x24, x5
+    bl      rtc_put_ymd
+    mov     w0, #0x20
+    bl      uart_putc
+    mov     x0, x22
+    bl      rtc_put_two
+    mov     w0, #0x3a
+    bl      uart_putc
+    mov     x0, x23
+    bl      rtc_put_two
+    mov     w0, #0x3a
+    bl      uart_putc
+    mov     x0, x24
+    bl      rtc_put_two
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+    ret
+
+rtc_put_date:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    bl      civil_from_time
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    bl      rtc_put_ymd
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+rtc_put_ymd:
+    stp     x29, x30, [sp, #-16]!
+    mov     x0, x19
+    bl      uart_putdec
+    mov     w0, #0x2d
+    bl      uart_putc
+    mov     x0, x20
+    bl      rtc_put_two
+    mov     w0, #0x2d
+    bl      uart_putc
+    mov     x0, x21
+    bl      rtc_put_two
+    ldp     x29, x30, [sp], #16
+    ret
+
+rtc_put_two:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     x19, x0
+    cmp     x19, #10
+    b.hs    rtc_put_two_digits
+    mov     w0, #ASCII_ZERO
+    bl      uart_putc
+
+rtc_put_two_digits:
+    mov     x0, x19
+    bl      uart_putdec
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+time_selftest:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    ladr    x19, time_test_vectors
+    mov     w20, #TIME_VECTORS
+    mov     w21, #1
+
+time_selftest_loop:
+    ldp     x0, x1, [x19]
+    ldp     x2, x3, [x19, #16]
+    ldp     x4, x5, [x19, #32]
+    bl      time_from_civil
+    ldr     x6, [x19, #48]
+    cmp     x0, x6
+    b.ne    time_selftest_fail
+    mov     x0, x6
+    bl      civil_from_time
+    ldp     x6, x7, [x19]
+    cmp     x0, x6
+    b.ne    time_selftest_fail
+    cmp     x1, x7
+    b.ne    time_selftest_fail
+    ldp     x6, x7, [x19, #16]
+    cmp     x2, x6
+    b.ne    time_selftest_fail
+    cmp     x3, x7
+    b.ne    time_selftest_fail
+    ldp     x6, x7, [x19, #32]
+    cmp     x4, x6
+    b.ne    time_selftest_fail
+    cmp     x5, x7
+    b.ne    time_selftest_fail
+    add     x19, x19, #TIME_VECTOR_SIZE
+    add     w21, w21, #1
+    subs    w20, w20, #1
+    b.ne    time_selftest_loop
+    mov     w21, #10
+    ladr    x0, time_test_utc
+    mov     x1, #13
+    mov     w2, #ASN1_UTC_TIME
+    bl      asn1_time
+    tbnz    w1, #31, time_selftest_fail
+    ldr     x1, =1785363008
+    cmp     x0, x1
+    b.ne    time_selftest_fail
+    mov     w21, #11
+    ladr    x0, time_test_general
+    mov     x1, #15
+    mov     w2, #ASN1_GENERAL_TIME
+    bl      asn1_time
+    tbnz    w1, #31, time_selftest_fail
+    ldr     x1, =2418309227
+    cmp     x0, x1
+    b.ne    time_selftest_fail
+    mov     w21, #12
+    ladr    x0, time_test_utc
+    mov     x1, #12
+    mov     w2, #ASN1_UTC_TIME
+    bl      asn1_time
+    tbz     w1, #31, time_selftest_fail
+    mov     w21, #13
+    ladr    x0, time_test_bad
+    mov     x1, #13
+    mov     w2, #ASN1_UTC_TIME
+    bl      asn1_time
+    tbz     w1, #31, time_selftest_fail
+    ladr    x0, time_ok_msg
+    bl      uart_puts
+    b       time_selftest_done
+
+time_selftest_fail:
+    ladr    x0, time_fail_msg
+    bl      uart_puts
+    mov     x0, x21
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+
+time_selftest_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
     ret
 
 .section .text.vectors
@@ -16803,7 +17309,41 @@ tls_curve_p384:
 tls_chain_ok_msg:
     .asciz  "TLS KETTE GEPRUEFT: "
 tls_chain_ok_tail:
-    .asciz  " Zertifikate bis zur Wurzel, Name example.com passt\r\n"
+    .asciz  " Zertifikate bis zur Wurzel, Name example.com, gueltig am "
+tls_chain_noclock_msg:
+    .asciz  "keine Uhr, Gueltigkeit nicht pruefbar"
+tls_chain_early_msg:
+    .asciz  "ZERTIFIKAT NOCH NICHT GUELTIG"
+tls_chain_expired_msg:
+    .asciz  "ZERTIFIKAT ABGELAUFEN"
+rtc_node_name:
+    .asciz  "pl031"
+rtc_msg:
+    .asciz  "RTC pl031 an 0x"
+rtc_msg_tail:
+    .asciz  ", Zeit "
+rtc_utc_msg:
+    .asciz  " UTC\r\n"
+rtc_missing_msg:
+    .asciz  "RTC FEHLT, kein pl031 im Device Tree, Gueltigkeit nicht pruefbar\r\n"
+time_ok_msg:
+    .asciz  "ZEIT OK, 6 Datumsvektoren, UTCTime und GeneralizedTime\r\n"
+time_fail_msg:
+    .asciz  "ZEIT FEHLER Test "
+time_test_utc:
+    .ascii  "260729221008Z"
+time_test_general:
+    .ascii  "20460819163347Z"
+time_test_bad:
+    .ascii  "261329221008Z"
+.balign 8
+time_test_vectors:
+    .quad   1970, 1, 1, 0, 0, 0, 0
+    .quad   2000, 2, 29, 0, 0, 0, 951782400
+    .quad   2026, 9, 15, 4, 34, 56, 1789446896
+    .quad   2038, 1, 19, 3, 14, 8, 2147483648
+    .quad   2100, 3, 1, 0, 0, 0, 4107542400
+    .quad   1999, 12, 31, 23, 59, 59, 946684799
 tls_chain_noroot_msg:
     .asciz  "keine Wurzel geladen, Kette nicht pruefbar"
 tls_chain_name_msg:
@@ -17349,6 +17889,9 @@ tls_chain_infos:
     .space  (X509_INFO_SIZE * TLS_CHAIN_MAX)
 tls_root_ok:
     .space  1
+.balign 8
+rtc_base:
+    .space  8
 .balign 16
 vin_tablet:
     .space  VIN_SIZE

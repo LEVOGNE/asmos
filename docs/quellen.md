@@ -1908,3 +1908,20 @@ Gefundene Fehler beim Bau: `ec_mul` reservierte für den Eingabepunkt 96 Byte, s
 | Kette von example.com | Blatt (P-256, `ecdsa-with-SHA256`) ← "Cloudflare TLS Issuing ECC CA 3" (P-256, `ecdsa-with-SHA384`) ← "SSL.com TLS Transit ECC CA R2" (P-384, `ecdsa-with-SHA384`) ← Wurzel (P-384); viertes Zertifikat der Nachricht: Kreuzzertifikat der Wurzel durch "AAA Certificate Services" (RSA, `sha256WithRSAEncryption`), wird nicht geparst | mit `openssl x509 -text` an den mitgeschnittenen Zertifikaten geprüft |
 
 Gegenproben (15.09.2026): ohne `ROOT.DER` → `keine Wurzel geladen`; Wurzel mit gekipptem Bit im Schlüssel → `ZERTIFIKATSKETTE UNGUELTIG`; Blattzertifikat als Wurzel → `AUSSTELLER UNBEKANNT`; Testbau mit `example.org` → `NAME PASST NICHT ZUM ZERTIFIKAT`. Positiv: `TLS KETTE GEPRUEFT: 3 Zertifikate bis zur Wurzel` unter TCG GICv2, GICv3 und hvf. Start 599,1 Mio. Befehle, `mp_mont_mul` 82,2 Mio.
+
+## TLS, Zertifikat Schritt C: Uhr und Gültigkeitszeitraum (15.09.2026)
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| PL031 in `virt` | `memmap[VIRT_RTC] = { 0x09010000, 0x1000 }`, Device-Tree-Knoten `/pl031@9010000`, `compatible = "arm,pl031", "arm,primecell"`, `reg` mit je 2 Zellen für Basis und Größe | QEMU `hw/arm/virt.c`, `a15irqmap`/`base_memmap` und `create_rtc()` |
+| Suche im Device Tree | Knotenname `pl031` (5 Zeichen, danach `@`), Eigenschaft `reg`, erste 8 Byte big-endian = Basis; der Kernel trägt keine feste Adresse ein | wie `fdt_find_memory` und `gic_init`; Devicetree Specification v0.4, Abschnitt 5.4 |
+| `RTC_DR` | Offset `0x000`, 32 Bit, nur lesen, aktueller Zählerstand | ARM PrimeCell RTC (PL031) TRM, DDI 0224, Tabelle 3-1 (RTCDR); QEMU `hw/rtc/pl031.c`, `#define RTC_DR 0x00`, `pl031_read` → `pl031_get_count` |
+| Bedeutung des Werts | `tick_offset + rtc_clock/1 s`, wobei `tick_offset` aus `qemu_get_timedate(&tm, 0)` und `mktimegm` gesetzt wird: Sekunden seit 1970-01-01 00:00:00 UTC, verschiebbar mit `-rtc base=<Datum>` | QEMU `hw/rtc/pl031.c`, `pl031_init`/`pl031_get_count`; QEMU-Handbuch, Option `-rtc` |
+| Speicherabbildung | 0x09010000 liegt im ersten 1-GB-Block, der in `mmu_init` als `DESC_DEVICE` abgebildet ist | `mmu_init` |
+| Datumsrechnung | `days_from_civil` und `civil_from_days` mit 400-Jahre-Ära (146.097 Tage), Monat März als Jahresanfang, Verschiebung 719.468 Tage zwischen 0000-03-01 und 1970-01-01 | Howard Hinnant, "chrono-Compatible Low-Level Date Algorithms"; sechs Vektoren gegen Python `calendar.timegm` (1970-01-01, 2000-02-29, 2026-09-15 04:34:56, 2038-01-19 03:14:08, 2100-03-01, 1999-12-31 23:59:59), jeweils hin und zurück |
+| UTCTime | genau `YYMMDDHHMMSSZ`; `YY` ≥ 50 → 19YY, sonst 20YY | RFC 5280, Abschnitt 4.1.2.5.1 |
+| GeneralizedTime | genau `YYYYMMDDHHMMSSZ`, keine Sekundenbruchteile | RFC 5280, Abschnitt 4.1.2.5.2 |
+| Zeitfelder des Blatts | `260729221008Z` = 1.785.363.008, `261027221721Z` = 1.793.139.441; Wurzel `220825163348Z` bis `460819163347Z` (= 2.418.309.227) | `openssl asn1parse` an den mitgeschnittenen Zertifikaten, Werte mit `calendar.timegm` |
+| Prüfregel | `notBefore ≤ jetzt ≤ notAfter` für jedes Glied der Kette und die Wurzel; ohne Uhr wird die Verbindung abgewiesen | RFC 5280, Abschnitt 6.1.3 (a)(2); Entscheidung: keine stille Auslassung |
+
+Gegenproben (15.09.2026): `-rtc base=2030-01-01T00:00:00` → `ZERTIFIKAT ABGELAUFEN`; `-rtc base=2020-01-01T00:00:00` → `ZERTIFIKAT NOCH NICHT GUELTIG`; `-rtc base=2026-10-27T22:17:15` (sechs Sekunden vor Ablauf des Blatts) → Kette geprüft, `HTTPS HTTP/1.1 200 OK`. Positiv unter TCG GICv2, GICv3 und hvf. Start 601,7 Mio. Befehle.
