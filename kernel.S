@@ -332,6 +332,7 @@
 .equ TCB_STATE,             0
 .equ TCB_TRIES,             1
 .equ TCB_SEEN,              2
+.equ TCB_CLOSING,           3
 .equ TCB_LOCAL_PORT,        4
 .equ TCB_REMOTE_IP,         8
 .equ TCB_REMOTE_PORT,       12
@@ -381,6 +382,8 @@
 .equ TLS_TCB,               0
 .equ TLS_STATE,             8
 .equ TLS_SEEN,              9
+.equ TLS_HS_SEEN,           11
+.equ DNS_QUESTION_MAX,      72
 .equ TLS_PRIV,              16
 .equ TLS_PUB,               48
 .equ TLS_RANDOM,            80
@@ -457,7 +460,19 @@
 .equ X509_EXT_LEN,          96
 .equ X509_NOT_BEFORE,       104
 .equ X509_NOT_AFTER,        112
-.equ X509_INFO_SIZE,        120
+.equ X509_FLAGS,            120
+.equ X509_PATHLEN,          124
+.equ X509_INFO_SIZE,        128
+.equ X509_F_CA,             1
+.equ X509_F_PATHLEN,        2
+.equ X509_F_KU,             4
+.equ X509_F_CERTSIGN,       8
+.equ X509_F_EKU,            16
+.equ X509_F_SERVERAUTH,     32
+.equ X509_F_DIGSIG,         64
+.equ VIRTIO_ID_RNG,         4
+.equ RNG_QUEUE_SIZE,        8
+.equ RNG_BUF_SIZE,          64
 .equ ASN1_UTC_TIME,         0x17
 .equ ASN1_GENERAL_TIME,     0x18
 .equ RTC_DR,                0x00
@@ -745,17 +760,28 @@
 .equ WIN_TY,                32
 .equ WIN_FOCUS,             40
 .equ WIN_ALPHA,             48
-.equ WIN_KIND,              56
+.equ WIN_CLASS,             56
 .equ WIN_BUF,               64
 .equ WIN_BUF_DIRTY,         72
 .equ WIN_BUF_TITLE,         73
-.equ WIN_SIZE,              80
+.equ WIN_ID,                76
+.equ WIN_H_FULL,            80
+.equ WIN_FLAGS,             84
+.equ WIN_SIZE,              96
 .equ WIN_BUF_BUDGET,        (16 * 1024 * 1024)
+.equ WIN_FLAG_SHADED,       1
+.equ WIN_BTN_NONE,          0
+.equ WIN_BTN_CLOSE,         1
+.equ WIN_BTN_SHADE,         2
+.equ WIN_BTN_PAD,           8
 
-.equ WIN_KIND_NONE,         0
-.equ WIN_KIND_FILES,        1
-.equ WIN_KIND_TERM,         2
-.equ WIN_KIND_NET,          3
+.equ CLS_PARENT,            0
+.equ CLS_DRAW,              8
+.equ CLS_KEY,               16
+.equ CLS_FOCUS,             24
+.equ CLS_DIRTY,             32
+.equ CLS_CLOSE,             40
+.equ CLS_SIZE,              48
 .equ TERM_ROWS,             24
 .equ TERM_COLS,             96
 .equ TERM_STRIDE,           100
@@ -800,9 +826,12 @@
 .equ ANIM_PROP_FOCUS,       2
 .equ ANIM_PROP_SCREEN,      3
 .equ ANIM_PROP_ALPHA,       4
+.equ ANIM_PROP_H,           5
 .equ FADE_ONE,              0x10000
 .equ SCREEN_FADE_MS,        450
-.equ ANIM_PROP_COUNT,       5
+.equ ANIM_PROP_COUNT,       6
+.equ WIN_SHADE_MS,          160
+.equ WIN_CLOSE_MS,          180
 .equ WIN_NONE,              -1
 .equ WIN_MAX,               8
 .equ WIN_BORDER,            2
@@ -836,7 +865,7 @@
 .equ COLOR_BLUE,            0xff0000ff
 
 .equ ANIM_MAX,              64
-.equ ANIM_ENTRY_SIZE,       80
+.equ ANIM_ENTRY_SIZE,       88
 .equ ANIM_TARGET,           0
 .equ ANIM_START_TIME,       8
 .equ ANIM_DURATION,         16
@@ -850,6 +879,7 @@
 .equ ANIM_FLAGS,            64
 .equ ANIM_TAG,              68
 .equ ANIM_GEN,              72
+.equ ANIM_DONE,             80
 .equ ANIM_FREE,             0
 .equ ANIM_RUNNING,          1
 .equ ANIM_FINISHED,         2
@@ -2801,6 +2831,7 @@ anim_start_slot:
     str     x21, [x25, #ANIM_FROM]
     str     x22, [x25, #ANIM_TO]
     str     x21, [x25, #ANIM_VALUE]
+    str     xzr, [x25, #ANIM_DONE]
     strh    w24, [x25, #ANIM_EASING]
     mov     w0, w23
     bl      anim_ms_to_ticks
@@ -2904,6 +2935,17 @@ anim_find_none:
     mov     x0, #0
     ret
 
+anim_set_done:
+    cbz     x0, anim_set_done_ret
+    and     x0, x0, #ANIM_SLOT_MASK
+    mov     x2, #ANIM_ENTRY_SIZE
+    ladr    x3, anim_list
+    madd    x0, x0, x2, x3
+    str     x1, [x0, #ANIM_DONE]
+
+anim_set_done_ret:
+    ret
+
 anim_apply:
     cmp     x0, #WIN_MAX
     b.eq    anim_apply_screen
@@ -2925,11 +2967,20 @@ anim_apply:
     ladr    x3, win_list
     mov     x4, #WIN_SIZE
     madd    x3, x19, x4, x3
+    cmp     w20, #ANIM_PROP_H
+    b.ne    anim_apply_current
+    ldr     w4, [x3, #WIN_H]
+    lsl     x4, x4, #ANIM_SHIFT
+    b       anim_apply_compare
+
+anim_apply_current:
     cmp     w20, #ANIM_PROP_ALPHA
     mov     w4, #3
     csel    w4, w4, w20, eq
     add     x3, x3, #WIN_TX
     ldr     x4, [x3, x4, lsl #3]
+
+anim_apply_compare:
     cmp     x4, x21
     b.eq    anim_apply_ret
     cmp     w20, #ANIM_PROP_FOCUS
@@ -2950,7 +3001,14 @@ anim_apply_write:
     b.eq    anim_apply_focus
     cmp     w20, #ANIM_PROP_ALPHA
     b.eq    anim_apply_alpha
+    cmp     w20, #ANIM_PROP_H
+    b.eq    anim_apply_h
     str     x21, [x3, #WIN_TX]
+    b       anim_apply_mark
+
+anim_apply_h:
+    asr     x4, x21, #ANIM_SHIFT
+    str     w4, [x3, #WIN_H]
     b       anim_apply_mark
 
 anim_apply_focus:
@@ -3047,6 +3105,10 @@ anim_tick_loop:
     subs    w1, w1, #1
     csel    w1, wzr, w1, mi
     str     w1, [x0]
+    ldr     x1, [x22, #ANIM_DONE]
+    cbz     x1, anim_tick_next
+    ldr     x0, [x22, #ANIM_TARGET]
+    blr     x1
 
 anim_tick_next:
     add     w21, w21, #1
@@ -3547,7 +3609,17 @@ win_add:
     lsl     x12, x12, #ANIM_SHIFT
     str     x12, [x11, #WIN_FOCUS]
     str     xzr, [x11, #WIN_ALPHA]
-    str     w5, [x11, #WIN_KIND]
+    ladr    x12, win_class_base
+    cmp     x5, #0
+    csel    x12, x12, x5, eq
+    str     x12, [x11, #WIN_CLASS]
+    ladr    x12, win_next_id
+    ldr     w13, [x12]
+    add     w13, w13, #1
+    str     w13, [x12]
+    str     w13, [x11, #WIN_ID]
+    str     w3, [x11, #WIN_H_FULL]
+    str     wzr, [x11, #WIN_FLAGS]
     umull   x12, w2, w3
     lsl     x12, x12, #2
     add     x12, x12, #63
@@ -4032,6 +4104,21 @@ win_click:
     cmp     w0, #0
     b.lt    win_click_done
     mov     w21, w0
+    mov     w1, w19
+    mov     w2, w20
+    bl      win_button_hit
+    cbz     w0, win_click_raise
+    ladr    x9, win_btn_armed
+    strb    w0, [x9]
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x21, x10, x9
+    ldr     w0, [x9, #WIN_ID]
+    ladr    x9, win_btn_id
+    str     w0, [x9]
+    b       win_click_done
+
+win_click_raise:
     ladr    x9, win_count
     ldr     w0, [x9]
     sub     w0, w0, #1
@@ -4086,7 +4173,7 @@ win_draw_one_full:
     mov     w0, #0
     mov     w1, #0
     ldr     w2, [x19, #WIN_W]
-    ldr     w3, [x19, #WIN_H]
+    ldr     w3, [x19, #WIN_H_FULL]
 
 win_draw_one_render:
     stp     x0, x1, [sp, #-32]!
@@ -4137,6 +4224,17 @@ win_draw_one_blit:
 
 win_draw_one_copy:
     bl      fb_copy_rect
+    ldr     w0, [x19, #WIN_H]
+    ldr     w1, [x19, #WIN_H_FULL]
+    cmp     w0, w1
+    b.hs    win_draw_one_done
+    mov     w0, w20
+    bl      win_rect
+    add     w1, w1, w3
+    sub     w1, w1, #WIN_BORDER
+    mov     w3, #WIN_BORDER
+    ldr     x4, =COLOR_WIN_BORDER
+    bl      fb_fill_rect
     b       win_draw_one_done
 
 win_draw_one_direct:
@@ -4145,10 +4243,21 @@ win_draw_one_direct:
     strb    w1, [x0]
     mov     w0, w20
     bl      win_rect
-    mov     w2, w1
-    mov     w1, w0
+    mov     w21, w0
+    mov     w22, w1
+    bl      fb_clip_intersect
+    mov     x24, x0
+    mov     x25, x1
+    cbz     w2, win_draw_one_direct_restore
     mov     w0, w20
+    mov     w1, w21
+    mov     w2, w22
     bl      win_draw_content
+
+win_draw_one_direct_restore:
+    mov     x0, x24
+    mov     x1, x25
+    bl      fb_clip_restore
 
 win_draw_one_done:
     ldr     x25, [sp, #64]
@@ -4173,7 +4282,7 @@ win_draw_content:
     mov     w0, w21
     mov     w1, w22
     ldr     w2, [x19, #WIN_W]
-    ldr     w3, [x19, #WIN_H]
+    ldr     w3, [x19, #WIN_H_FULL]
     stp     x0, x1, [sp, #-32]!
     stp     x2, x3, [sp, #16]
     ldr     x0, =COLOR_WIN_BORDER
@@ -4213,7 +4322,7 @@ win_draw_content:
     add     w1, w22, #(WIN_BORDER + WIN_TITLEBAR_H)
     ldr     w2, [x19, #WIN_W]
     sub     w2, w2, #(WIN_BORDER * 2)
-    ldr     w3, [x19, #WIN_H]
+    ldr     w3, [x19, #WIN_H_FULL]
     sub     w3, w3, #(WIN_BORDER * 2 + WIN_TITLEBAR_H)
     stp     x0, x1, [sp, #-32]!
     stp     x2, x3, [sp, #16]
@@ -4223,13 +4332,11 @@ win_draw_content:
     ldp     x2, x3, [sp, #16]
     ldp     x0, x1, [sp], #32
     bl      fb_fill_rect
-    ldr     w9, [x19, #WIN_KIND]
-    cbz     w9, win_draw_content_title
     add     w0, w21, #WIN_BORDER
     add     w1, w22, #(WIN_BORDER + WIN_TITLEBAR_H)
     ldr     w2, [x19, #WIN_W]
     sub     w2, w2, #(WIN_BORDER * 2)
-    ldr     w3, [x19, #WIN_H]
+    ldr     w3, [x19, #WIN_H_FULL]
     sub     w3, w3, #(WIN_BORDER * 2 + WIN_TITLEBAR_H)
     stp     x0, x1, [sp, #-32]!
     stp     x2, x3, [sp, #16]
@@ -4237,27 +4344,20 @@ win_draw_content:
     mov     x24, x0
     mov     x25, x1
     cbz     w2, win_draw_content_skip
+    mov     w0, w20
+    mov     w1, #CLS_DRAW
+    bl      win_method
+    str     x0, [sp, #-16]!
     ldr     x0, =COLOR_FILES_TEXT
     bl      win_fade_color
     mov     x3, x0
+    ldr     x9, [sp], #16
+    cbz     x9, win_draw_content_skip
     ldr     x0, [sp]
     ldr     x1, [sp, #8]
     ldr     x2, [sp, #24]
-    ldr     w9, [x19, #WIN_KIND]
-    cmp     w9, #WIN_KIND_TERM
-    b.eq    win_draw_content_term
-    cmp     w9, #WIN_KIND_NET
-    b.eq    win_draw_content_net
-    bl      files_draw
-    b       win_draw_content_skip
-
-win_draw_content_term:
     mov     w4, w20
-    bl      term_draw
-    b       win_draw_content_skip
-
-win_draw_content_net:
-    bl      netlog_draw
+    blr     x9
 
 win_draw_content_skip:
     add     sp, sp, #32
@@ -4278,6 +4378,23 @@ win_draw_content_title:
     ldp     x2, x3, [sp, #16]
     ldp     x0, x1, [sp], #32
     bl      font_text
+    ldr     w23, [x19, #WIN_W]
+    add     w23, w23, w21
+    sub     w23, w23, #(WIN_BORDER + WIN_BTN_PAD + ICON_SIZE)
+    add     w24, w22, #(WIN_BORDER + (WIN_TITLEBAR_H - ICON_SIZE) / 2)
+    ldr     x0, =COLOR_WIN_TEXT
+    bl      win_fade_color
+    mov     x25, x0
+    ladr    x0, icon_x
+    mov     w1, w23
+    mov     w2, w24
+    mov     x3, x25
+    bl      icon_draw
+    ladr    x0, icon_minus
+    sub     w1, w23, #(WIN_BTN_PAD + ICON_SIZE)
+    mov     w2, w24
+    mov     x3, x25
+    bl      icon_draw
     ldr     x25, [sp, #64]
     ldp     x23, x24, [sp, #48]
     ldp     x21, x22, [sp, #32]
@@ -4293,6 +4410,14 @@ win_draw_all:
     stp     xzr, xzr, [sp, #32]
     cbz     w20, win_draw_all_background
     sub     w0, w20, #1
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x0, x10, x9
+    ldr     x9, [x9, #WIN_ALPHA]
+    asr     x9, x9, #16
+    mov     x10, #FADE_ONE
+    cmp     x9, x10
+    b.lo    win_draw_all_background
     bl      win_rect
     stp     w0, w1, [sp, #32]
     stp     w2, w3, [sp, #40]
@@ -4353,21 +4478,21 @@ win_demo:
     mov     w2, #1180
     mov     w3, #1160
     ladr    x4, win_title_2
-    mov     w5, #WIN_KIND_FILES
+    ladr    x5, win_class_files
     bl      win_add
     mov     w0, #1330
     mov     w1, #200
     mov     w2, #1180
     mov     w3, #1160
     ladr    x4, win_title_3
-    mov     w5, #WIN_KIND_NET
+    ladr    x5, win_class_net
     bl      win_add
     mov     w0, #100
     mov     w1, #200
     mov     w2, #1180
     mov     w3, #1160
     ladr    x4, win_title_1
-    mov     w5, #WIN_KIND_TERM
+    ladr    x5, win_class_term
     bl      win_add
     bl      win_fade_all
     bl      win_draw_all
@@ -7701,6 +7826,10 @@ timer_tick_net:
     ldrb    w1, [x0]
     cbz     w1, timer_tick_blink
     ladr    x0, net_tick_pending
+    ldrb    w1, [x0]
+    cmp     w1, #255
+    b.hs    timer_tick_blink
+    add     w1, w1, #1
     strb    w1, [x0]
 
 timer_tick_blink:
@@ -7806,7 +7935,7 @@ console_drain_keys:
     bl      key_get
     cmn     w0, #1
     b.eq    console_drain_click
-    bl      term_feed
+    bl      win_key_top
     b       console_drain_keys
 
 console_drain_click:
@@ -7828,11 +7957,19 @@ console_drain_release:
     stp     w1, w2, [sp, #32]
     ladr    x0, power_armed
     bl      console_take_flag
-    cbz     w0, console_drain_mouse
+    cbz     w0, console_drain_button
     ldp     w0, w1, [sp, #32]
     bl      power_hit
     cbz     w0, console_drain_mouse
     bl      power_off
+    b       console_drain_mouse
+
+console_drain_button:
+    ldp     w0, w1, [sp, #32]
+    bl      win_button_release
+    cbz     w0, console_drain_mouse
+    mov     w19, #1
+
 console_drain_mouse:
     ladr    x0, net_pending
     bl      console_take_flag
@@ -7843,7 +7980,13 @@ console_drain_net_tick:
     ladr    x0, net_tick_pending
     bl      console_take_flag
     cbz     w0, console_drain_mouse_flag
+
+console_drain_net_tick_loop:
+    str     w0, [sp, #32]
     bl      net_tick
+    ldr     w0, [sp, #32]
+    subs    w0, w0, #1
+    b.ne    console_drain_net_tick_loop
 
 console_drain_mouse_flag:
     ladr    x0, mouse_dirty
@@ -8335,6 +8478,7 @@ net_poll_loop:
     ladr    x19, net_rx_used
     dsb     sy
     ldrh    w0, [x19, #VRING_USED_IDX]
+    dmb     ishld
     ladr    x1, net_rx_last
     ldrh    w1, [x1]
     cmp     w0, w1
@@ -8349,6 +8493,8 @@ net_poll_loop:
     strh    w1, [x3]
     cmp     w20, #NET_QUEUE_SIZE
     b.hs    net_poll_bad
+    cmp     w2, #NET_BUF_SIZE
+    b.hi    net_poll_bad
     subs    w2, w2, #NET_HDR_SIZE
     b.le    net_poll_requeue
     ladr    x0, net_rx_buf
@@ -8467,6 +8613,23 @@ net_send:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
     add     w19, w0, #NET_HDR_SIZE
+    ladr    x1, net_tx_avail
+    ldrh    w2, [x1, #VRING_AVAIL_IDX]
+    ladr    x3, net_tx_used
+    mov     x4, #NET_TIMEOUT
+
+net_send_owner:
+    dsb     sy
+    ldrh    w5, [x3, #VRING_USED_IDX]
+    cmp     w5, w2
+    b.eq    net_send_owned
+    subs    x4, x4, #1
+    b.ne    net_send_owner
+    ladr    x0, net_tx_busy_msg
+    bl      uart_puts
+    b       net_send_done
+
+net_send_owned:
     ladr    x0, net_tx_buf
     str     xzr, [x0]
     str     wzr, [x0, #8]
@@ -8482,6 +8645,7 @@ net_send:
     strh    wzr, [x3, x4, lsl #1]
     dsb     sy
     add     w2, w2, #1
+    and     w2, w2, #VRING_IDX_MASK
     strh    w2, [x1, #VRING_AVAIL_IDX]
     dsb     sy
     ladr    x0, net_base
@@ -8719,6 +8883,133 @@ net_checksum_fold:
 net_checksum_done:
     mvn     w0, w2
     and     w0, w0, #0xffff
+    ret
+
+rng_init:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    mov     x0, #VIRTIO_ID_RNG
+    bl      virtio_find
+    cbz     x0, rng_init_fail
+    mov     x19, x0
+    ladr    x1, rng_base
+    str     x19, [x1]
+    mov     x0, x19
+    ladr    x1, rng_desc
+    ladr    x2, rng_avail
+    ladr    x3, rng_used
+    mov     x4, #RNG_QUEUE_SIZE
+    bl      virtio_setup
+    cbnz    w0, rng_init_fail
+    mov     x0, x19
+    bl      virtio_driver_ok
+    ladr    x0, rng_seed
+    mov     w1, #8
+    bl      rng_get
+    cbnz    w0, rng_init_fail
+    ladr    x0, rng_seed
+    ldr     x0, [x0]
+    ladr    x1, net_rand_state
+    ldr     x2, [x1]
+    eor     x2, x2, x0
+    str     x2, [x1]
+    ladr    x0, rng_ready_msg
+    bl      uart_puts
+    mov     w0, #0
+    b       rng_init_done
+
+rng_init_fail:
+    ladr    x1, rng_base
+    str     xzr, [x1]
+    ladr    x0, rng_fail_msg
+    bl      uart_puts
+    mov     w0, #1
+
+rng_init_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+rng_get:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x20, x0
+    mov     w21, w1
+    ladr    x19, rng_base
+    ldr     x19, [x19]
+    cbz     x19, rng_get_fail
+    cmp     w21, #RNG_BUF_SIZE
+    b.hi    rng_get_fail
+
+rng_get_more:
+    cbz     w21, rng_get_ok
+    ladr    x2, rng_desc
+    ladr    x1, rng_buf
+    str     x1, [x2, #VRING_DESC_ADDR]
+    str     w21, [x2, #VRING_DESC_LEN]
+    mov     w3, #VRING_DESC_F_WRITE
+    strh    w3, [x2, #VRING_DESC_FLAGS]
+    strh    wzr, [x2, #VRING_DESC_NEXT]
+    ladr    x4, rng_used
+    ldrh    w22, [x4, #VRING_USED_IDX]
+    ladr    x4, rng_avail
+    ldrh    w5, [x4, #VRING_AVAIL_IDX]
+    and     w6, w5, #(RNG_QUEUE_SIZE - 1)
+    add     x7, x4, x6, lsl #1
+    strh    wzr, [x7, #VRING_AVAIL_RING]
+    add     w5, w5, #1
+    and     w5, w5, #VRING_IDX_MASK
+    dmb     ishst
+    strh    w5, [x4, #VRING_AVAIL_IDX]
+    dsb     sy
+    str     wzr, [x19, #VIRTIO_REG_QUEUE_NOTIFY]
+    ldr     x1, =BLK_TIMEOUT
+
+rng_get_wait:
+    ladr    x4, rng_used
+    ldrh    w5, [x4, #VRING_USED_IDX]
+    cmp     w5, w22
+    b.ne    rng_get_ready
+    subs    x1, x1, #1
+    b.ne    rng_get_wait
+    b       rng_get_fail
+
+rng_get_ready:
+    dmb     ishld
+    and     w22, w22, #(RNG_QUEUE_SIZE - 1)
+    add     x4, x4, x22, lsl #3
+    ldr     w5, [x4, #VRING_USED_RING]
+    cbnz    w5, rng_get_fail
+    ldr     w5, [x4, #(VRING_USED_RING + 4)]
+    cbz     w5, rng_get_fail
+    cmp     w5, w21
+    b.hi    rng_get_fail
+    mov     w22, w5
+    ldr     w0, [x19, #VIRTIO_REG_INT_STATUS]
+    str     w0, [x19, #VIRTIO_REG_INT_ACK]
+    ladr    x0, rng_buf
+    mov     x1, x20
+    mov     w2, w22
+    bl      mem_copy
+    add     x20, x20, x22
+    sub     w21, w21, w22
+    b       rng_get_more
+
+rng_get_ok:
+    ladr    x0, rng_buf
+    mov     w1, #RNG_BUF_SIZE
+    bl      mem_wipe
+    mov     w0, #0
+    b       rng_get_done
+
+rng_get_fail:
+    mov     w0, #1
+
+rng_get_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
     ret
 
 net_random:
@@ -9066,9 +9357,15 @@ net_udp_handle:
 
 net_udp_handle_port:
     mov     x0, x19
+    mov     x1, #UDP_SRC
+    bl      mem_read16be
+    ladr    x1, net_last_sport
+    str     w0, [x1]
+    mov     x0, x19
     mov     x1, #UDP_DST
     bl      mem_read16be
-    mov     w1, #UDP_PORT_DNS_LOCAL
+    ladr    x1, dns_local_port
+    ldr     w1, [x1]
     cmp     w0, w1
     b.eq    net_udp_handle_dns
     cmp     w0, #UDP_PORT_DHCP_CLIENT
@@ -9420,10 +9717,24 @@ dns_query:
     bl      mem_write16be
     add     x19, x19, #4
     sub     x20, x19, x22
+    sub     w2, w20, #DNS_HDR_SIZE
+    mov     w3, #DNS_QUESTION_MAX
+    cmp     w2, w3
+    csel    w2, w3, w2, hi
+    ladr    x1, dns_question_len
+    str     w2, [x1]
+    add     x0, x22, #DNS_HDR_SIZE
+    ladr    x1, dns_question
+    bl      mem_copy
+    bl      net_random
+    and     w0, w0, #TCP_PORT_MASK
+    mov     w2, #TCP_LOCAL_PORT_BASE
+    add     w2, w2, w0
+    ladr    x0, dns_local_port
+    str     w2, [x0]
     ladr    x0, net_gw_mac
     ladr    x1, net_dns
     ldr     w1, [x1]
-    mov     w2, #UDP_PORT_DNS_LOCAL
     mov     w3, #UDP_PORT_DNS
     mov     w4, w20
     bl      net_udp_begin
@@ -9524,6 +9835,16 @@ dns_handle:
     ldrh    w1, [x1]
     cmp     w0, w1
     b.ne    dns_handle_done
+    ladr    x0, net_last_src
+    ldr     w0, [x0]
+    ladr    x1, net_dns
+    ldr     w1, [x1]
+    cmp     w0, w1
+    b.ne    dns_handle_done
+    ladr    x0, net_last_sport
+    ldr     w0, [x0]
+    cmp     w0, #UDP_PORT_DNS
+    b.ne    dns_handle_done
     mov     x0, x19
     mov     x1, #DNS_FLAGS
     bl      mem_read16be
@@ -9539,6 +9860,17 @@ dns_handle:
     mov     x1, #DNS_ANCOUNT
     bl      mem_read16be
     mov     w22, w0
+    cmp     w21, #1
+    b.ne    dns_handle_done
+    ladr    x1, dns_question_len
+    ldr     w2, [x1]
+    add     x0, x19, #DNS_HDR_SIZE
+    add     x1, x0, x2
+    cmp     x1, x20
+    b.hi    dns_handle_done
+    ladr    x1, dns_question
+    bl      mem_equal
+    cbz     w0, dns_handle_done
     add     x0, x19, #DNS_HDR_SIZE
 
 dns_handle_questions:
@@ -9711,8 +10043,15 @@ tcp_open_clear:
     str     w20, [x19, #TCB_REMOTE_IP]
     str     w21, [x19, #TCB_REMOTE_PORT]
     str     x22, [x19, #TCB_HANDLER]
+    add     x0, x19, #TCB_ISS
+    mov     w1, #4
+    bl      rng_get
+    cbz     w0, tcp_open_iss_ready
     bl      net_random
     str     w0, [x19, #TCB_ISS]
+
+tcp_open_iss_ready:
+    ldr     w0, [x19, #TCB_ISS]
     str     w0, [x19, #TCB_SND_NXT]
     str     w0, [x19, #TCB_SND_UNA]
 
@@ -9861,6 +10200,13 @@ tcp_close:
     ldrb    w0, [x19, #TCB_STATE]
     cmp     w0, #TCP_STATE_ESTABLISHED
     b.ne    tcp_close_done
+    ldr     w0, [x19, #TCB_TX_LEN]
+    cbz     w0, tcp_close_fin
+    mov     w0, #1
+    strb    w0, [x19, #TCB_CLOSING]
+    b       tcp_close_done
+
+tcp_close_fin:
     mov     x0, x19
     mov     w1, #(TCP_FLAG_FIN | TCP_FLAG_ACK)
     mov     x2, #0
@@ -10135,6 +10481,15 @@ tcp_handle_shift:
     b       tcp_handle_shift
 
 tcp_handle_acked:
+    ldrb    w0, [x26, #TCB_CLOSING]
+    cbz     w0, tcp_handle_acked_state
+    ldr     w0, [x26, #TCB_TX_LEN]
+    cbnz    w0, tcp_handle_acked_state
+    strb    wzr, [x26, #TCB_CLOSING]
+    mov     x0, x26
+    bl      tcp_close
+
+tcp_handle_acked_state:
     ldrb    w0, [x26, #TCB_STATE]
     ldr     w1, [x26, #TCB_SND_NXT]
     cmp     w22, w1
@@ -10157,15 +10512,19 @@ tcp_handle_acked_last:
 tcp_handle_data:
     cbz     w25, tcp_handle_fin
     ldr     w0, [x26, #TCB_RCV_NXT]
-    cmp     w21, w0
-    b.ne    tcp_handle_ack_only
-    add     w0, w0, w25
+    sub     w1, w0, w21
+    tbnz    w1, #31, tcp_handle_ack_only
+    cmp     w1, w25
+    b.hs    tcp_handle_fin
+    sub     w2, w25, w1
+    add     w0, w0, w2
     str     w0, [x26, #TCB_RCV_NXT]
     ldr     x3, [x26, #TCB_HANDLER]
     cbz     x3, tcp_handle_fin
+    add     x4, x19, x24
+    add     x4, x4, w1, uxtw
     mov     x0, x26
-    add     x1, x19, x24
-    mov     w2, w25
+    mov     x1, x4
     blr     x3
 
 tcp_handle_fin:
@@ -10337,15 +10696,16 @@ http_on_data:
     cbz     w2, http_on_data_done
     ldrb    w3, [x19, #TCB_SEEN]
     cbnz    w3, http_on_data_done
+    ladr    x0, http_line
+    bl      line_collect
+    cbz     w0, http_on_data_done
     mov     w3, #1
     strb    w3, [x19, #TCB_SEEN]
-    mov     x19, x1
-    mov     w20, w2
     ladr    x0, tcp_data_msg
     bl      uart_puts
-    mov     x0, x19
-    mov     w1, w20
-    bl      tcp_put_line
+    ladr    x0, http_line
+    add     x0, x0, #4
+    bl      uart_puts
     ladr    x0, uart_newline
     bl      uart_puts
 
@@ -10354,29 +10714,34 @@ http_on_data_done:
     ldp     x29, x30, [sp], #32
     ret
 
-tcp_put_line:
-    stp     x29, x30, [sp, #-32]!
-    stp     x19, x20, [sp, #16]
-    mov     x19, x0
-    mov     w20, w1
-    mov     w0, #TCP_LINE_MAX
-    cmp     w20, w0
-    csel    w20, w0, w20, hi
+line_collect:
+    ldr     w3, [x0]
 
-tcp_put_line_loop:
-    cbz     w20, tcp_put_line_done
-    ldrb    w0, [x19], #1
-    cmp     w0, #ASCII_CR
-    b.eq    tcp_put_line_done
-    cmp     w0, #ASCII_LF
-    b.eq    tcp_put_line_done
-    bl      uart_putc
-    sub     w20, w20, #1
-    b       tcp_put_line_loop
+line_collect_loop:
+    cbz     w2, line_collect_open
+    ldrb    w4, [x1], #1
+    sub     w2, w2, #1
+    cmp     w4, #ASCII_CR
+    b.eq    line_collect_end
+    cmp     w4, #ASCII_LF
+    b.eq    line_collect_end
+    cmp     w3, #(TCP_LINE_MAX - 1)
+    b.hs    line_collect_end
+    add     x5, x0, #4
+    strb    w4, [x5, x3]
+    add     w3, w3, #1
+    b       line_collect_loop
 
-tcp_put_line_done:
-    ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #32
+line_collect_open:
+    str     w3, [x0]
+    mov     w0, #0
+    ret
+
+line_collect_end:
+    add     x5, x0, #4
+    strb    wzr, [x5, x3]
+    str     w3, [x0]
+    mov     w0, #1
     ret
 
 
@@ -10416,6 +10781,9 @@ sha256_block:
     rev32   v18.16b, v18.16b
     rev32   v19.16b, v19.16b
     ladr    x2, sha_k256
+    mov     w3, #3
+
+sha256_block_rounds:
     sha_round v16
     sha_sched v16, v17, v18, v19
     sha_round v17
@@ -10424,22 +10792,8 @@ sha256_block:
     sha_sched v18, v19, v16, v17
     sha_round v19
     sha_sched v19, v16, v17, v18
-    sha_round v16
-    sha_sched v16, v17, v18, v19
-    sha_round v17
-    sha_sched v17, v18, v19, v16
-    sha_round v18
-    sha_sched v18, v19, v16, v17
-    sha_round v19
-    sha_sched v19, v16, v17, v18
-    sha_round v16
-    sha_sched v16, v17, v18, v19
-    sha_round v17
-    sha_sched v17, v18, v19, v16
-    sha_round v18
-    sha_sched v18, v19, v16, v17
-    sha_round v19
-    sha_sched v19, v16, v17, v18
+    subs    w3, w3, #1
+    b.ne    sha256_block_rounds
     sha_round v16
     sha_round v17
     sha_round v18
@@ -10616,16 +10970,36 @@ sha_put_digest_loop:
     ret
 
 crypto_selftest:
-    stp     x29, x30, [sp, #-16]!
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
     bl      sha_selftest
+    mov     w19, w0
     bl      hmac_selftest
+    orr     w19, w19, w0
     bl      aes_selftest
+    orr     w19, w19, w0
     bl      x25519_selftest
+    orr     w19, w19, w0
     bl      sha384_selftest
+    orr     w19, w19, w0
     bl      ecdsa_selftest
+    orr     w19, w19, w0
     bl      x509_selftest
+    orr     w19, w19, w0
     bl      time_selftest
-    ldp     x29, x30, [sp], #16
+    orr     w19, w19, w0
+    bl      rng_init
+    orr     w19, w19, w0
+    eor     w19, w19, #1
+    ladr    x0, crypto_ready
+    strb    w19, [x0]
+    ladr    x0, crypto_ready_msg
+    ladr    x1, crypto_blocked_msg
+    cmp     w19, #0
+    csel    x0, x1, x0, eq
+    bl      uart_puts
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
     ret
 
 sha_selftest:
@@ -10701,13 +11075,20 @@ sha_selftest_fail:
     bl      uart_putdec
     ladr    x0, uart_newline
     bl      uart_puts
-    b       sha_selftest_done
+    b       sha_selftest_bad
 
 sha_selftest_missing:
     ladr    x0, sha_missing_msg
     bl      uart_puts
 
+sha_selftest_bad:
+    mov     w0, #1
+    b       sha_selftest_exit
+
 sha_selftest_done:
+    mov     w0, #0
+
+sha_selftest_exit:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
@@ -11034,14 +11415,19 @@ hmac_selftest_report:
     bl      uart_putdec
     ladr    x0, uart_newline
     bl      uart_puts
+    mov     w0, #1
+    b       hmac_selftest_exit
 
 hmac_selftest_done:
+    mov     w0, #0
+
+hmac_selftest_exit:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
 
 
-.macro aes_enc_block
+aes_enc_block:
     aese    v0.16b, v16.16b
     aesmc   v0.16b, v0.16b
     aese    v0.16b, v17.16b
@@ -11062,7 +11448,7 @@ hmac_selftest_done:
     aesmc   v0.16b, v0.16b
     aese    v0.16b, v25.16b
     eor     v0.16b, v0.16b, v26.16b
-.endm
+    ret
 
 .macro gcm_reflect vreg
     rbit    \vreg\().16b, \vreg\().16b
@@ -11130,7 +11516,7 @@ aes_gcm_setkey:
     mov     x0, x19
     bl      aes_load_keys
     movi    v0.16b, #0
-    aes_enc_block
+    bl      aes_enc_block
     gcm_reflect v0
     add     x0, x19, #AES_CTX_H
     st1     {v0.16b}, [x0]
@@ -11236,7 +11622,7 @@ aes_gcm_run:
     str     w0, [sp, #(GCM_FRAME_J0 + GCM_IV_SIZE)]
     add     x0, sp, #GCM_FRAME_J0
     ld1     {v0.16b}, [x0]
-    aes_enc_block
+    bl      aes_enc_block
     mov     v31.16b, v0.16b
     mov     w28, #1
     mov     x0, x21
@@ -11250,7 +11636,7 @@ aes_gcm_run_data:
     ld1     {v0.16b}, [x0]
     rev     w0, w28
     mov     v0.s[3], w0
-    aes_enc_block
+    bl      aes_enc_block
     cmp     x24, #AES_BLOCK_SIZE
     b.lo    aes_gcm_run_partial
     ld1     {v1.16b}, [x23], #16
@@ -11459,13 +11845,20 @@ aes_selftest_fail:
     bl      uart_putdec
     ladr    x0, uart_newline
     bl      uart_puts
-    b       aes_selftest_done
+    b       aes_selftest_bad
 
 aes_selftest_missing:
     ladr    x0, aes_missing_msg
     bl      uart_puts
 
+aes_selftest_bad:
+    mov     w0, #1
+    b       aes_selftest_exit
+
 aes_selftest_done:
+    mov     w0, #0
+
+aes_selftest_exit:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
@@ -11926,8 +12319,13 @@ x25519_selftest_fail:
     bl      uart_putdec
     ladr    x0, uart_newline
     bl      uart_puts
+    mov     w0, #1
+    b       x25519_selftest_exit
 
 x25519_selftest_done:
+    mov     w0, #0
+
+x25519_selftest_exit:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
@@ -11946,6 +12344,10 @@ tls_fail:
     ladr    x9, tls_ctx
     mov     w0, #TLS_STATE_CLOSED
     strb    w0, [x9, #TLS_STATE]
+    add     x0, x9, #TLS_PRIV
+    mov     w1, #(TLS_CTX_SIZE - TLS_PRIV)
+    bl      mem_wipe
+    ladr    x9, tls_ctx
     ldr     x0, [x9, #TLS_TCB]
     cbz     x0, tls_fail_done
     bl      tcp_close
@@ -12089,19 +12491,32 @@ tls_connect:
     mov     w20, w0
     mov     w21, w1
     ladr    x19, tls_ctx
+    ladr    x0, crypto_ready
+    ldrb    w0, [x0]
+    cbnz    w0, tls_connect_allowed
+    ladr    x0, tls_locked_msg
+    bl      uart_puts
+    mov     x0, #0
+    b       tls_connect_done
+
+tls_connect_entropy:
+    ladr    x0, tls_entropy_msg
+    bl      uart_puts
+    mov     x0, #0
+    b       tls_connect_done
+
+tls_connect_allowed:
     mov     x0, x19
     mov     w1, #TLS_CTX_SIZE
     bl      mem_wipe
-    add     x22, x19, #TLS_PRIV
-    mov     w0, #24
-
-tls_connect_random:
-    str     w0, [sp, #-16]!
-    bl      net_random
-    str     w0, [x22], #4
-    ldr     w0, [sp], #16
-    subs    w0, w0, #1
-    b.ne    tls_connect_random
+    add     x0, x19, #TLS_PRIV
+    mov     w1, #32
+    bl      rng_get
+    cbnz    w0, tls_connect_entropy
+    add     x0, x19, #TLS_RANDOM
+    mov     w1, #32
+    bl      rng_get
+    cbnz    w0, tls_connect_entropy
     add     x0, x19, #TLS_PUB
     add     x1, x19, #TLS_PRIV
     bl      x25519_base
@@ -12134,97 +12549,25 @@ tls_connect_done:
     ldp     x29, x30, [sp], #48
     ret
 
-.macro tls_put8 val
-    mov     w0, #\val
-    strb    w0, [x19], #1
-.endm
-
-.macro tls_put16 val
-    mov     w0, #\val
-    lsr     w1, w0, #8
-    strb    w1, [x19], #1
-    strb    w0, [x19], #1
-.endm
-
 tls_build_client_hello:
-    stp     x29, x30, [sp, #-48]!
-    stp     x19, x20, [sp, #16]
-    stp     x21, x22, [sp, #32]
-    ladr    x20, tls_out_buf
-    ladr    x22, tls_ctx
-    mov     x19, x20
-    tls_put8 TLS_REC_HANDSHAKE
-    tls_put16 0x0301
-    add     x19, x19, #2
-    tls_put8 TLS_HS_CLIENT_HELLO
-    add     x19, x19, #3
-    tls_put16 TLS_VERSION_12
-    add     x0, x22, #TLS_RANDOM
-    mov     x1, x19
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x19, tls_ctx
+    ladr    x0, tls_hello_tpl
+    ladr    x1, tls_out_buf
+    mov     w2, #(tls_hello_end - tls_hello_tpl)
+    bl      mem_copy
+    add     x0, x19, #TLS_RANDOM
+    ladr    x1, tls_out_buf+(tls_hello_random-tls_hello_tpl)
     mov     w2, #32
     bl      mem_copy
-    add     x19, x19, #32
-    tls_put8 0
-    tls_put16 2
-    tls_put16 TLS_SUITE_AES128_SHA256
-    tls_put8 1
-    tls_put8 0
-    mov     x21, x19
-    add     x19, x19, #2
-    tls_put16 TLS_EXT_SERVER_NAME
-    tls_put16 (tls_host_end - tls_host + 5)
-    tls_put16 (tls_host_end - tls_host + 3)
-    tls_put8 0
-    tls_put16 (tls_host_end - tls_host)
-    ladr    x0, tls_host
-    mov     x1, x19
-    mov     w2, #(tls_host_end - tls_host)
-    bl      mem_copy
-    add     x19, x19, #(tls_host_end - tls_host)
-    tls_put16 TLS_EXT_GROUPS
-    tls_put16 4
-    tls_put16 2
-    tls_put16 TLS_GROUP_X25519
-    tls_put16 TLS_EXT_SIG_ALGS
-    tls_put16 4
-    tls_put16 2
-    tls_put16 TLS_SIG_ECDSA_P256
-    tls_put16 TLS_EXT_VERSIONS
-    tls_put16 3
-    tls_put8 2
-    tls_put16 TLS_VERSION_13
-    tls_put16 TLS_EXT_KEY_SHARE
-    tls_put16 38
-    tls_put16 36
-    tls_put16 TLS_GROUP_X25519
-    tls_put16 32
-    add     x0, x22, #TLS_PUB
-    mov     x1, x19
+    add     x0, x19, #TLS_PUB
+    ladr    x1, tls_out_buf+(tls_hello_pub-tls_hello_tpl)
     mov     w2, #32
     bl      mem_copy
-    add     x19, x19, #32
-    sub     x0, x19, x21
-    sub     x0, x0, #2
-    mov     x1, #0
-    stp     x0, x21, [sp, #-16]!
-    mov     w2, w0
-    mov     x0, x21
-    bl      mem_write16be
-    ldp     x0, x21, [sp], #16
-    sub     x0, x19, x20
-    sub     w1, w0, #9
-    lsr     w2, w1, #16
-    strb    w2, [x20, #6]
-    lsr     w2, w1, #8
-    strb    w2, [x20, #7]
-    strb    w1, [x20, #8]
-    sub     w1, w0, #5
-    lsr     w2, w1, #8
-    strb    w2, [x20, #3]
-    strb    w1, [x20, #4]
-    ldp     x21, x22, [sp, #32]
-    ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #48
+    mov     w0, #(tls_hello_end - tls_hello_tpl)
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
     ret
 
 tls_send_record:
@@ -12286,13 +12629,20 @@ tls_on_data:
     mov     x20, x1
     mov     w21, w2
     cbnz    w21, tls_on_data_append
-    ldrb    w0, [x19, #TLS_STATE]
-    cmp     w0, #TLS_STATE_CLOSED
+    ldrb    w22, [x19, #TLS_STATE]
+    cmp     w22, #TLS_STATE_CLOSED
     b.eq    tls_on_data_done
     mov     w0, #TLS_STATE_CLOSED
     strb    w0, [x19, #TLS_STATE]
     str     xzr, [x19, #TLS_TCB]
+    add     x0, x19, #TLS_PRIV
+    mov     w1, #(TLS_CTX_SIZE - TLS_PRIV)
+    bl      mem_wipe
     ladr    x0, tls_closed_msg
+    bl      uart_puts
+    cmp     w22, #TLS_STATE_IDLE
+    b.eq    tls_on_data_done
+    ladr    x0, tls_truncated_msg
     bl      uart_puts
     b       tls_on_data_done
 
@@ -12300,52 +12650,57 @@ tls_on_data_append:
     ldrb    w0, [x19, #TLS_STATE]
     cmp     w0, #TLS_STATE_CLOSED
     b.eq    tls_on_data_done
+
+tls_on_data_take:
+    cbz     w21, tls_on_data_done
     ldr     w0, [x19, #TLS_RX_LEN]
-    add     w1, w0, w21
-    mov     w2, #TLS_RX_SIZE
-    cmp     w1, w2
-    b.hi    tls_on_data_overflow
+    cmp     w0, #5
+    b.hs    tls_on_data_body
+    mov     w1, #5
+    sub     w22, w1, w0
+    b       tls_on_data_copy
+
+tls_on_data_body:
+    ladr    x1, tls_rx_buf
+    ldrb    w2, [x1, #3]
+    ldrb    w3, [x1, #4]
+    orr     w2, w3, w2, lsl #8
+    mov     w3, #TLS_REC_MAX
+    cmp     w2, w3
+    b.hi    tls_on_data_toolong
+    add     w2, w2, #5
+    sub     w22, w2, w0
+
+tls_on_data_copy:
+    cmp     w22, w21
+    csel    w22, w21, w22, hi
     ladr    x1, tls_rx_buf
     add     x1, x1, x0
     mov     x0, x20
-    mov     w2, w21
+    mov     w2, w22
     bl      mem_copy
+    add     x20, x20, x22
+    sub     w21, w21, w22
     ldr     w0, [x19, #TLS_RX_LEN]
-    add     w0, w0, w21
+    add     w0, w0, w22
     str     w0, [x19, #TLS_RX_LEN]
-
-tls_on_data_records:
-    ldr     w0, [x19, #TLS_RX_LEN]
     cmp     w0, #5
-    b.lo    tls_on_data_done
-    ladr    x20, tls_rx_buf
-    ldrb    w1, [x20, #3]
-    ldrb    w2, [x20, #4]
-    orr     w21, w2, w1, lsl #8
-    mov     w2, #TLS_REC_MAX
-    cmp     w21, w2
-    b.hi    tls_on_data_toolong
-    add     w22, w21, #5
-    cmp     w0, w22
-    b.lo    tls_on_data_done
-    mov     x0, x20
-    mov     w1, w21
+    b.lo    tls_on_data_take
+    ladr    x1, tls_rx_buf
+    ldrb    w2, [x1, #3]
+    ldrb    w3, [x1, #4]
+    orr     w2, w3, w2, lsl #8
+    add     w3, w2, #5
+    cmp     w0, w3
+    b.lo    tls_on_data_take
+    mov     x0, x1
+    mov     w1, w2
     bl      tls_process_record
+    str     wzr, [x19, #TLS_RX_LEN]
     ldrb    w0, [x19, #TLS_STATE]
     cmp     w0, #TLS_STATE_CLOSED
     b.eq    tls_on_data_done
-    ldr     w0, [x19, #TLS_RX_LEN]
-    sub     w2, w0, w22
-    str     w2, [x19, #TLS_RX_LEN]
-    add     x0, x20, x22
-    mov     x1, x20
-    bl      mem_copy
-    b       tls_on_data_records
-
-tls_on_data_overflow:
-    ladr    x0, tls_overflow_msg
-    bl      tls_fail
-    b       tls_on_data_done
+    b       tls_on_data_take
 
 tls_on_data_toolong:
     ladr    x0, tls_toolong_msg
@@ -12450,13 +12805,18 @@ tls_process_record_inner_app:
     cbz     w22, tls_process_record_done
     ldrb    w0, [x19, #TLS_SEEN]
     cbnz    w0, tls_process_record_done
+    ladr    x0, tls_line
+    add     x1, x20, #5
+    mov     w2, w22
+    bl      line_collect
+    cbz     w0, tls_process_record_done
     mov     w0, #1
     strb    w0, [x19, #TLS_SEEN]
     ladr    x0, tls_https_msg
     bl      uart_puts
-    add     x0, x20, #5
-    mov     w1, w22
-    bl      tcp_put_line
+    ladr    x0, tls_line
+    add     x0, x0, #4
+    bl      uart_puts
     ladr    x0, uart_newline
     bl      uart_puts
     b       tls_process_record_done
@@ -12503,6 +12863,10 @@ tls_alert_close:
     ladr    x9, tls_ctx
     mov     w0, #TLS_STATE_CLOSED
     strb    w0, [x9, #TLS_STATE]
+    add     x0, x9, #TLS_PRIV
+    mov     w1, #(TLS_CTX_SIZE - TLS_PRIV)
+    bl      mem_wipe
+    ladr    x9, tls_ctx
     ldr     x0, [x9, #TLS_TCB]
     cbz     x0, tls_alert_done
     bl      tcp_close
@@ -12519,47 +12883,63 @@ tls_handshake_append:
     ladr    x19, tls_ctx
     mov     x20, x0
     mov     w21, w1
+
+tls_handshake_take:
+    cbz     w21, tls_handshake_done
     ldr     w0, [x19, #TLS_HS_LEN]
-    add     w1, w0, w21
-    mov     w2, #TLS_HS_SIZE
-    cmp     w1, w2
+    cmp     w0, #4
+    b.hs    tls_handshake_body
+    mov     w1, #4
+    sub     w22, w1, w0
+    b       tls_handshake_copy
+
+tls_handshake_body:
+    ladr    x1, tls_hs_buf
+    ldrb    w2, [x1, #1]
+    ldrb    w3, [x1, #2]
+    ldrb    w4, [x1, #3]
+    lsl     w2, w2, #16
+    orr     w2, w2, w3, lsl #8
+    orr     w2, w2, w4
+    add     w2, w2, #4
+    mov     w3, #TLS_HS_SIZE
+    cmp     w2, w3
     b.hi    tls_handshake_overflow
+    sub     w22, w2, w0
+
+tls_handshake_copy:
+    cmp     w22, w21
+    csel    w22, w21, w22, hi
     ladr    x1, tls_hs_buf
     add     x1, x1, x0
     mov     x0, x20
-    mov     w2, w21
+    mov     w2, w22
     bl      mem_copy
+    add     x20, x20, x22
+    sub     w21, w21, w22
     ldr     w0, [x19, #TLS_HS_LEN]
-    add     w0, w0, w21
+    add     w0, w0, w22
     str     w0, [x19, #TLS_HS_LEN]
-
-tls_handshake_loop:
-    ldr     w0, [x19, #TLS_HS_LEN]
     cmp     w0, #4
-    b.lo    tls_handshake_done
-    ladr    x20, tls_hs_buf
-    ldrb    w1, [x20, #1]
-    ldrb    w2, [x20, #2]
-    ldrb    w3, [x20, #3]
-    lsl     w1, w1, #16
-    orr     w1, w1, w2, lsl #8
-    orr     w21, w1, w3
-    add     w22, w21, #4
-    cmp     w0, w22
-    b.lo    tls_handshake_done
-    mov     x0, x20
-    mov     w1, w21
+    b.lo    tls_handshake_take
+    ladr    x1, tls_hs_buf
+    ldrb    w2, [x1, #1]
+    ldrb    w3, [x1, #2]
+    ldrb    w4, [x1, #3]
+    lsl     w2, w2, #16
+    orr     w2, w2, w3, lsl #8
+    orr     w2, w2, w4
+    add     w3, w2, #4
+    cmp     w0, w3
+    b.lo    tls_handshake_take
+    mov     x0, x1
+    mov     w1, w2
     bl      tls_handshake_message
+    str     wzr, [x19, #TLS_HS_LEN]
     ldrb    w0, [x19, #TLS_STATE]
     cmp     w0, #TLS_STATE_CLOSED
     b.eq    tls_handshake_done
-    ldr     w0, [x19, #TLS_HS_LEN]
-    sub     w2, w0, w22
-    str     w2, [x19, #TLS_HS_LEN]
-    add     x0, x20, x22
-    mov     x1, x20
-    bl      mem_copy
-    b       tls_handshake_loop
+    b       tls_handshake_take
 
 tls_handshake_overflow:
     ladr    x0, tls_overflow_msg
@@ -12569,6 +12949,23 @@ tls_handshake_done:
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
+    ret
+
+tls_hs_mark:
+    ladr    x9, tls_ctx
+    ldrb    w2, [x9, #TLS_HS_SEEN]
+    and     w3, w2, w1
+    cmp     w3, w1
+    b.ne    tls_hs_mark_bad
+    tst     w2, w0
+    b.ne    tls_hs_mark_bad
+    orr     w2, w2, w0
+    strb    w2, [x9, #TLS_HS_SEEN]
+    mov     w0, #0
+    ret
+
+tls_hs_mark_bad:
+    mov     w0, #1
     ret
 
 tls_handshake_message:
@@ -12584,12 +12981,18 @@ tls_handshake_message:
     b.eq    tls_handshake_message_done
     cmp     w22, #TLS_HS_SERVER_HELLO
     b.eq    tls_handshake_message_hello
+    cmp     w0, #TLS_STATE_HANDSHAKE
+    b.ne    tls_handshake_message_bad
     cmp     w22, #TLS_HS_FINISHED
     b.eq    tls_handshake_message_finished
     cmp     w22, #TLS_HS_CERT_VERIFY
     b.eq    tls_handshake_message_verify
     cmp     w22, #TLS_HS_CERTIFICATE
     b.ne    tls_handshake_message_hash
+    mov     w0, #2
+    mov     w1, #1
+    bl      tls_hs_mark
+    cbnz    w0, tls_handshake_message_bad
     add     x0, x20, #4
     mov     w1, w21
     bl      tls_certificate
@@ -12597,7 +13000,14 @@ tls_handshake_message:
 
 tls_handshake_message_hash:
     cmp     w22, #TLS_HS_ENCRYPTED_EXT
-    b.eq    tls_handshake_message_hash_do
+    b.ne    tls_handshake_message_hash_cert
+    mov     w0, #1
+    mov     w1, #0
+    bl      tls_hs_mark
+    cbnz    w0, tls_handshake_message_bad
+    b       tls_handshake_message_hash_do
+
+tls_handshake_message_hash_cert:
     cmp     w22, #TLS_HS_CERTIFICATE
     b.eq    tls_handshake_message_hash_do
     cmp     w22, #TLS_HS_CERT_VERIFY
@@ -12624,6 +13034,7 @@ tls_handshake_message_hello:
     add     w1, w21, #4
     bl      tls_transcript_update
     bl      tls_keys_handshake
+    cbnz    w0, tls_handshake_message_done
     mov     w0, #TLS_STATE_HANDSHAKE
     strb    w0, [x19, #TLS_STATE]
     ladr    x0, tls_server_hello_msg
@@ -12636,6 +13047,10 @@ tls_handshake_message_finished:
     b.ne    tls_handshake_message_bad
     cmp     w21, #SHA_DIGEST_SIZE
     b.ne    tls_handshake_message_bad
+    mov     w0, #8
+    mov     w1, #7
+    bl      tls_hs_mark
+    cbnz    w0, tls_handshake_message_bad
     add     x0, x19, #TLS_HASH
     bl      tls_transcript_hash
     add     x0, x19, #TLS_S_HS
@@ -12661,6 +13076,10 @@ tls_handshake_message_verify:
     ldrb    w0, [x19, #TLS_STATE]
     cmp     w0, #TLS_STATE_HANDSHAKE
     b.ne    tls_handshake_message_bad
+    mov     w0, #4
+    mov     w1, #3
+    bl      tls_hs_mark
+    cbnz    w0, tls_handshake_message_bad
     add     x0, x20, #4
     mov     w1, w21
     bl      tls_cert_verify
@@ -12833,6 +13252,13 @@ tls_keys_handshake:
     add     x1, x19, #TLS_PRIV
     add     x2, x19, #TLS_SERVER_PUB
     bl      x25519
+    add     x0, x19, #TLS_SHARED
+    ldp     x1, x2, [x0]
+    ldp     x3, x4, [x0, #16]
+    orr     x1, x1, x2
+    orr     x3, x3, x4
+    orr     x1, x1, x3
+    cbz     x1, tls_keys_handshake_zero
     add     x0, x19, #TLS_MASTER
     mov     x1, #SHA_DIGEST_SIZE
     add     x2, x19, #TLS_SHARED
@@ -12880,6 +13306,15 @@ tls_keys_handshake:
     add     x0, x19, #TLS_SHARED
     mov     w1, #SHA_DIGEST_SIZE
     bl      mem_wipe
+    mov     w0, #0
+    b       tls_keys_handshake_done
+
+tls_keys_handshake_zero:
+    ladr    x0, tls_zero_shared_msg
+    bl      tls_fail
+    mov     w0, #1
+
+tls_keys_handshake_done:
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
@@ -13646,10 +14081,17 @@ keyboard_apply:
     b       key_put
 
 keyboard_apply_shift:
-    cmp     w2, #0
-    cset    w2, ne
+    cmp     w1, #KEY_LEFTSHIFT
+    mov     w4, #1
+    mov     w5, #2
+    csel    w4, w4, w5, eq
     ladr    x3, key_shift
-    strb    w2, [x3]
+    ldrb    w5, [x3]
+    orr     w6, w5, w4
+    bic     w7, w5, w4
+    cmp     w2, #0
+    csel    w5, w7, w6, eq
+    strb    w5, [x3]
 
 keyboard_apply_done:
     ret
@@ -13688,94 +14130,452 @@ key_get_empty:
     mov     w0, #-1
     ret
 
-win_top_kind:
+win_top_index:
     ladr    x9, win_count
-    ldr     w9, [x9]
-    cbz     w9, win_top_kind_none
-    sub     w9, w9, #1
-    ladr    x10, win_list
-    mov     x11, #WIN_SIZE
-    madd    x10, x9, x11, x10
-    ldr     w0, [x10, #WIN_KIND]
+    ldr     w0, [x9]
+    sub     w0, w0, #1
     ret
 
-win_top_kind_none:
-    mov     w0, #-1
-    ret
-
-win_find_kind:
+win_find_id:
     ladr    x9, win_count
     ldr     w9, [x9]
     ladr    x10, win_list
     mov     w1, #0
 
-win_find_kind_loop:
+win_find_id_loop:
     cmp     w1, w9
-    b.hs    win_find_kind_none
-    ldr     w2, [x10, #WIN_KIND]
+    b.hs    win_find_id_none
+    ldr     w2, [x10, #WIN_ID]
     cmp     w2, w0
-    b.eq    win_find_kind_hit
+    b.eq    win_find_id_hit
     add     x10, x10, #WIN_SIZE
     add     w1, w1, #1
-    b       win_find_kind_loop
+    b       win_find_id_loop
 
-win_find_kind_hit:
+win_find_id_hit:
     mov     w0, w1
     ret
 
-win_find_kind_none:
+win_find_id_none:
     mov     w0, #-1
     ret
 
-win_mark_kind:
+win_method:
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x0, x10, x9
+    ldr     x9, [x9, #WIN_CLASS]
+
+win_method_walk:
+    cbz     x9, win_method_none
+    ldr     x0, [x9, x1]
+    cbnz    x0, win_method_done
+    ldr     x9, [x9, #CLS_PARENT]
+    b       win_method_walk
+
+win_method_none:
+    mov     x0, #0
+
+win_method_done:
+    ret
+
+win_draw_none:
+    ret
+
+win_key_none:
+    ret
+
+win_focus_none:
+    ret
+
+win_dirty_none:
+    mov     w0, #0
+    ret
+
+win_mark:
     stp     x29, x30, [sp, #-16]!
-    bl      win_find_kind
-    tbnz    w0, #31, win_mark_kind_done
     ladr    x10, win_list
     mov     x11, #WIN_SIZE
     madd    x10, x0, x11, x10
     mov     w1, #1
     strb    w1, [x10, #WIN_BUF_DIRTY]
     bl      win_dirty_rect
-
-win_mark_kind_done:
     ldp     x29, x30, [sp], #16
     ret
 
-gui_refresh:
+win_focus_event:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     w19, w0
+    mov     w20, w1
+    mov     w1, #CLS_FOCUS
+    bl      win_method
+    cbz     x0, win_focus_event_done
+    mov     x9, x0
+    mov     w0, w19
+    mov     w1, w20
+    blr     x9
+
+win_focus_event_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+win_key_top:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     w19, w0
+    bl      win_top_index
+    tbnz    w0, #31, win_key_top_done
+    mov     w20, w0
+    mov     w1, #CLS_KEY
+    bl      win_method
+    cbz     x0, win_key_top_done
+    mov     x9, x0
+    mov     w0, w19
+    mov     w1, w20
+    blr     x9
+
+win_key_top_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+win_close_none:
+    ret
+
+win_button_hit:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     w19, w0
+    mov     w20, w1
+    mov     w1, w2
+    bl      win_on_titlebar
+    cbz     w0, win_button_hit_none
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x19, x10, x9
+    ldr     w10, [x9, #WIN_W]
+    mov     x0, x9
+    bl      win_eff_x
+    add     w0, w0, w10
+    sub     w0, w0, w20
+    sub     w0, w0, #WIN_BORDER
+    cmp     w0, #(WIN_BTN_PAD + ICON_SIZE + WIN_BTN_PAD / 2)
+    b.lo    win_button_hit_close
+    cmp     w0, #(2 * (WIN_BTN_PAD + ICON_SIZE) + WIN_BTN_PAD / 2)
+    b.lo    win_button_hit_shade
+
+win_button_hit_none:
+    mov     w0, #WIN_BTN_NONE
+    b       win_button_hit_done
+
+win_button_hit_close:
+    mov     w0, #WIN_BTN_CLOSE
+    b       win_button_hit_done
+
+win_button_hit_shade:
+    mov     w0, #WIN_BTN_SHADE
+
+win_button_hit_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+win_button_release:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     w19, w0
+    mov     w20, w1
+    ladr    x0, win_btn_armed
+    bl      console_take_flag
+    cbz     w0, win_button_release_none
+    mov     w21, w0
+    mov     w0, w19
+    mov     w1, w20
+    bl      win_hit
+    tbnz    w0, #31, win_button_release_none
+    mov     w22, w0
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x22, x10, x9
+    ldr     w1, [x9, #WIN_ID]
+    ladr    x9, win_btn_id
+    ldr     w2, [x9]
+    cmp     w1, w2
+    b.ne    win_button_release_none
+    mov     w0, w22
+    mov     w1, w19
+    mov     w2, w20
+    bl      win_button_hit
+    cmp     w0, w21
+    b.ne    win_button_release_none
+    mov     w0, w22
+    cmp     w21, #WIN_BTN_CLOSE
+    b.eq    win_button_release_close
+    bl      win_shade_toggle
+    b       win_button_release_hit
+
+win_button_release_close:
+    bl      win_close_request
+
+win_button_release_hit:
+    mov     w0, #1
+    b       win_button_release_done
+
+win_button_release_none:
+    mov     w0, #0
+
+win_button_release_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+win_shade_toggle:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     w19, w0
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x20, x19, x10, x9
+    ldr     w1, [x20, #WIN_FLAGS]
+    eor     w1, w1, #WIN_FLAG_SHADED
+    str     w1, [x20, #WIN_FLAGS]
+    ldr     w21, [x20, #WIN_H_FULL]
+    tst     w1, #WIN_FLAG_SHADED
+    b.eq    win_shade_toggle_start
+    mov     w21, #(WIN_BORDER * 2 + WIN_TITLEBAR_H)
+
+win_shade_toggle_start:
+    mov     x0, x19
+    mov     w1, #ANIM_PROP_H
+    ldr     w2, [x20, #WIN_H]
+    lsl     x2, x2, #ANIM_SHIFT
+    lsl     x3, x21, #ANIM_SHIFT
+    mov     w4, #WIN_SHADE_MS
+    mov     w5, #ANIM_EASE_CUBIC_OUT
+    bl      anim_start
+    cbnz    x0, win_shade_toggle_done
+    mov     w0, w19
+    bl      win_dirty_rect
+    str     w21, [x20, #WIN_H]
+    mov     w0, w19
+    bl      win_dirty_rect
+
+win_shade_toggle_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+win_close_request:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
+    mov     w19, w0
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x19, x10, x9
+    ldr     x2, [x9, #WIN_ALPHA]
+    mov     x0, x19
+    mov     w1, #ANIM_PROP_ALPHA
+    mov     x3, #0
+    mov     w4, #WIN_CLOSE_MS
+    mov     w5, #ANIM_EASE_QUAD_OUT
+    bl      anim_start
+    cbz     x0, win_close_request_now
+    ladr    x1, win_close
+    bl      anim_set_done
+    b       win_close_request_done
+
+win_close_request_now:
+    mov     w0, w19
+    bl      win_close
+
+win_close_request_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+win_close:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     w19, w0
+    mov     w1, #CLS_CLOSE
+    bl      win_method
+    cbz     x0, win_close_notified
+    mov     x9, x0
+    mov     w0, w19
+    blr     x9
+
+win_close_notified:
+    mov     w0, w19
+    bl      win_dirty_rect
+    mov     x0, x19
+    bl      anim_cancel_target
+    ladr    x9, win_count
+    ldr     w20, [x9]
+    sub     w20, w20, #1
+    mov     x0, x19
+    mov     x1, x20
+    bl      anim_raise_targets
+    ladr    x9, win_drag_index
+    ldr     w1, [x9]
+    cmp     w1, w19
+    b.lt    win_close_drag_ok
+    mov     w2, #WIN_NONE
+    sub     w3, w1, #1
+    csel    w1, w2, w3, eq
+    str     w1, [x9]
+
+win_close_drag_ok:
+    ladr    x21, win_list
+    mov     x22, #WIN_SIZE
+    madd    x9, x19, x22, x21
+    ldr     x1, [x9, #WIN_BUF]
+    cbz     x1, win_close_shift
+    ldr     w2, [x9, #WIN_W]
+    ldr     w3, [x9, #WIN_H_FULL]
+    umull   x2, w2, w3
+    lsl     x2, x2, #2
+    add     x2, x2, #63
+    and     x2, x2, #-64
+    stp     x1, x2, [sp, #-32]!
+    str     xzr, [sp, #16]
+
+win_close_pack_loop:
+    ldr     x9, [sp, #16]
+    cmp     w9, w20
+    b.hi    win_close_pack_done
+    madd    x10, x9, x22, x21
+    ldr     x11, [x10, #WIN_BUF]
+    ldr     x12, [sp]
+    cmp     x11, x12
+    b.ls    win_close_pack_next
+    ldr     w0, [x10, #WIN_W]
+    ldr     w1, [x10, #WIN_H_FULL]
+    umull   x2, w0, w1
+    lsl     x2, x2, #2
+    ldr     x13, [sp, #8]
+    sub     x1, x11, x13
+    str     x1, [x10, #WIN_BUF]
+    mov     x0, x11
+    bl      mem_copy
+
+win_close_pack_next:
+    ldr     x9, [sp, #16]
+    add     x9, x9, #1
+    str     x9, [sp, #16]
+    b       win_close_pack_loop
+
+win_close_pack_done:
+    ldr     x2, [sp, #8]
+    add     sp, sp, #32
+    ladr    x4, win_buf_used
+    ldr     x5, [x4]
+    sub     x5, x5, x2
+    str     x5, [x4]
+
+win_close_shift:
+    mov     w1, w19
+
+win_close_shift_loop:
+    cmp     w1, w20
+    b.hs    win_close_shift_done
+    madd    x2, x1, x22, x21
+    add     x3, x2, x22
+    mov     x4, #0
+
+win_close_copy:
+    cmp     x4, #WIN_SIZE
+    b.hs    win_close_copy_done
+    ldr     x5, [x3, x4]
+    str     x5, [x2, x4]
+    add     x4, x4, #8
+    b       win_close_copy
+
+win_close_copy_done:
+    add     w1, w1, #1
+    b       win_close_shift_loop
+
+win_close_shift_done:
+    ladr    x9, win_count
+    str     w20, [x9]
+    cmp     w19, w20
+    b.ne    win_close_done
+    cbz     w20, win_close_done
+    bl      win_focus_start
+
+win_close_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+gui_refresh:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
     mov     w19, #0
-    bl      win_top_kind
-    ladr    x1, gui_top_kind
-    ldrb    w2, [x1]
-    cmp     w0, w2
+    bl      win_top_index
+    mov     w20, w0
+    mov     w21, #0
+    tbnz    w20, #31, gui_refresh_ids
+    ladr    x9, win_list
+    mov     x10, #WIN_SIZE
+    madd    x9, x20, x10, x9
+    ldr     w21, [x9, #WIN_ID]
+
+gui_refresh_ids:
+    ladr    x9, gui_top_win
+    ldr     w22, [x9]
+    cmp     w21, w22
     b.eq    gui_refresh_flags
-    strb    w0, [x1]
-    ladr    x0, term_dirty
+    str     w21, [x9]
+    mov     w0, w22
+    bl      win_find_id
+    tbnz    w0, #31, gui_refresh_gained
+    mov     w1, #0
+    bl      win_focus_event
+
+gui_refresh_gained:
+    tbnz    w20, #31, gui_refresh_flags
+    mov     w0, w20
     mov     w1, #1
-    strb    w1, [x0]
+    bl      win_focus_event
 
 gui_refresh_flags:
-    ladr    x0, term_dirty
-    bl      console_take_flag
-    cbz     w0, gui_refresh_net
-    mov     w0, #WIN_KIND_TERM
-    bl      win_mark_kind
+    mov     w20, #0
+
+gui_refresh_loop:
+    ladr    x0, win_count
+    ldr     w0, [x0]
+    cmp     w20, w0
+    b.hs    gui_refresh_done
+    mov     w0, w20
+    mov     w1, #CLS_DIRTY
+    bl      win_method
+    cbz     x0, gui_refresh_next
+    mov     x9, x0
+    mov     w0, w20
+    blr     x9
+    cbz     w0, gui_refresh_next
+    mov     w0, w20
+    bl      win_mark
     mov     w19, #1
 
-gui_refresh_net:
-    ladr    x0, netlog_dirty
-    bl      console_take_flag
-    cbz     w0, gui_refresh_done
-    mov     w0, #WIN_KIND_NET
-    bl      win_mark_kind
-    mov     w19, #1
+gui_refresh_next:
+    add     w20, w20, #1
+    b       gui_refresh_loop
 
 gui_refresh_done:
     mov     w0, w19
-    ldr     x19, [sp, #16]
-    ldp     x29, x30, [sp], #32
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
     ret
 
 term_init:
@@ -13810,20 +14610,15 @@ term_prompt:
     ldp     x29, x30, [sp], #16
     ret
 
-term_feed:
-    stp     x29, x30, [sp, #-32]!
-    str     x19, [sp, #16]
-    mov     w19, w0
-    bl      win_top_kind
-    cmp     w0, #WIN_KIND_TERM
-    b.ne    term_feed_done
-    mov     w0, w19
-    bl      term_input
-
-term_feed_done:
-    ldr     x19, [sp, #16]
-    ldp     x29, x30, [sp], #32
+term_focus:
+    ladr    x0, term_dirty
+    mov     w1, #1
+    strb    w1, [x0]
     ret
+
+term_take_dirty:
+    ladr    x0, term_dirty
+    b       console_take_flag
 
 term_input:
     stp     x29, x30, [sp, #-32]!
@@ -13909,8 +14704,8 @@ term_draw:
     mov     w21, w2
     mov     x22, x3
     mov     w26, w4
-    bl      win_top_kind
-    cmp     w0, #WIN_KIND_TERM
+    bl      win_top_index
+    cmp     w0, w26
     cset    w23, eq
     ladr    x0, term_row
     ldr     w25, [x0]
@@ -13976,6 +14771,10 @@ netlog_init:
     strb    wzr, [x0]
     ldp     x29, x30, [sp], #16
     ret
+
+netlog_take_dirty:
+    ladr    x0, netlog_dirty
+    b       console_take_flag
 
 netlog_add:
     stp     x29, x30, [sp, #-32]!
@@ -14093,20 +14892,44 @@ gui_line_end_done:
     ret
 
 
-.macro ecm fn, d, a, b
-    add     x0, sp, #\d
-    add     x1, sp, #\a
-    add     x2, sp, #\b
-    mov     x3, x28
-    bl      \fn
+.equ ECOP_MUL,      0
+.equ ECOP_ADD,      1
+.equ ECOP_SUB,      2
+.equ ECOP_TOMONT,   3
+.equ ECOP_FROMMONT, 4
+.equ ECOP_END,      5
+
+.macro ecop op, d, a, b=0
+    .byte   \op, (\d) >> 4, (\a) >> 4, (\b) >> 4
 .endm
 
-.macro ecm2 fn, d, a
-    add     x0, sp, #\d
-    add     x1, sp, #\a
+ec_run:
+    stp     x29, x30, [sp, #-32]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     x20, x1
+
+ec_run_loop:
+    ldrb    w9, [x19]
+    cmp     w9, #ECOP_END
+    b.eq    ec_run_done
+    ldrb    w0, [x19, #1]
+    ldrb    w1, [x19, #2]
+    ldrb    w2, [x19, #3]
+    add     x0, x20, x0, lsl #4
+    add     x1, x20, x1, lsl #4
+    add     x2, x20, x2, lsl #4
     mov     x3, x28
-    bl      \fn
-.endm
+    add     x19, x19, #4
+    ladr    x4, ec_run_fns
+    ldr     x4, [x4, x9, lsl #3]
+    blr     x4
+    b       ec_run_loop
+
+ec_run_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
 
 .equ ECD_X1,    48
 .equ ECD_Y1,    96
@@ -14133,30 +14956,9 @@ ec_dbl:
     add     x1, sp, #ECD_X1
     mov     w2, #EC_POINT_SIZE
     bl      mem_copy
-    ecm mp_mont_mul, ECD_DELTA, ECD_Z1, ECD_Z1
-    ecm mp_mont_mul, ECD_GAMMA, ECD_Y1, ECD_Y1
-    ecm mp_mont_mul, ECD_BETA, ECD_X1, ECD_GAMMA
-    ecm mp_sub_mod, ECD_T1, ECD_X1, ECD_DELTA
-    ecm mp_add_mod, ECD_T2, ECD_X1, ECD_DELTA
-    ecm mp_mont_mul, ECD_ALPHA, ECD_T1, ECD_T2
-    ecm mp_add_mod, ECD_T1, ECD_ALPHA, ECD_ALPHA
-    ecm mp_add_mod, ECD_ALPHA, ECD_T1, ECD_ALPHA
-    ecm mp_mont_mul, ECD_X3, ECD_ALPHA, ECD_ALPHA
-    ecm mp_add_mod, ECD_T1, ECD_BETA, ECD_BETA
-    ecm mp_add_mod, ECD_T1, ECD_T1, ECD_T1
-    ecm mp_add_mod, ECD_T2, ECD_T1, ECD_T1
-    ecm mp_sub_mod, ECD_X3, ECD_X3, ECD_T2
-    ecm mp_add_mod, ECD_Z3, ECD_Y1, ECD_Z1
-    ecm mp_mont_mul, ECD_Z3, ECD_Z3, ECD_Z3
-    ecm mp_sub_mod, ECD_Z3, ECD_Z3, ECD_GAMMA
-    ecm mp_sub_mod, ECD_Z3, ECD_Z3, ECD_DELTA
-    ecm mp_sub_mod, ECD_T1, ECD_T1, ECD_X3
-    ecm mp_mont_mul, ECD_Y3, ECD_ALPHA, ECD_T1
-    ecm mp_mont_mul, ECD_T2, ECD_GAMMA, ECD_GAMMA
-    ecm mp_add_mod, ECD_T2, ECD_T2, ECD_T2
-    ecm mp_add_mod, ECD_T2, ECD_T2, ECD_T2
-    ecm mp_add_mod, ECD_T2, ECD_T2, ECD_T2
-    ecm mp_sub_mod, ECD_Y3, ECD_Y3, ECD_T2
+    ladr    x0, ec_dbl_ops
+    mov     x1, sp
+    bl      ec_run
     add     x0, sp, #ECD_X3
     mov     x1, x19
     mov     w2, #EC_POINT_SIZE
@@ -14214,16 +15016,9 @@ ec_add:
     mov     x1, x28
     bl      mp_is_zero
     cbnz    w0, ec_add_return_p
-    ecm mp_mont_mul, ECA_Z1Z1, ECA_Z1, ECA_Z1
-    ecm mp_mont_mul, ECA_Z2Z2, ECA_Z2, ECA_Z2
-    ecm mp_mont_mul, ECA_U1, ECA_X1, ECA_Z2Z2
-    ecm mp_mont_mul, ECA_U2, ECA_X2, ECA_Z1Z1
-    ecm mp_mont_mul, ECA_S1, ECA_Y1, ECA_Z2
-    ecm mp_mont_mul, ECA_S1, ECA_S1, ECA_Z2Z2
-    ecm mp_mont_mul, ECA_S2, ECA_Y2, ECA_Z1
-    ecm mp_mont_mul, ECA_S2, ECA_S2, ECA_Z1Z1
-    ecm mp_sub_mod, ECA_H, ECA_U2, ECA_U1
-    ecm mp_sub_mod, ECA_R, ECA_S2, ECA_S1
+    ladr    x0, ec_add_ops
+    mov     x1, sp
+    bl      ec_run
     add     x0, sp, #ECA_H
     mov     x1, x28
     bl      mp_is_zero
@@ -14258,25 +15053,9 @@ ec_add_return_p:
     b       ec_add_done
 
 ec_add_general:
-    ecm mp_add_mod, ECA_R, ECA_R, ECA_R
-    ecm mp_add_mod, ECA_I, ECA_H, ECA_H
-    ecm mp_mont_mul, ECA_I, ECA_I, ECA_I
-    ecm mp_mont_mul, ECA_J, ECA_H, ECA_I
-    ecm mp_mont_mul, ECA_V, ECA_U1, ECA_I
-    ecm mp_mont_mul, ECA_X3, ECA_R, ECA_R
-    ecm mp_sub_mod, ECA_X3, ECA_X3, ECA_J
-    ecm mp_sub_mod, ECA_X3, ECA_X3, ECA_V
-    ecm mp_sub_mod, ECA_X3, ECA_X3, ECA_V
-    ecm mp_sub_mod, ECA_T1, ECA_V, ECA_X3
-    ecm mp_mont_mul, ECA_Y3, ECA_R, ECA_T1
-    ecm mp_mont_mul, ECA_T1, ECA_S1, ECA_J
-    ecm mp_add_mod, ECA_T1, ECA_T1, ECA_T1
-    ecm mp_sub_mod, ECA_Y3, ECA_Y3, ECA_T1
-    ecm mp_add_mod, ECA_Z3, ECA_Z1, ECA_Z2
-    ecm mp_mont_mul, ECA_Z3, ECA_Z3, ECA_Z3
-    ecm mp_sub_mod, ECA_Z3, ECA_Z3, ECA_Z1Z1
-    ecm mp_sub_mod, ECA_Z3, ECA_Z3, ECA_Z2Z2
-    ecm mp_mont_mul, ECA_Z3, ECA_Z3, ECA_H
+    ladr    x0, ec_add_general_ops
+    mov     x1, sp
+    bl      ec_run
     add     x0, sp, #ECA_X3
     mov     x1, x19
     mov     w2, #EC_POINT_SIZE
@@ -14481,20 +15260,17 @@ ecdsa_verify:
     mov     x2, x28
     bl      mp_geq
     cbnz    w0, ecdsa_verify_fail
-    ecm2 mp_to_mont, ECV_QX, ECV_QX
-    ecm2 mp_to_mont, ECV_QY, ECV_QY
-    ecm mp_mont_mul, ECV_T1, ECV_QX, ECV_QX
-    ecm mp_mont_mul, ECV_T1, ECV_T1, ECV_QX
-    ecm mp_sub_mod, ECV_T1, ECV_T1, ECV_QX
-    ecm mp_sub_mod, ECV_T1, ECV_T1, ECV_QX
-    ecm mp_sub_mod, ECV_T1, ECV_T1, ECV_QX
+    ladr    x0, ecdsa_curve_ops
+    mov     x1, sp
+    bl      ec_run
     add     x0, sp, #ECV_T1
     add     x1, sp, #ECV_T1
     ldr     x2, [x27, #EC_B]
     mov     x3, x28
     bl      mp_add_mod
-    ecm mp_mont_mul, ECV_T2, ECV_QY, ECV_QY
-    ecm mp_sub_mod, ECV_T1, ECV_T1, ECV_T2
+    ladr    x0, ecdsa_curve_y_ops
+    mov     x1, sp
+    bl      ec_run
     add     x0, sp, #ECV_T1
     mov     x1, x28
     bl      mp_is_zero
@@ -14519,9 +15295,9 @@ ecdsa_verify:
     add     x1, sp, #(ECV_P1 + EC_Z)
     mov     x2, x28
     bl      mp_inv_mod
-    ecm mp_mont_mul, ECV_T1, ECV_T1, ECV_T1
-    ecm mp_mont_mul, ECV_T1, ECV_T1, ECV_P1
-    ecm2 mp_from_mont, ECV_T1, ECV_T1
+    ladr    x0, ecdsa_affine_ops
+    mov     x1, sp
+    bl      ec_run
     add     x0, sp, #ECV_T1
     ldr     x1, [x21, #MP_M]
     mov     x2, x21
@@ -14635,37 +15411,6 @@ ecdsa_sig_int_done:
     ldp     x29, x30, [sp], #48
     ret
 
-.macro sha512_round a, b, c, d, e, f, g, h
-    ldr     x10, [x28, x9, lsl #3]
-    ldr     x11, [x27, x9, lsl #3]
-    ror     x12, \e, #14
-    ror     x13, \e, #18
-    eor     x12, x12, x13
-    ror     x13, \e, #41
-    eor     x12, x12, x13
-    and     x13, \e, \f
-    bic     x14, \g, \e
-    eor     x13, x13, x14
-    add     x10, x10, x11
-    add     x10, x10, \h
-    add     x10, x10, x12
-    add     x10, x10, x13
-    ror     x12, \a, #28
-    ror     x13, \a, #34
-    eor     x12, x12, x13
-    ror     x13, \a, #39
-    eor     x12, x12, x13
-    and     x13, \a, \b
-    and     x14, \a, \c
-    eor     x13, x13, x14
-    and     x14, \b, \c
-    eor     x13, x13, x14
-    add     x12, x12, x13
-    add     \d, \d, x10
-    add     \h, x10, x12
-    add     x9, x9, #1
-.endm
-
 sha512_block:
     sub     sp, sp, #752
     stp     x29, x30, [sp]
@@ -14718,14 +15463,40 @@ sha512_block_schedule:
     mov     x9, #0
 
 sha512_block_rounds:
-    sha512_round x19, x20, x21, x22, x23, x24, x25, x26
-    sha512_round x26, x19, x20, x21, x22, x23, x24, x25
-    sha512_round x25, x26, x19, x20, x21, x22, x23, x24
-    sha512_round x24, x25, x26, x19, x20, x21, x22, x23
-    sha512_round x23, x24, x25, x26, x19, x20, x21, x22
-    sha512_round x22, x23, x24, x25, x26, x19, x20, x21
-    sha512_round x21, x22, x23, x24, x25, x26, x19, x20
-    sha512_round x20, x21, x22, x23, x24, x25, x26, x19
+    ldr     x10, [x28, x9, lsl #3]
+    ldr     x11, [x27, x9, lsl #3]
+    ror     x12, x23, #14
+    ror     x13, x23, #18
+    eor     x12, x12, x13
+    ror     x13, x23, #41
+    eor     x12, x12, x13
+    and     x13, x23, x24
+    bic     x14, x25, x23
+    eor     x13, x13, x14
+    add     x10, x10, x11
+    add     x10, x10, x26
+    add     x10, x10, x12
+    add     x10, x10, x13
+    ror     x12, x19, #28
+    ror     x13, x19, #34
+    eor     x12, x12, x13
+    ror     x13, x19, #39
+    eor     x12, x12, x13
+    and     x13, x19, x20
+    and     x14, x19, x21
+    eor     x13, x13, x14
+    and     x14, x20, x21
+    eor     x13, x13, x14
+    add     x12, x12, x13
+    mov     x26, x25
+    mov     x25, x24
+    mov     x24, x23
+    add     x23, x22, x10
+    mov     x22, x21
+    mov     x21, x20
+    mov     x20, x19
+    add     x19, x10, x12
+    add     x9, x9, #1
     cmp     x9, #80
     b.lo    sha512_block_rounds
     ldr     x0, [sp, #96]
@@ -14939,8 +15710,13 @@ sha384_selftest_fail:
     bl      uart_putdec
     ladr    x0, uart_newline
     bl      uart_puts
+    mov     w0, #1
+    b       sha384_selftest_exit
 
 sha384_selftest_done:
+    mov     w0, #0
+
+sha384_selftest_exit:
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
@@ -15032,8 +15808,13 @@ ecdsa_selftest_fail:
     bl      uart_putdec
     ladr    x0, uart_newline
     bl      uart_puts
+    mov     w0, #1
+    b       ecdsa_selftest_exit
 
 ecdsa_selftest_done:
+    mov     w0, #0
+
+ecdsa_selftest_exit:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #176
     ret
@@ -15193,6 +15974,9 @@ x509_parse_tail:
     b       x509_parse_tail
 
 x509_parse_sig:
+    mov     x0, x19
+    bl      x509_ext_scan
+    cbnz    w0, x509_parse_fail
     ldr     x0, [x19, #X509_TBS]
     ldr     x1, [x19, #X509_TBS_LEN]
     add     x0, x0, x1
@@ -15223,6 +16007,246 @@ x509_parse_done:
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #64
+    ret
+
+x509_ext_scan:
+    stp     x29, x30, [sp, #-80]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    str     x25, [sp, #64]
+    mov     x19, x0
+    str     wzr, [x19, #X509_FLAGS]
+    str     wzr, [x19, #X509_PATHLEN]
+    ldr     x0, [x19, #X509_EXT]
+    cbz     x0, x509_ext_ok
+    ldr     x1, [x19, #X509_EXT_LEN]
+    add     x1, x0, x1
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_ext_bad
+    add     x22, x0, x1
+    mov     x3, x0
+
+x509_ext_loop:
+    cmp     x3, x22
+    b.hs    x509_ext_ok
+    mov     x0, x3
+    mov     x1, x22
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_ext_bad
+    mov     x23, x3
+    add     x24, x0, x1
+    mov     x1, x24
+    mov     w2, #ASN1_OID
+    bl      asn1_expect
+    tbnz    w2, #31, x509_ext_bad
+    mov     x20, x0
+    mov     w21, w1
+    mov     x0, x3
+    mov     x1, x24
+    bl      asn1_next
+    tbnz    w2, #31, x509_ext_bad
+    mov     w25, #0
+    cmp     w2, #ASN1_BOOLEAN
+    b.ne    x509_ext_value
+    ldrb    w25, [x0]
+    mov     x0, x3
+    mov     x1, x24
+    bl      asn1_next
+    tbnz    w2, #31, x509_ext_bad
+
+x509_ext_value:
+    cmp     w2, #ASN1_OCTET_STRING
+    b.ne    x509_ext_bad
+    cmp     w21, #3
+    b.ne    x509_ext_unknown
+    ldrb    w5, [x20]
+    cmp     w5, #0x55
+    b.ne    x509_ext_unknown
+    ldrb    w5, [x20, #1]
+    cmp     w5, #0x1d
+    b.ne    x509_ext_unknown
+    ldrb    w5, [x20, #2]
+    cmp     w5, #0x13
+    b.eq    x509_ext_bc
+    cmp     w5, #0x0f
+    b.eq    x509_ext_ku
+    cmp     w5, #0x25
+    b.eq    x509_ext_eku
+    cmp     w5, #0x11
+    b.eq    x509_ext_next
+
+x509_ext_unknown:
+    cbnz    w25, x509_ext_bad
+    b       x509_ext_next
+
+x509_ext_bc:
+    add     x1, x0, x1
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_ext_bad
+    add     x21, x0, x1
+    mov     x3, x0
+    cmp     x3, x21
+    b.hs    x509_ext_next
+    mov     x0, x3
+    mov     x1, x21
+    bl      asn1_next
+    tbnz    w2, #31, x509_ext_bad
+    cmp     w2, #ASN1_BOOLEAN
+    b.ne    x509_ext_bc_len
+    ldrb    w5, [x0]
+    cbz     w5, x509_ext_bc_after
+    ldr     w5, [x19, #X509_FLAGS]
+    orr     w5, w5, #X509_F_CA
+    str     w5, [x19, #X509_FLAGS]
+
+x509_ext_bc_after:
+    cmp     x3, x21
+    b.hs    x509_ext_next
+    mov     x0, x3
+    mov     x1, x21
+    bl      asn1_next
+    tbnz    w2, #31, x509_ext_bad
+
+x509_ext_bc_len:
+    cmp     w2, #ASN1_INTEGER
+    b.ne    x509_ext_bad
+    cmp     x1, #1
+    b.eq    x509_ext_bc_byte
+    cmp     x1, #2
+    b.ne    x509_ext_bad
+    ldrb    w5, [x0]
+    cbnz    w5, x509_ext_bad
+    add     x0, x0, #1
+
+x509_ext_bc_byte:
+    ldrb    w5, [x0]
+    str     w5, [x19, #X509_PATHLEN]
+    ldr     w5, [x19, #X509_FLAGS]
+    orr     w5, w5, #X509_F_PATHLEN
+    str     w5, [x19, #X509_FLAGS]
+    b       x509_ext_next
+
+x509_ext_ku:
+    add     x1, x0, x1
+    mov     w2, #ASN1_BIT_STRING
+    bl      asn1_expect
+    tbnz    w2, #31, x509_ext_bad
+    cmp     x1, #2
+    b.lo    x509_ext_bad
+    ldrb    w5, [x0, #1]
+    ldr     w6, [x19, #X509_FLAGS]
+    orr     w6, w6, #X509_F_KU
+    tst     w5, #0x04
+    b.eq    x509_ext_ku_sig
+    orr     w6, w6, #X509_F_CERTSIGN
+
+x509_ext_ku_sig:
+    tst     w5, #0x80
+    b.eq    x509_ext_ku_store
+    orr     w6, w6, #X509_F_DIGSIG
+
+x509_ext_ku_store:
+    str     w6, [x19, #X509_FLAGS]
+    b       x509_ext_next
+
+x509_ext_eku:
+    add     x1, x0, x1
+    mov     w2, #ASN1_SEQUENCE
+    bl      asn1_expect
+    tbnz    w2, #31, x509_ext_bad
+    add     x21, x0, x1
+    mov     x3, x0
+    ldr     w6, [x19, #X509_FLAGS]
+    orr     w6, w6, #X509_F_EKU
+    str     w6, [x19, #X509_FLAGS]
+
+x509_ext_eku_loop:
+    cmp     x3, x21
+    b.hs    x509_ext_next
+    mov     x0, x3
+    mov     x1, x21
+    mov     w2, #ASN1_OID
+    bl      asn1_expect
+    tbnz    w2, #31, x509_ext_bad
+    cmp     x1, #8
+    b.ne    x509_ext_eku_loop
+    str     x3, [sp, #-16]!
+    ladr    x1, oid_server_auth
+    mov     w2, #8
+    bl      mem_equal
+    ldr     x3, [sp], #16
+    cbz     w0, x509_ext_eku_loop
+    ldr     w6, [x19, #X509_FLAGS]
+    orr     w6, w6, #X509_F_SERVERAUTH
+    str     w6, [x19, #X509_FLAGS]
+    b       x509_ext_eku_loop
+
+x509_ext_next:
+    mov     x3, x23
+    b       x509_ext_loop
+
+x509_ext_ok:
+    mov     w0, #0
+    b       x509_ext_done
+
+x509_ext_bad:
+    mov     w0, #1
+
+x509_ext_done:
+    ldr     x25, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #80
+    ret
+
+x509_issuer_ok:
+    ldr     w2, [x0, #X509_FLAGS]
+    tst     w2, #X509_F_CA
+    b.eq    x509_issuer_bad
+    tst     w2, #X509_F_KU
+    b.eq    x509_issuer_pathlen
+    tst     w2, #X509_F_CERTSIGN
+    b.eq    x509_issuer_bad
+
+x509_issuer_pathlen:
+    tst     w2, #X509_F_PATHLEN
+    b.eq    x509_issuer_good
+    ldr     w3, [x0, #X509_PATHLEN]
+    cmp     w1, w3
+    b.hi    x509_issuer_bad
+
+x509_issuer_good:
+    mov     w0, #0
+    ret
+
+x509_issuer_bad:
+    mov     w0, #1
+    ret
+
+x509_leaf_ok:
+    ldr     w2, [x0, #X509_FLAGS]
+    tst     w2, #X509_F_EKU
+    b.eq    x509_leaf_ku
+    tst     w2, #X509_F_SERVERAUTH
+    b.eq    x509_leaf_bad
+
+x509_leaf_ku:
+    tst     w2, #X509_F_KU
+    b.eq    x509_leaf_good
+    tst     w2, #X509_F_DIGSIG
+    b.eq    x509_leaf_bad
+
+x509_leaf_good:
+    mov     w0, #0
+    ret
+
+x509_leaf_bad:
+    mov     w0, #1
     ret
 
 x509_sig_hash:
@@ -15634,6 +16658,9 @@ tls_chain_parsed:
     mov     w2, #(tls_host_end - tls_host)
     bl      x509_san_match
     cbz     w0, tls_chain_name
+    ladr    x0, tls_chain_infos
+    bl      x509_leaf_ok
+    cbnz    w0, tls_chain_badleaf
     bl      rtc_now
     cbz     x0, tls_chain_no_clock
     mov     x24, x0
@@ -15661,6 +16688,10 @@ tls_chain_loop:
     add     x1, x21, #X509_INFO_SIZE
     bl      x509_names_equal
     cbz     w0, tls_chain_orphan
+    add     x0, x21, #X509_INFO_SIZE
+    mov     w1, w19
+    bl      x509_issuer_ok
+    cbnz    w0, tls_chain_badca
     mov     x0, x21
     add     x1, x21, #X509_INFO_SIZE
     bl      x509_verify_with
@@ -15676,6 +16707,10 @@ tls_chain_root:
     b.eq    tls_chain_early
     cmp     w0, #2
     b.eq    tls_chain_expired
+    ladr    x0, tls_root_info
+    mov     w1, w19
+    bl      x509_issuer_ok
+    cbnz    w0, tls_chain_badca
     mov     x0, x21
     ladr    x1, tls_root_info
     bl      x509_verify_with
@@ -15723,6 +16758,14 @@ tls_chain_name:
 
 tls_chain_orphan:
     ladr    x0, tls_chain_orphan_msg
+    b       tls_chain_fail
+
+tls_chain_badca:
+    ladr    x0, tls_chain_badca_msg
+    b       tls_chain_fail
+
+tls_chain_badleaf:
+    ladr    x0, tls_chain_badleaf_msg
     b       tls_chain_fail
 
 tls_chain_invalid:
@@ -15801,8 +16844,13 @@ x509_selftest_fail:
     bl      uart_putdec
     ladr    x0, uart_newline
     bl      uart_puts
+    mov     w0, #1
+    b       x509_selftest_exit
 
 x509_selftest_done:
+    mov     w0, #0
+
+x509_selftest_exit:
     ldr     x19, [sp, #16]
     ldp     x29, x30, [sp], #176
     ret
@@ -15826,23 +16874,26 @@ x509_time_valid_late:
     mov     w0, #2
     ret
 
-.macro asn1_time_two dst
+asn1_time_digits:
+    mov     x10, #0
+    mov     w14, w11
+
+asn1_time_digits_loop:
     ldrb    w12, [x9], #1
     sub     w12, w12, #ASCII_ZERO
     cmp     w12, #9
-    b.hi    asn1_time_fail
-    ldrb    w13, [x9], #1
-    sub     w13, w13, #ASCII_ZERO
-    cmp     w13, #9
-    b.hi    asn1_time_fail
-    mov     w14, #10
-    madd    \dst, x12, x14, x13
-.endm
+    b.hi    asn1_time_digits_ret
+    mov     w13, #10
+    madd    x10, x10, x13, x12
+    sub     w14, w14, #1
+    cbnz    w14, asn1_time_digits_loop
+
+asn1_time_digits_ret:
+    ret
 
 asn1_time:
     stp     x29, x30, [sp, #-16]!
     mov     x9, x0
-    mov     x10, #0
     cmp     w2, #ASN1_UTC_TIME
     b.eq    asn1_time_utc
     cmp     w2, #ASN1_GENERAL_TIME
@@ -15858,14 +16909,8 @@ asn1_time_utc:
     mov     w11, #2
 
 asn1_time_year:
-    ldrb    w12, [x9], #1
-    sub     w12, w12, #ASCII_ZERO
-    cmp     w12, #9
+    bl      asn1_time_digits
     b.hi    asn1_time_fail
-    mov     w13, #10
-    madd    x10, x10, x13, x12
-    sub     w11, w11, #1
-    cbnz    w11, asn1_time_year
     cmp     w2, #ASN1_UTC_TIME
     b.ne    asn1_time_fields
     cmp     x10, #50
@@ -15878,11 +16923,22 @@ asn1_time_2000:
 
 asn1_time_fields:
     mov     x0, x10
-    asn1_time_two x1
-    asn1_time_two x2
-    asn1_time_two x3
-    asn1_time_two x4
-    asn1_time_two x5
+    mov     w11, #2
+    bl      asn1_time_digits
+    b.hi    asn1_time_fail
+    mov     x1, x10
+    bl      asn1_time_digits
+    b.hi    asn1_time_fail
+    mov     x2, x10
+    bl      asn1_time_digits
+    b.hi    asn1_time_fail
+    mov     x3, x10
+    bl      asn1_time_digits
+    b.hi    asn1_time_fail
+    mov     x4, x10
+    bl      asn1_time_digits
+    b.hi    asn1_time_fail
+    mov     x5, x10
     ldrb    w12, [x9]
     cmp     w12, #0x5a
     b.ne    asn1_time_fail
@@ -15891,6 +16947,27 @@ asn1_time_fields:
     b.hi    asn1_time_fail
     sub     x12, x2, #1
     cmp     x12, #30
+    b.hi    asn1_time_fail
+    ladr    x12, time_month_days
+    ldrb    w12, [x12, x1]
+    cmp     x1, #2
+    b.ne    asn1_time_daycheck
+    and     x13, x0, #3
+    cbnz    x13, asn1_time_daycheck
+    mov     x13, #100
+    udiv    x14, x0, x13
+    msub    x14, x14, x13, x0
+    cbnz    x14, asn1_time_leap
+    mov     x13, #400
+    udiv    x14, x0, x13
+    msub    x14, x14, x13, x0
+    cbnz    x14, asn1_time_daycheck
+
+asn1_time_leap:
+    add     w12, w12, #1
+
+asn1_time_daycheck:
+    cmp     x2, x12
     b.hi    asn1_time_fail
     cmp     x3, #23
     b.hi    asn1_time_fail
@@ -16213,6 +17290,27 @@ time_selftest_loop:
     mov     w2, #ASN1_UTC_TIME
     bl      asn1_time
     tbz     w1, #31, time_selftest_fail
+    mov     w21, #14
+    ladr    x0, time_test_feb31
+    mov     x1, #13
+    mov     w2, #ASN1_UTC_TIME
+    bl      asn1_time
+    tbz     w1, #31, time_selftest_fail
+    mov     w21, #15
+    ladr    x0, time_test_feb29
+    mov     x1, #13
+    mov     w2, #ASN1_UTC_TIME
+    bl      asn1_time
+    tbnz    w1, #31, time_selftest_fail
+    ldr     x1, =1709208000
+    cmp     x0, x1
+    b.ne    time_selftest_fail
+    mov     w21, #16
+    ladr    x0, time_test_feb29_2100
+    mov     x1, #15
+    mov     w2, #ASN1_GENERAL_TIME
+    bl      asn1_time
+    tbz     w1, #31, time_selftest_fail
     ladr    x0, time_ok_msg
     bl      uart_puts
     b       time_selftest_done
@@ -16224,8 +17322,13 @@ time_selftest_fail:
     bl      uart_putdec
     ladr    x0, uart_newline
     bl      uart_puts
+    mov     w0, #1
+    b       time_selftest_exit
 
 time_selftest_done:
+    mov     w0, #0
+
+time_selftest_exit:
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
@@ -17177,9 +18280,29 @@ x25519_u_6:
 x25519_e_6:
     .byte   0x42,0x2c,0x8e,0x7a,0x62,0x27,0xd7,0xbc,0xa1,0x35,0x0b,0x3e,0x2b,0xb7,0x27,0x9f
     .byte   0x78,0x97,0xb8,0x7b,0xb6,0x85,0x4b,0x78,0x3c,0x60,0xe8,0x03,0x11,0xae,0x30,0x79
+tls_hello_tpl:
+    .byte   TLS_REC_HANDSHAKE, 0x03, 0x01
+    .byte   (tls_hello_end - tls_hello_tpl - 5) >> 8, (tls_hello_end - tls_hello_tpl - 5) & 0xff
+    .byte   TLS_HS_CLIENT_HELLO
+    .byte   0, (tls_hello_end - tls_hello_tpl - 9) >> 8, (tls_hello_end - tls_hello_tpl - 9) & 0xff
+    .byte   TLS_VERSION_12 >> 8, TLS_VERSION_12 & 0xff
+tls_hello_random:
+    .space  32
+    .byte   0, 0, 2, TLS_SUITE_AES128_SHA256 >> 8, TLS_SUITE_AES128_SHA256 & 0xff, 1, 0
+    .byte   (tls_hello_end - tls_hello_ext) >> 8, (tls_hello_end - tls_hello_ext) & 0xff
+tls_hello_ext:
+    .byte   TLS_EXT_SERVER_NAME >> 8, TLS_EXT_SERVER_NAME & 0xff
+    .byte   0, tls_host_end - tls_host + 5, 0, tls_host_end - tls_host + 3, 0, 0, tls_host_end - tls_host
 tls_host:
     .ascii  "example.com"
 tls_host_end:
+    .byte   TLS_EXT_GROUPS >> 8, TLS_EXT_GROUPS & 0xff, 0, 4, 0, 2, TLS_GROUP_X25519 >> 8, TLS_GROUP_X25519 & 0xff
+    .byte   TLS_EXT_SIG_ALGS >> 8, TLS_EXT_SIG_ALGS & 0xff, 0, 4, 0, 2, TLS_SIG_ECDSA_P256 >> 8, TLS_SIG_ECDSA_P256 & 0xff
+    .byte   TLS_EXT_VERSIONS >> 8, TLS_EXT_VERSIONS & 0xff, 0, 3, 2, TLS_VERSION_13 >> 8, TLS_VERSION_13 & 0xff
+    .byte   TLS_EXT_KEY_SHARE >> 8, TLS_EXT_KEY_SHARE & 0xff, 0, 38, 0, 36, TLS_GROUP_X25519 >> 8, TLS_GROUP_X25519 & 0xff, 0, 32
+tls_hello_pub:
+    .space  32
+tls_hello_end:
 tls_label_derived:
     .ascii  "tls13 derived"
 tls_label_derived_end:
@@ -17602,6 +18725,133 @@ sha512_k:
     .quad   0x06f067aa72176fba, 0x0a637dc5a2c898a6, 0x113f9804bef90dae, 0x1b710b35131c471b
     .quad   0x28db77f523047d84, 0x32caab7b40c72493, 0x3c9ebe0a15c9bebc, 0x431d67c49c100d4c
     .quad   0x4cc5d4becb3e42b6, 0x597f299cfc657e2a, 0x5fcb6fab3ad6faec, 0x6c44198c4a475817
+net_tx_busy_msg:
+    .asciz  "NET SENDEPUFFER BELEGT, Rahmen verworfen\n"
+tls_chain_badca_msg:
+    .asciz  "AUSSTELLER OHNE CA-BERECHTIGUNG"
+tls_chain_badleaf_msg:
+    .asciz  "BLATTZERTIFIKAT NICHT FUER SERVER"
+tls_entropy_msg:
+    .asciz  "TLS GESPERRT, keine Entropie\n"
+rng_ready_msg:
+    .asciz  "RNG READY\r\n"
+rng_fail_msg:
+    .asciz  "RNG UNAVAILABLE\r\n"
+oid_server_auth:
+    .byte   0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01
+tls_zero_shared_msg:
+    .asciz  "NULLGEHEIMNIS VOM SERVER"
+tls_truncated_msg:
+    .asciz  "TLS ABBRUCH OHNE CLOSE_NOTIFY\n"
+tls_locked_msg:
+    .asciz  "TLS GESPERRT, Kryptografie nicht bereit\n"
+crypto_ready_msg:
+    .asciz  "KRYPTO BEREIT\n"
+crypto_blocked_msg:
+    .asciz  "KRYPTO GESPERRT, Selbsttest fehlgeschlagen\n"
+time_month_days:
+    .byte   0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+time_test_feb31:
+    .ascii  "260231120000Z"
+time_test_feb29:
+    .ascii  "240229120000Z"
+time_test_feb29_2100:
+    .ascii  "21000229120000Z"
+.balign 8
+ec_run_fns:
+    .quad   mp_mont_mul, mp_add_mod, mp_sub_mod, mp_to_mont, mp_from_mont
+ec_dbl_ops:
+    ecop ECOP_MUL, ECD_DELTA, ECD_Z1, ECD_Z1
+    ecop ECOP_MUL, ECD_GAMMA, ECD_Y1, ECD_Y1
+    ecop ECOP_MUL, ECD_BETA, ECD_X1, ECD_GAMMA
+    ecop ECOP_SUB, ECD_T1, ECD_X1, ECD_DELTA
+    ecop ECOP_ADD, ECD_T2, ECD_X1, ECD_DELTA
+    ecop ECOP_MUL, ECD_ALPHA, ECD_T1, ECD_T2
+    ecop ECOP_ADD, ECD_T1, ECD_ALPHA, ECD_ALPHA
+    ecop ECOP_ADD, ECD_ALPHA, ECD_T1, ECD_ALPHA
+    ecop ECOP_MUL, ECD_X3, ECD_ALPHA, ECD_ALPHA
+    ecop ECOP_ADD, ECD_T1, ECD_BETA, ECD_BETA
+    ecop ECOP_ADD, ECD_T1, ECD_T1, ECD_T1
+    ecop ECOP_ADD, ECD_T2, ECD_T1, ECD_T1
+    ecop ECOP_SUB, ECD_X3, ECD_X3, ECD_T2
+    ecop ECOP_ADD, ECD_Z3, ECD_Y1, ECD_Z1
+    ecop ECOP_MUL, ECD_Z3, ECD_Z3, ECD_Z3
+    ecop ECOP_SUB, ECD_Z3, ECD_Z3, ECD_GAMMA
+    ecop ECOP_SUB, ECD_Z3, ECD_Z3, ECD_DELTA
+    ecop ECOP_SUB, ECD_T1, ECD_T1, ECD_X3
+    ecop ECOP_MUL, ECD_Y3, ECD_ALPHA, ECD_T1
+    ecop ECOP_MUL, ECD_T2, ECD_GAMMA, ECD_GAMMA
+    ecop ECOP_ADD, ECD_T2, ECD_T2, ECD_T2
+    ecop ECOP_ADD, ECD_T2, ECD_T2, ECD_T2
+    ecop ECOP_ADD, ECD_T2, ECD_T2, ECD_T2
+    ecop ECOP_SUB, ECD_Y3, ECD_Y3, ECD_T2
+    .byte   ECOP_END
+ec_add_ops:
+    ecop ECOP_MUL, ECA_Z1Z1, ECA_Z1, ECA_Z1
+    ecop ECOP_MUL, ECA_Z2Z2, ECA_Z2, ECA_Z2
+    ecop ECOP_MUL, ECA_U1, ECA_X1, ECA_Z2Z2
+    ecop ECOP_MUL, ECA_U2, ECA_X2, ECA_Z1Z1
+    ecop ECOP_MUL, ECA_S1, ECA_Y1, ECA_Z2
+    ecop ECOP_MUL, ECA_S1, ECA_S1, ECA_Z2Z2
+    ecop ECOP_MUL, ECA_S2, ECA_Y2, ECA_Z1
+    ecop ECOP_MUL, ECA_S2, ECA_S2, ECA_Z1Z1
+    ecop ECOP_SUB, ECA_H, ECA_U2, ECA_U1
+    ecop ECOP_SUB, ECA_R, ECA_S2, ECA_S1
+    .byte   ECOP_END
+ec_add_general_ops:
+    ecop ECOP_ADD, ECA_R, ECA_R, ECA_R
+    ecop ECOP_ADD, ECA_I, ECA_H, ECA_H
+    ecop ECOP_MUL, ECA_I, ECA_I, ECA_I
+    ecop ECOP_MUL, ECA_J, ECA_H, ECA_I
+    ecop ECOP_MUL, ECA_V, ECA_U1, ECA_I
+    ecop ECOP_MUL, ECA_X3, ECA_R, ECA_R
+    ecop ECOP_SUB, ECA_X3, ECA_X3, ECA_J
+    ecop ECOP_SUB, ECA_X3, ECA_X3, ECA_V
+    ecop ECOP_SUB, ECA_X3, ECA_X3, ECA_V
+    ecop ECOP_SUB, ECA_T1, ECA_V, ECA_X3
+    ecop ECOP_MUL, ECA_Y3, ECA_R, ECA_T1
+    ecop ECOP_MUL, ECA_T1, ECA_S1, ECA_J
+    ecop ECOP_ADD, ECA_T1, ECA_T1, ECA_T1
+    ecop ECOP_SUB, ECA_Y3, ECA_Y3, ECA_T1
+    ecop ECOP_ADD, ECA_Z3, ECA_Z1, ECA_Z2
+    ecop ECOP_MUL, ECA_Z3, ECA_Z3, ECA_Z3
+    ecop ECOP_SUB, ECA_Z3, ECA_Z3, ECA_Z1Z1
+    ecop ECOP_SUB, ECA_Z3, ECA_Z3, ECA_Z2Z2
+    ecop ECOP_MUL, ECA_Z3, ECA_Z3, ECA_H
+    .byte   ECOP_END
+ecdsa_curve_ops:
+    ecop ECOP_TOMONT, ECV_QX, ECV_QX
+    ecop ECOP_TOMONT, ECV_QY, ECV_QY
+    ecop ECOP_MUL, ECV_T1, ECV_QX, ECV_QX
+    ecop ECOP_MUL, ECV_T1, ECV_T1, ECV_QX
+    ecop ECOP_SUB, ECV_T1, ECV_T1, ECV_QX
+    ecop ECOP_SUB, ECV_T1, ECV_T1, ECV_QX
+    ecop ECOP_SUB, ECV_T1, ECV_T1, ECV_QX
+    .byte   ECOP_END
+ecdsa_curve_y_ops:
+    ecop ECOP_MUL, ECV_T2, ECV_QY, ECV_QY
+    ecop ECOP_SUB, ECV_T1, ECV_T1, ECV_T2
+    .byte   ECOP_END
+ecdsa_affine_ops:
+    ecop ECOP_MUL, ECV_T1, ECV_T1, ECV_T1
+    ecop ECOP_MUL, ECV_T1, ECV_T1, ECV_P1
+    ecop ECOP_FROMMONT, ECV_T1, ECV_T1
+    .byte   ECOP_END
+
+.balign 8
+win_class_base:
+    .quad   0, win_draw_none, win_key_none, win_focus_none, win_dirty_none, win_close_none
+win_class_term:
+    .quad   win_class_base, term_draw, term_input, term_focus, term_take_dirty, 0
+win_class_net:
+    .quad   win_class_base, netlog_draw, 0, 0, netlog_take_dirty, 0
+win_class_files:
+    .quad   win_class_base, files_draw, 0, 0, 0, 0
+icon_x:
+    .byte   2, 16, 2, 1, 176, 80, 2, 80, 176, 2, 1, 80, 80, 2, 176, 176
+icon_minus:
+    .byte   1, 16, 2, 1, 72, 128, 2, 184, 128
+
 .section .bss
 
 .balign 8
@@ -17909,7 +19159,47 @@ term_dirty:
     .space  1
 netlog_dirty:
     .space  1
-gui_top_kind:
+.balign 4
+gui_top_win:
+    .space  4
+win_next_id:
+    .space  4
+win_btn_id:
+    .space  4
+net_last_sport:
+    .space  4
+dns_local_port:
+    .space  4
+dns_question_len:
+    .space  4
+dns_question:
+    .space  DNS_QUESTION_MAX
+.balign 16
+rng_base:
+    .space  8
+rng_seed:
+    .space  8
+.balign 16
+rng_desc:
+    .space  (VRING_DESC_SIZE * RNG_QUEUE_SIZE)
+.balign 16
+rng_avail:
+    .space  (VRING_AVAIL_RING + RNG_QUEUE_SIZE * 2 + 2)
+.balign 16
+rng_used:
+    .space  (VRING_USED_RING + RNG_QUEUE_SIZE * VRING_USED_ELEM_SIZE + 2)
+.balign 16
+rng_buf:
+    .space  RNG_BUF_SIZE
+.balign 4
+http_line:
+    .space  (4 + TCP_LINE_MAX)
+.balign 4
+tls_line:
+    .space  (4 + TCP_LINE_MAX)
+win_btn_armed:
+    .space  1
+crypto_ready:
     .space  1
 .balign 4
 term_row:
