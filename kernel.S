@@ -273,7 +273,6 @@
 .equ DHCP_OFFER,            2
 .equ DHCP_REQUEST,          3
 .equ DHCP_ACK,              5
-.equ DHCP_XID_VALUE,        0x61736d4f
 .equ DHCP_STATE_NONE,       0
 .equ DHCP_STATE_DISCOVER,   1
 .equ DHCP_STATE_REQUEST,    2
@@ -9225,7 +9224,8 @@ net_ip_handle:
     mov     x1, #IP_TOTAL_LEN
     bl      mem_read16be
     cmp     w0, w20
-    csel    w20, w0, w20, lo
+    b.hi    net_ip_handle_done
+    mov     w20, w0
     cmp     w20, w21
     b.lo    net_ip_handle_done
     mov     x0, x19
@@ -9417,7 +9417,8 @@ dhcp_build_clear:
     strb    w0, [x19, #DHCP_HLEN]
     mov     x0, x19
     mov     x1, #DHCP_XID
-    ldr     w2, =DHCP_XID_VALUE
+    ladr    x2, dhcp_xid
+    ldr     w2, [x2]
     bl      mem_write32be
     mov     x0, x19
     mov     x1, #DHCP_FLAGS
@@ -9490,6 +9491,9 @@ dhcp_discover:
     stp     x29, x30, [sp, #-16]!
     ladr    x0, net_ip
     str     wzr, [x0]
+    bl      net_random
+    ladr    x1, dhcp_xid
+    str     w0, [x1]
     mov     w0, #DHCP_DISCOVER
     bl      dhcp_build
     ladr    x0, dhcp_state
@@ -9550,10 +9554,24 @@ dhcp_handle:
     ldrb    w0, [x19, #DHCP_OP]
     cmp     w0, #DHCP_BOOTREPLY
     b.ne    dhcp_handle_done
+    ladr    x0, net_last_sport
+    ldr     w0, [x0]
+    cmp     w0, #UDP_PORT_DHCP_SERVER
+    b.ne    dhcp_handle_done
+    ladr    x1, net_mac
+    ldr     w0, [x19, #DHCP_CHADDR]
+    ldr     w2, [x1]
+    cmp     w0, w2
+    b.ne    dhcp_handle_done
+    ldrh    w0, [x19, #(DHCP_CHADDR + 4)]
+    ldrh    w2, [x1, #4]
+    cmp     w0, w2
+    b.ne    dhcp_handle_done
     mov     x0, x19
     mov     x1, #DHCP_XID
     bl      mem_read32be
-    ldr     w1, =DHCP_XID_VALUE
+    ladr    x1, dhcp_xid
+    ldr     w1, [x1]
     cmp     w0, w1
     b.ne    dhcp_handle_done
     mov     x0, x19
@@ -9589,6 +9607,8 @@ dhcp_handle_opts:
     b.hi    dhcp_handle_parsed
     cmp     w3, #DHCP_OPT_MSG_TYPE
     b.ne    dhcp_handle_opt_ip
+    cmp     w5, #1
+    b.ne    dhcp_handle_next
     ldrb    w21, [x19, x6]
     b       dhcp_handle_next
 
@@ -9632,6 +9652,15 @@ dhcp_handle_parsed:
     b.ne    dhcp_handle_done
     cmp     w2, #DHCP_STATE_REQUEST
     b.ne    dhcp_handle_done
+    ladr    x1, dhcp_server
+    ldr     w1, [x1]
+    cmp     w22, w1
+    b.ne    dhcp_handle_done
+    ladr    x1, dhcp_offer
+    ldr     w1, [x1]
+    cmp     w0, w1
+    b.ne    dhcp_handle_done
+    ladr    x1, dhcp_state
     mov     w2, #DHCP_STATE_BOUND
     strb    w2, [x1]
     ladr    x1, net_ip
@@ -9668,6 +9697,7 @@ dhcp_handle_parsed:
 dhcp_handle_offer:
     cmp     w2, #DHCP_STATE_DISCOVER
     b.ne    dhcp_handle_done
+    cbz     w22, dhcp_handle_done
     ladr    x1, dhcp_offer
     str     w0, [x1]
     ladr    x1, dhcp_server
@@ -10601,12 +10631,18 @@ tcp_handle_more:
 tcp_handle_rst:
     ldrb    w0, [x26, #TCB_STATE]
     cmp     w0, #TCP_STATE_SYN_SENT
-    b.ne    tcp_handle_rst_do
+    b.ne    tcp_handle_rst_sync
     tst     w23, #TCP_FLAG_ACK
     b.eq    tcp_handle_done
     ldr     w0, [x26, #TCB_ISS]
     add     w0, w0, #1
     cmp     w22, w0
+    b.ne    tcp_handle_done
+    b       tcp_handle_rst_do
+
+tcp_handle_rst_sync:
+    ldr     w0, [x26, #TCB_RCV_NXT]
+    cmp     w21, w0
     b.ne    tcp_handle_done
 
 tcp_handle_rst_do:
@@ -10663,7 +10699,11 @@ tcp_tick_wait:
     cmp     w1, #TCP_RETRY_MAX
     b.hs    tcp_tick_giveup
     cmp     w0, #TCP_STATE_FIN_WAIT_2
-    b.eq    tcp_tick_loop
+    b.ne    tcp_tick_retry
+    str     wzr, [x19, #TCB_TIMER]
+    b       tcp_tick_loop
+
+tcp_tick_retry:
     cmp     w0, #TCP_STATE_SYN_SENT
     b.ne    tcp_tick_resend
     mov     x0, x19
@@ -19094,6 +19134,8 @@ net_mask:
 dhcp_server:
     .space  4
 dhcp_offer:
+    .space  4
+dhcp_xid:
     .space  4
 dhcp_timer:
     .space  4
