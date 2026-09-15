@@ -290,7 +290,9 @@
 .equ DNS_FLAG_QR,           0x8000
 .equ DNS_RCODE_MASK,        0x000f
 .equ DNS_TYPE_A,            1
+.equ DNS_TYPE_CNAME,        5
 .equ DNS_CLASS_IN,          1
+.equ DNS_NAME_HOPS,         16
 .equ DNS_NAME_MAX,          64
 .equ DNS_RETRY_TICKS,       90
 .equ DNS_RETRY_MAX,         3
@@ -9850,10 +9852,12 @@ dns_skip_name_over:
 dns_handle:
     cmp     w1, #DNS_HDR_SIZE
     b.lo    dns_handle_ret
-    stp     x29, x30, [sp, #-48]!
+    stp     x29, x30, [sp, #-80]!
     stp     x19, x20, [sp, #16]
     stp     x21, x22, [sp, #32]
+    str     x23, [sp, #48]
     mov     x19, x0
+    mov     x23, x0
     add     x20, x19, x1
     ladr    x0, dns_state
     ldrb    w0, [x0]
@@ -9902,6 +9906,13 @@ dns_handle:
     ladr    x1, dns_question
     bl      mem_equal
     cbz     w0, dns_handle_done
+    ladr    x1, dns_target
+    ladr    x2, dns_question
+    ladr    x3, dns_question_len
+    ldr     w3, [x3]
+    add     x3, x2, x3
+    str     x2, [x1]
+    stp     x2, x3, [x1, #8]
     add     x0, x19, #DNS_HDR_SIZE
 
 dns_handle_questions:
@@ -9919,26 +9930,49 @@ dns_handle_answers:
     add     x1, x0, #12
     cmp     x1, x20
     b.hi    dns_handle_noanswer
+    str     x0, [sp, #56]
     mov     x1, x20
     bl      dns_skip_name
     add     x1, x0, #10
     cmp     x1, x20
     b.hi    dns_handle_noanswer
     mov     x19, x0
-    mov     x0, x19
-    mov     x1, #0
-    bl      mem_read16be
-    mov     w21, w0
-    mov     x0, x19
     mov     x1, #8
     bl      mem_read16be
     add     x1, x19, #10
     add     x1, x1, x0
     cmp     x1, x20
     b.hi    dns_handle_noanswer
-    cmp     w21, #DNS_TYPE_A
+    str     x1, [sp, #64]
+    mov     w21, w0
+    mov     x0, x19
+    mov     x1, #2
+    bl      mem_read16be
+    cmp     w0, #DNS_CLASS_IN
     b.ne    dns_handle_answer_next
-    cmp     w0, #4
+    ldr     x0, [sp, #56]
+    mov     x1, x23
+    mov     x2, x20
+    ladr    x3, dns_target
+    ldp     x4, x5, [x3, #8]
+    ldr     x3, [x3]
+    bl      dns_name_equal
+    cbz     w0, dns_handle_answer_next
+    mov     x0, x19
+    mov     x1, #0
+    bl      mem_read16be
+    cmp     w0, #DNS_TYPE_CNAME
+    b.ne    dns_handle_answer_a
+    ladr    x2, dns_target
+    add     x3, x19, #10
+    str     x3, [x2]
+    stp     x23, x20, [x2, #8]
+    b       dns_handle_answer_next
+
+dns_handle_answer_a:
+    cmp     w0, #DNS_TYPE_A
+    b.ne    dns_handle_answer_next
+    cmp     w21, #4
     b.ne    dns_handle_answer_next
     mov     x0, x19
     mov     x1, #10
@@ -9973,7 +10007,7 @@ dns_handle_answers:
     b       dns_handle_done
 
 dns_handle_answer_next:
-    mov     x0, x1
+    ldr     x0, [sp, #64]
     sub     w22, w22, #1
     b       dns_handle_answers
 
@@ -9995,11 +10029,98 @@ dns_handle_noanswer:
     bl      uart_puts
 
 dns_handle_done:
+    ldr     x23, [sp, #48]
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #48
+    ldp     x29, x30, [sp], #80
 
 dns_handle_ret:
+    ret
+
+dns_name_equal:
+    mov     w6, #DNS_NAME_HOPS
+    mov     w7, #DNS_NAME_HOPS
+
+dns_name_equal_ptr_a:
+    cmp     x0, x2
+    b.hs    dns_name_equal_no
+    ldrb    w8, [x0]
+    and     w9, w8, #0xc0
+    cmp     w9, #0xc0
+    b.ne    dns_name_equal_ptr_b
+    add     x9, x0, #1
+    cmp     x9, x2
+    b.hs    dns_name_equal_no
+    ldrb    w9, [x0, #1]
+    and     w8, w8, #0x3f
+    orr     w8, w9, w8, lsl #8
+    add     x0, x1, x8
+    subs    w6, w6, #1
+    b.eq    dns_name_equal_no
+    b       dns_name_equal_ptr_a
+
+dns_name_equal_ptr_b:
+    cmp     x3, x5
+    b.hs    dns_name_equal_no
+    ldrb    w9, [x3]
+    and     w10, w9, #0xc0
+    cmp     w10, #0xc0
+    b.ne    dns_name_equal_label
+    add     x10, x3, #1
+    cmp     x10, x5
+    b.hs    dns_name_equal_no
+    ldrb    w10, [x3, #1]
+    and     w9, w9, #0x3f
+    orr     w9, w10, w9, lsl #8
+    add     x3, x4, x9
+    subs    w7, w7, #1
+    b.eq    dns_name_equal_no
+    b       dns_name_equal_ptr_b
+
+dns_name_equal_label:
+    tst     w8, #0xc0
+    b.ne    dns_name_equal_no
+    tst     w9, #0xc0
+    b.ne    dns_name_equal_no
+    cmp     w8, w9
+    b.ne    dns_name_equal_no
+    cbz     w8, dns_name_equal_yes
+    add     x0, x0, #1
+    add     x3, x3, #1
+    add     x10, x0, x8
+    cmp     x10, x2
+    b.hi    dns_name_equal_no
+    add     x10, x3, x8
+    cmp     x10, x5
+    b.hi    dns_name_equal_no
+
+dns_name_equal_byte:
+    ldrb    w10, [x0], #1
+    ldrb    w11, [x3], #1
+    sub     w12, w10, #0x41
+    cmp     w12, #25
+    b.hi    dns_name_equal_byte_b
+    add     w10, w10, #0x20
+
+dns_name_equal_byte_b:
+    sub     w12, w11, #0x41
+    cmp     w12, #25
+    b.hi    dns_name_equal_byte_cmp
+    add     w11, w11, #0x20
+
+dns_name_equal_byte_cmp:
+    cmp     w10, w11
+    b.ne    dns_name_equal_no
+    subs    w8, w8, #1
+    b.ne    dns_name_equal_byte
+    b       dns_name_equal_ptr_a
+
+dns_name_equal_yes:
+    mov     w0, #1
+    ret
+
+dns_name_equal_no:
+    mov     w0, #0
     ret
 
 dns_tick:
@@ -19245,6 +19366,9 @@ dns_question_len:
     .space  4
 dns_question:
     .space  DNS_QUESTION_MAX
+.balign 8
+dns_target:
+    .space  24
 .balign 16
 rng_base:
     .space  8
