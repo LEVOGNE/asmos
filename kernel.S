@@ -196,6 +196,7 @@
 .equ NET_QUEUE_RX,          0
 .equ NET_QUEUE_TX,          1
 .equ NET_TIMEOUT,           0x1000000
+.equ STACK_GUARD,           0x4b43415453534f4d
 .equ ETH_DST,               0
 .equ ETH_SRC,               6
 .equ ETH_TYPE,              12
@@ -4553,10 +4554,27 @@ virtio_scan_next:
     ldp     x29, x30, [sp], #48
     ret
 
+pmm_stack_check:
+    ladr    x0, __stack_bottom
+    ldr     x0, [x0]
+    ldr     x1, =STACK_GUARD
+    cmp     x0, x1
+    b.ne    pmm_stack_overflow
+    ret
+
+pmm_stack_overflow:
+    msr     daifset, #DAIF_I
+    ladr    x0, pmm_stack_msg
+    bl      uart_puts
+    b       boot_park
+
 pmm_init:
     stp     x29, x30, [sp, #-48]!
     stp     x19, x20, [sp, #16]
     str     x21, [sp, #32]
+    ladr    x0, __stack_bottom
+    ldr     x1, =STACK_GUARD
+    str     x1, [x0]
     ladr    x0, __image_end
     add     x0, x0, #(PAGE_SIZE - 1)
     bic     x0, x0, #(PAGE_SIZE - 1)
@@ -6294,8 +6312,9 @@ virtio_input_poll_baddesc:
     bl      virtio_reset
     str     xzr, [x22, #VIN_BASE]
     str     wzr, [x22, #VIN_INTID]
-    ladr    x0, virtio_baddesc_msg
-    bl      uart_puts
+    ladr    x0, vin_baddesc_pending
+    mov     w1, #1
+    strb    w1, [x0]
     b       virtio_input_poll_end
 
 virtio_input_poll_kick:
@@ -7952,9 +7971,32 @@ console_drain_overflow:
 console_drain_keys:
     bl      key_get
     cmn     w0, #1
-    b.eq    console_drain_click
+    b.eq    console_drain_irq_msgs
     bl      win_key_top
     b       console_drain_keys
+
+console_drain_irq_msgs:
+    ladr    x0, key_overflow
+    bl      console_take_flag
+    cbz     w0, console_drain_irq_desc
+    ladr    x0, key_overflow_msg
+    bl      uart_puts
+
+console_drain_irq_desc:
+    ladr    x0, vin_baddesc_pending
+    bl      console_take_flag
+    cbz     w0, console_drain_irq_unexpected
+    ladr    x0, virtio_baddesc_msg
+    bl      uart_puts
+
+console_drain_irq_unexpected:
+    ladr    x0, irq_unexpected_pending
+    bl      console_take_flag
+    cbz     w0, console_drain_click
+    ladr    x0, irq_label
+    ladr    x1, irq_unexpected_id
+    ldr     w1, [x1]
+    bl      uart_field
 
 console_drain_click:
     bl      click_take
@@ -8043,6 +8085,7 @@ console_drain_blink:
     ladr    x0, console_blink_pending
     bl      console_take_flag
     cbz     w0, console_drain_done
+    bl      pmm_stack_check
     bl      console_draw_cursor
 console_drain_done:
     ldp     x19, x20, [sp, #16]
@@ -8521,7 +8564,7 @@ net_poll_loop:
     cmp     w20, #NET_QUEUE_SIZE
     b.hs    net_poll_bad
     cmp     w2, #NET_BUF_SIZE
-    b.hi    net_poll_bad
+    b.hi    net_poll_badlen
     subs    w2, w2, #NET_HDR_SIZE
     b.le    net_poll_requeue
     ladr    x0, net_rx_buf
@@ -8535,6 +8578,11 @@ net_poll_requeue:
     mov     w0, w20
     bl      net_rx_requeue
     b       net_poll_loop
+
+net_poll_badlen:
+    ladr    x0, net_rx_badlen_msg
+    bl      uart_puts
+    b       net_poll_requeue
 
 net_poll_bad:
     ladr    x0, virtio_baddesc_msg
@@ -8563,9 +8611,11 @@ irq_other:
     b       irq_eoi
 
 irq_unexpected:
-    ladr    x0, irq_label
-    mov     x1, x19
-    bl      uart_field
+    ladr    x0, irq_unexpected_id
+    str     w19, [x0]
+    ladr    x0, irq_unexpected_pending
+    mov     w1, #1
+    strb    w1, [x0]
     b       irq_eoi
 
 console_pending:
@@ -14345,7 +14395,7 @@ tls_cert_verify_scheme:
     b       tls_cert_verify_fail
 
 tls_cert_verify_short:
-    ladr    x0, tls_short_msg
+    ladr    x0, tls_cv_len_msg
     b       tls_cert_verify_fail
 
 tls_cert_verify_bad:
@@ -14414,8 +14464,12 @@ key_put:
     ladr    x5, key_ring
     strb    w0, [x5, w2, uxtw]
     str     w4, [x1]
+    ret
 
 key_put_full:
+    ladr    x5, key_overflow
+    mov     w4, #1
+    strb    w4, [x5]
     ret
 
 key_get:
@@ -19194,6 +19248,14 @@ tls_close_notify:
     .byte   1, 0
 tls_sh_bad_msg:
     .asciz  "ServerHello-Felder ungueltig"
+tls_cv_len_msg:
+    .asciz  "CertificateVerify-Laenge ungueltig"
+pmm_stack_msg:
+    .asciz  "PANIC STACK UEBERLAUF, Waechter am Stackboden ueberschrieben\n"
+key_overflow_msg:
+    .asciz  "TASTENPUFFER VOLL, Tasten verworfen\n"
+net_rx_badlen_msg:
+    .asciz  "NET EMPFANGSLAENGE UNGUELTIG, Puffer neu eingereiht\n"
 crypto_ready_msg:
     .asciz  "KRYPTO BEREIT\n"
 crypto_blocked_msg:
@@ -19606,6 +19668,15 @@ key_tail:
     .space  4
 key_shift:
     .space  1
+key_overflow:
+    .space  1
+vin_baddesc_pending:
+    .space  1
+irq_unexpected_pending:
+    .space  1
+.balign 4
+irq_unexpected_id:
+    .space  4
 term_dirty:
     .space  1
 netlog_dirty:
