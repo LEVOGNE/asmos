@@ -31,6 +31,12 @@ Stand 16.09.2026, nach Runde 28.
 - [x] Terminal legt Eingaben als UTF-8 ab, Rücktaste löscht ganze Zeichen
 - [x] Textgröße an die feste Breite angepasst, keine abgeschnittenen Zeilen mehr
 
+## Erledigt in Runde 31
+
+- [x] Seitenallokator in Betrieb, mehrere zusammenhängende Seiten
+- [x] Eigentümer je Seite, Statistik je Eigentümer, Adresse nach Eigentümer auflösbar
+- [x] Terminalbefehl `speicher`, acht Prüfschritte mit Gegenprobe
+
 ## Erledigt in Runde 30
 
 - [x] Block `llm_`: Exponentialfunktion, RMS-Normierung, Softmax, SwiGLU, Q8-Skalarprodukt, Matrixmultiplikation
@@ -44,7 +50,6 @@ Stand 16.09.2026, nach Runde 28.
 - [ ] Zerlegung in Wortstücke (Tokenizer)
 - [ ] Auswahl des nächsten Stücks und Erzeugungsschleife
 - [ ] NEON für das Skalarprodukt, erst nach Messung an einem echten Modell
-- [ ] Seitenallokator produktiv nutzen, heute ist er vorhanden, aber nirgends verdrahtet
 
 ## Erledigt in Runde 29
 

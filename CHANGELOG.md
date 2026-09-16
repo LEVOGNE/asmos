@@ -4,6 +4,21 @@ Entwicklungsgedächtnis von asmOS: Funktionen, Architekturentscheidungen, Sicher
 
 ## 16.09.2026
 
+### Runde 31: Speicher wird dynamisch und kennt seinen Eigentuemer
+
+**Architektur**
+- Der Seitenallokator war vorhanden, aber nirgends verdrahtet: seine einzigen Aufrufer standen in einem Selbsttest, der nicht einmal assembliert wurde. Alles lief auf statischem `.bss`. Jetzt ist er in Betrieb.
+- Jede Seite traegt einen Eigentuemer: frei, Kernel, Modell, Agent, Fenster. Die Tabelle ist ein Byte je Seite.
+- `pmm_alloc_n` vergibt mehrere zusammenhaengende Seiten, `pmm_free_n` gibt sie zurueck, `pmm_owner_of` beantwortet fuer jede Adresse, wem sie gehoert, `pmm_stat` zaehlt je Eigentuemer.
+- Grund fuer die Eigentuemer: eine Politik kann nur ueber etwas entscheiden, das sie vollstaendig sieht. Das ist die Voraussetzung dafuer, dass spaeter ein Modell die Speicherpolitik besitzt, waehrend der Kernel die Ausfuehrung behaelt.
+- Terminalbefehl `speicher` zeigt den Zustand.
+
+**Nachweise**
+- Acht Pruefschritte beim Start: Zuteilung einzeln, Eigentuemer richtig, vier zusammenhaengende Seiten, Statistik, Freigabe, Rueckkehr zum Ausgangszustand. Meldung `SPEICHER OK, freie Seiten 42240`.
+- Gegenprobe: wird das Schreiben des Eigentuemers ausgebaut, meldet der Kernel `SPEICHER FEHLER in Schritt 3`.
+- 42.496 Seiten unter Verwaltung, also 166 MB. 256 Seiten gehoeren dem Kernel, der Rest ist frei.
+- Ruhebild byteweise gleich, `make check` und `make check-net` laufen durch.
+
 ### Runde 30: Rechenkern fuer Sprachmodelle als Kernelblock
 
 **Architektur**

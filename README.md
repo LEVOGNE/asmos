@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-79.855%20Byte-brightgreen?style=flat-square" alt="79855 Byte">
+<img src="https://img.shields.io/badge/Kernel-81.153%20Byte-brightgreen?style=flat-square" alt="81153 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>79.855&nbsp;Byte</b> groß, also <b>78&nbsp;KB</b>.<br>
+Das fertige System ist <b>81.153&nbsp;Byte</b> groß, also <b>79&nbsp;KB</b>.<br>
 Mit Systemschrift und Wurzelzertifikat sind es <b>276&nbsp;KB</b> auf dem Datenträger.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
@@ -42,7 +42,7 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Eine Maus führen</b></td><td>Zeiger bewegt sich, überdeckter Hintergrund wird gesichert und sauber wiederhergestellt. Einfach-, Doppel- und Dreifachklick werden unterschieden</td></tr>
 <tr><td><b>Fenster zeigen</b></td><td>Fenster mit Titelleiste, TrueType-Beschriftung und zwei Knöpfen: Einklappen auf die Titelleiste und Schließen. Anklicken holt sie nach vorn, an der Titelleiste lassen sie sich ziehen. Neu gezeichnet wird nur, was sich wirklich geändert hat. Jedes Fenster hält sein fertig gerastertes Bild in einem eigenen Puffer, Ziehen ist dadurch ein Kopieren, kein Neurastern. <b>Fenster sind Klassen:</b> eine Basisklasse im Kernel liefert Rahmen, Knöpfe, Fokus, Tastenweiterleitung und Puffer, jeder Fensterinhalt (Terminal, Netzwerk, Dateien) ist eine Tabelle mit den Methoden, die er überschreibt, der Rest wird geerbt</td></tr>
 <tr><td><b>Sich bewegen</b></td><td><b>Eigene Animationsschicht.</b> Fenster blenden ein, klappen weich zu und auf, blenden beim Schließen aus, Fokuswechsel und Ziehen laufen weich statt sprunghaft. Zeitgesteuert, nicht bildzahlgesteuert, dadurch gleich schnell auf schneller und langsamer Maschine. Ein zweiter Klick während der Bewegung kehrt sie ohne Sprung um</td></tr>
-<tr><td><b>Speicher verwalten</b></td><td>Erkennt selbst, wie viel Arbeitsspeicher da ist, verwaltet ihn seitenweise und schaltet die Speicherverwaltungseinheit des Prozessors ein</td></tr>
+<tr><td><b>Speicher verwalten</b></td><td>Erkennt selbst, wie viel Arbeitsspeicher da ist, verwaltet ihn seitenweise und schaltet die Speicherverwaltungseinheit des Prozessors ein. <b>Jede einzelne Seite trägt einen Eigentümer</b>, das System kann also zu jeder Adresse sagen, wem sie gehört, und zu jedem Eigentümer, wie viel er hält. Der Befehl <code>speicher</code> zeigt es</td></tr>
 <tr><td><b>Dateien lesen</b></td><td>Spricht mit einem Datenträger und liest echte FAT32-Dateien, so wie ein USB-Stick sie enthält</td></tr>
 <tr><td><b>Dateien zeigen</b></td><td>Ein Fenster listet den Inhalt des Datenträgers auf, gelesen beim Start aus dem echten Wurzelverzeichnis. Der Text wird auf den Fensterkörper beschnitten, läuft also nie über den Rand</td></tr>
 <tr><td><b>Ins Netz gehen</b></td><td><b>Eigener Netzwerktreiber und die ersten Protokolle.</b> virtio-net mit Empfangs- und Sendequeue, Ethernet, ARP, IPv4, ICMP, UDP und DHCP: Beim Start holt sich das System per DHCP Adresse, Gateway und Nameserver, fragt das Gateway per ARP nach seiner Hardwareadresse, schickt ihm ein Ping, löst per DNS einen Namen auf und holt sich per TCP die erste Zeile einer Webseite: <code>HTTP/1.1 200 OK</code> von example.com. Bis zu vier Verbindungen laufen gleichzeitig, jede mit eigenem Sendepuffer und eigener Empfangsroutine. Die Adresse wird nach halber Leasezeit erneuert. Alles erscheint auf der seriellen Leitung und im Netzwerkfenster</td></tr>
@@ -185,7 +185,7 @@ In `kernel.S` stecken **2.212 Sprungmarken**. Jede gehört zu einem Zuständigke
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **79.855 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 62.768 Byte Code, 14.665 Byte Konstanten |
+| **`kernel.bin`** | **81.153 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 62.768 Byte Code, 14.665 Byte Konstanten |
 | `kernel.elf` | 254 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -201,7 +201,7 @@ Wollte man asmOS heute auf ein Gerät bringen, wären es genau drei Dateien:
 
 | Datei | Größe | Wozu |
 |---|---:|---|
-| `kernel.bin` | 79.855 Byte | das gesamte Betriebssystem |
+| `kernel.bin` | 81.153 Byte | das gesamte Betriebssystem |
 | `FONT.TTF` | 204.776 Byte | die Systemschrift FiraCode, vom Kernel selbst ausgewertet |
 | `ROOT.DER` | 574 Byte | das Wurzelzertifikat für die TLS-Kettenprüfung |
 | **zusammen** | **282.783 Byte, also 276 KB** | |
@@ -734,3 +734,29 @@ Dass der Start weniger Befehle braucht, liegt nicht an der Schrift, sondern an d
 | Sprungmarken | 2.258 | 2.323 |
 | Selbsttests beim Start | 28 Kryptovektoren | 28 Kryptovektoren und 6 Rechengruppen |
 | Ruhebild | Vergleich | 0 abweichende Bildpunkte außerhalb des Netzfensters |
+
+
+### Stand 16.09.2026, Runde 31: Speicher wird dynamisch und kennt seinen Eigentümer
+
+**Vorgeschichte.** Der Seitenallokator existierte seit Monaten und war totes Gerüst. Seine einzigen Aufrufer standen in einem Selbsttest, der über einen Schalter abgeschaltet und deshalb nicht einmal übersetzt wurde. Das ganze laufende System arbeitete auf fest zugeteilten Speicherbereichen. Solange nichts wächst und nichts verschwindet, geht das gut.
+
+**Warum sich das jetzt ändert.** Wer über Speicher entscheiden soll, muss ihn vollständig sehen. Das gilt für einen Menschen, und es gilt erst recht für ein Programm oder ein Modell, das später einmal entscheiden soll, wem wie viel zusteht. Deshalb trägt ab jetzt jede einzelne Seite einen Eigentümer.
+
+| Frage | Antwort des Systems |
+|---|---|
+| Wie viel Speicher wird verwaltet? | 42.496 Seiten zu 4 KB, also 166 MB |
+| Wem gehört die Adresse X? | eine der Kategorien frei, Kernel, Modell, Agent, Fenster |
+| Wie viel hält ein Eigentümer? | gezählt über die ganze Tabelle |
+| Wie bekomme ich zusammenhängenden Speicher? | eine Anfrage nach N Seiten, die auch wirklich nebeneinander liegen |
+
+**Nachweis.** Acht Prüfschritte laufen bei jedem Start: eine Seite zuteilen, Eigentümer prüfen, vier zusammenhängende Seiten zuteilen, die letzte davon auf ihren Eigentümer prüfen, zählen, alles freigeben, zurück auf den Ausgangsstand. Die Meldung lautet `SPEICHER OK, freie Seiten 42240`. Damit die Prüfung nicht blind ist, wurde in einem Testbau das Schreiben des Eigentümers ausgebaut: der Kernel meldet daraufhin `SPEICHER FEHLER in Schritt 3`.
+
+**Was das für die weitere Richtung bedeutet.** Ein Kernel und ein Modell teilen sich die Arbeit sinnvoll nur an einer Linie: der Kernel besitzt den Mechanismus, also wie eine Seite eingeblendet, ein Paket angenommen, ein Pixel gezeichnet wird. Das muss deterministisch und in Mikrosekunden geschehen. Die Politik dagegen, also wem Speicher zusteht, was bei Knappheit weichen muss, was vorgeladen wird, steckt in gewöhnlichen Systemen in Heuristiken, die vor Jahrzehnten festgelegt wurden. Genau diese Schicht ist es, die ein Modell besitzen könnte. Diese Runde baut nicht die Politik, sie baut die Sicht, ohne die keine Politik möglich ist.
+
+| Kennzahl | Runde 30 | Runde 31 |
+|---|---|---|
+| Größe des fertigen Systems | 79.855 Byte | **81.153 Byte** (+1.298) |
+| Zeilen Assembler | 21.980 | 22.349 |
+| Sprungmarken | 2.323 | 2.364 |
+| Verwalteter Speicher | statisch zugeteilt | 42.496 Seiten mit Eigentümer |
+| Selbsttests beim Start | 28 Kryptovektoren, 6 Rechengruppen | dazu 8 Speicherschritte |

@@ -687,6 +687,12 @@
 .equ PAGE_SHIFT,            12
 .equ PMM_MAX_PAGES,         131072
 .equ PMM_BITMAP_SIZE,       (PMM_MAX_PAGES / 8)
+.equ OWN_FREE,              0
+.equ OWN_KERNEL,            1
+.equ OWN_MODEL,             2
+.equ OWN_AGENT,             3
+.equ OWN_WINDOW,            4
+.equ OWN_INVALID,           255
 
 .equ BLOCK_SHIFT,           21
 .equ BLOCK_SIZE,            (1 << BLOCK_SHIFT)
@@ -4917,6 +4923,9 @@ pmm_reserve_loop:
     lsl     w9, w9, w8
     orr     w7, w7, w9
     strb    w7, [x5, x6]
+    ladr    x7, pmm_owner
+    mov     w8, #OWN_KERNEL
+    strb    w8, [x7, x0]
     add     x0, x0, #1
     b       pmm_reserve_loop
 
@@ -15818,6 +15827,73 @@ term_input_busy:
     bl      curl_cancel
     b       term_input_mark
 
+term_mem_show:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x0, curl_msg
+    ladr    x1, term_mem_1
+    bl      term_append
+    mov     x19, x0
+    ladr    x0, pmm_base
+    ldr     w1, [x0, #8]
+    mov     x0, x19
+    bl      term_put_dec
+    mov     x19, x0
+    ladr    x1, term_mem_2
+    bl      term_append
+    mov     x19, x0
+    ladr    x0, pmm_base
+    ldr     w1, [x0, #8]
+    lsr     w1, w1, #8
+    mov     x0, x19
+    bl      term_put_dec
+    mov     x19, x0
+    ladr    x1, term_mem_3
+    bl      term_append
+    ladr    x0, curl_msg
+    bl      term_print
+    ladr    x0, curl_msg
+    ladr    x1, term_mem_4
+    bl      term_append
+    mov     x19, x0
+    mov     w0, #OWN_FREE
+    bl      pmm_stat
+    mov     w1, w0
+    mov     x0, x19
+    bl      term_put_dec
+    mov     x19, x0
+    ladr    x1, term_mem_5
+    bl      term_append
+    mov     x19, x0
+    mov     w0, #OWN_KERNEL
+    bl      pmm_stat
+    mov     w1, w0
+    mov     x0, x19
+    bl      term_put_dec
+    mov     x19, x0
+    ladr    x1, term_mem_6
+    bl      term_append
+    mov     x19, x0
+    mov     w0, #OWN_MODEL
+    bl      pmm_stat
+    mov     w1, w0
+    mov     x0, x19
+    bl      term_put_dec
+    mov     x19, x0
+    ladr    x1, term_mem_7
+    bl      term_append
+    mov     x19, x0
+    mov     w0, #OWN_AGENT
+    bl      pmm_stat
+    mov     w1, w0
+    mov     x0, x19
+    bl      term_put_dec
+    ladr    x0, curl_msg
+    bl      term_print
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
 term_advance:
     stp     x29, x30, [sp, #-16]!
     ladr    x1, term_row
@@ -15916,13 +15992,22 @@ term_command_help:
     ladr    x1, term_cmd_help
     mov     w2, #(term_help_1 - term_cmd_help)
     bl      mem_equal
-    cbz     w0, term_command_unknown
+    cbz     w0, term_command_mem
     ladr    x0, term_help_1
     bl      term_print
     ladr    x0, term_help_2
     bl      term_print
     ladr    x0, term_help_3
     bl      term_print
+    b       term_command_done
+
+term_command_mem:
+    mov     x0, x19
+    ladr    x1, term_cmd_mem
+    mov     w2, #9
+    bl      mem_equal
+    cbz     w0, term_command_unknown
+    bl      term_mem_show
     b       term_command_done
 
 term_command_unknown:
@@ -19254,6 +19339,7 @@ boot_selftests:
     stp     x29, x30, [sp, #-16]!
     bl      crypto_selftest
     bl      llm_selftest
+    bl      pmm_check
     ldp     x29, x30, [sp], #16
     ret
 
@@ -19646,6 +19732,257 @@ llm_st_fail:
 llm_selftest_exit:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
+    ret
+
+pmm_bit_get:
+    ladr    x1, pmm_bitmap
+    lsr     x2, x0, #3
+    ldrb    w3, [x1, x2]
+    and     w4, w0, #7
+    lsr     w3, w3, w4
+    and     w0, w3, #1
+    ret
+
+pmm_mark_range:
+    ladr    x3, pmm_bitmap
+    ladr    x4, pmm_owner
+    mov     w5, #0
+
+pmm_mark_loop:
+    cmp     w5, w1
+    b.hs    pmm_mark_done
+    add     x6, x0, x5, uxtw
+    lsr     x7, x6, #3
+    ldrb    w8, [x3, x7]
+    and     w9, w6, #7
+    mov     w10, #1
+    lsl     w10, w10, w9
+    cbz     w2, pmm_mark_clear
+    orr     w8, w8, w10
+    b       pmm_mark_store
+
+pmm_mark_clear:
+    bic     w8, w8, w10
+
+pmm_mark_store:
+    strb    w8, [x3, x7]
+    strb    w2, [x4, x6]
+    add     w5, w5, #1
+    b       pmm_mark_loop
+
+pmm_mark_done:
+    ret
+
+pmm_alloc_n:
+    stp     x29, x30, [sp, #-80]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     w19, w0
+    mov     w20, w1
+    cbz     w19, pmm_alloc_n_none
+    cbz     w20, pmm_alloc_n_none
+    ladr    x21, pmm_base
+    ldr     x22, [x21, #8]
+    mov     x23, #0
+    mov     x24, #0
+
+pmm_alloc_n_scan:
+    cmp     x24, x22
+    b.hs    pmm_alloc_n_none
+    mov     x0, x24
+    bl      pmm_bit_get
+    cbnz    w0, pmm_alloc_n_reset
+    sub     x0, x24, x23
+    add     x0, x0, #1
+    cmp     x0, x19
+    b.hs    pmm_alloc_n_found
+    add     x24, x24, #1
+    b       pmm_alloc_n_scan
+
+pmm_alloc_n_reset:
+    add     x24, x24, #1
+    mov     x23, x24
+    b       pmm_alloc_n_scan
+
+pmm_alloc_n_found:
+    mov     x0, x23
+    mov     w1, w19
+    mov     w2, w20
+    bl      pmm_mark_range
+    ladr    x0, pmm_base
+    ldr     x0, [x0]
+    add     x0, x0, x23, lsl #PAGE_SHIFT
+    b       pmm_alloc_n_exit
+
+pmm_alloc_n_none:
+    mov     x0, #0
+
+pmm_alloc_n_exit:
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #80
+    ret
+
+pmm_free_n:
+    tst     x0, #(PAGE_SIZE - 1)
+    b.ne    pmm_free_n_done
+    cbz     w1, pmm_free_n_done
+    ladr    x2, pmm_base
+    ldr     x3, [x2]
+    subs    x0, x0, x3
+    b.lo    pmm_free_n_done
+    lsr     x0, x0, #PAGE_SHIFT
+    ldr     x3, [x2, #8]
+    add     x4, x0, x1, uxtw
+    cmp     x4, x3
+    b.hi    pmm_free_n_done
+    mov     w2, #0
+    b       pmm_mark_range
+
+pmm_free_n_done:
+    ret
+
+pmm_owner_of:
+    ladr    x1, pmm_base
+    ldr     x2, [x1]
+    subs    x0, x0, x2
+    b.lo    pmm_owner_none
+    lsr     x0, x0, #PAGE_SHIFT
+    ldr     x2, [x1, #8]
+    cmp     x0, x2
+    b.hs    pmm_owner_none
+    ladr    x1, pmm_owner
+    ldrb    w0, [x1, x0]
+    ret
+
+pmm_owner_none:
+    mov     w0, #OWN_INVALID
+    ret
+
+pmm_stat:
+    ladr    x1, pmm_owner
+    ladr    x2, pmm_base
+    ldr     x2, [x2, #8]
+    mov     w3, #0
+    mov     x4, #0
+
+pmm_stat_loop:
+    cmp     x4, x2
+    b.hs    pmm_stat_done
+    ldrb    w5, [x1, x4]
+    cmp     w5, w0
+    cinc    w3, w3, eq
+    add     x4, x4, #1
+    b       pmm_stat_loop
+
+pmm_stat_done:
+    mov     w0, w3
+    ret
+
+pmm_report:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    ladr    x0, pmm_total_label
+    ladr    x1, pmm_base
+    ldr     x1, [x1, #8]
+    bl      uart_field
+    mov     w0, #OWN_FREE
+    bl      pmm_stat
+    mov     x1, x0
+    ladr    x0, pmm_free_label
+    bl      uart_field
+    mov     w0, #OWN_KERNEL
+    bl      pmm_stat
+    mov     x1, x0
+    ladr    x0, pmm_kernel_label
+    bl      uart_field
+    mov     w0, #OWN_MODEL
+    bl      pmm_stat
+    mov     x1, x0
+    ladr    x0, pmm_model_label
+    bl      uart_field
+    ladr    x0, uart_newline
+    bl      uart_puts
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+pmm_check:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     w19, #1
+    mov     w0, #OWN_FREE
+    bl      pmm_stat
+    mov     w22, w0
+    cbz     w22, pmm_check_fail
+    mov     w19, #2
+    mov     w0, #1
+    mov     w1, #OWN_MODEL
+    bl      pmm_alloc_n
+    mov     x20, x0
+    cbz     x20, pmm_check_fail
+    mov     w19, #3
+    mov     x0, x20
+    bl      pmm_owner_of
+    cmp     w0, #OWN_MODEL
+    b.ne    pmm_check_fail
+    mov     w19, #4
+    mov     w0, #4
+    mov     w1, #OWN_AGENT
+    bl      pmm_alloc_n
+    mov     x21, x0
+    cbz     x21, pmm_check_fail
+    mov     w19, #5
+    add     x0, x21, #(3 * PAGE_SIZE)
+    bl      pmm_owner_of
+    cmp     w0, #OWN_AGENT
+    b.ne    pmm_check_fail
+    mov     w19, #6
+    mov     w0, #OWN_AGENT
+    bl      pmm_stat
+    cmp     w0, #4
+    b.ne    pmm_check_fail
+    mov     w19, #7
+    mov     x0, x20
+    mov     w1, #1
+    bl      pmm_free_n
+    mov     x0, x21
+    mov     w1, #4
+    bl      pmm_free_n
+    mov     w0, #OWN_FREE
+    bl      pmm_stat
+    cmp     w0, w22
+    b.ne    pmm_check_fail
+    mov     w19, #8
+    mov     x0, x20
+    bl      pmm_owner_of
+    cbnz    w0, pmm_check_fail
+    ladr    x0, pmm_ok_msg
+    bl      uart_puts
+    mov     x1, x22
+    ladr    x0, pmm_freepages_label
+    bl      uart_field
+    ladr    x0, uart_newline
+    bl      uart_puts
+    mov     w0, #0
+    b       pmm_check_exit
+
+pmm_check_fail:
+    ladr    x0, pmm_check_fail_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+    mov     w0, #1
+
+pmm_check_exit:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
     ret
 
 .section .text.vectors
@@ -20931,6 +21268,22 @@ term_help_2:
     .asciz  "curl https://host/pfad   Seite ueber TLS 1.3 holen, Kette bis ROOT.DER"
 term_help_3:
     .asciz  "hilfe                    diese Liste"
+term_cmd_mem:
+    .asciz  "speicher"
+term_mem_1:
+    .asciz  "Speicher: "
+term_mem_2:
+    .asciz  " Seiten zu 4 KB, das sind "
+term_mem_3:
+    .asciz  " MB"
+term_mem_4:
+    .asciz  "frei "
+term_mem_5:
+    .asciz  ", Kernel "
+term_mem_6:
+    .asciz  ", Modell "
+term_mem_7:
+    .asciz  ", Agent "
 term_unknown_msg:
     .asciz  "unbekannter Befehl, hilfe zeigt die Befehle"
 curl_http_prefix:
@@ -21329,6 +21682,20 @@ llm_t_dot_w:
 llm_t_dot_out:
     .float  -10.78654
 
+pmm_total_label:
+    .asciz  "SPEICHER seiten="
+pmm_free_label:
+    .asciz  " frei="
+pmm_kernel_label:
+    .asciz  " kernel="
+pmm_model_label:
+    .asciz  " modell="
+pmm_freepages_label:
+    .asciz  ", freie Seiten "
+pmm_ok_msg:
+    .asciz  "SPEICHER OK"
+pmm_check_fail_msg:
+    .asciz  "SPEICHER FEHLER in Schritt "
 llm_ok_msg:
     .asciz  "LLM KERN OK, 6 Testgruppen\n"
 llm_fail_msg:
@@ -21882,6 +22249,8 @@ vg_org_y:
 .balign 8
 vg_edge_count:
     .space  4
+pmm_owner:
+    .space  PMM_MAX_PAGES
 .balign 4
 llm_scratch:
     .space  (LLM_SCRATCH * 4)
