@@ -1925,3 +1925,17 @@ Gegenproben (15.09.2026): ohne `ROOT.DER` → `keine Wurzel geladen`; Wurzel mit
 | Prüfregel | `notBefore ≤ jetzt ≤ notAfter` für jedes Glied der Kette und die Wurzel; ohne Uhr wird die Verbindung abgewiesen | RFC 5280, Abschnitt 6.1.3 (a)(2); Entscheidung: keine stille Auslassung |
 
 Gegenproben (15.09.2026): `-rtc base=2030-01-01T00:00:00` → `ZERTIFIKAT ABGELAUFEN`; `-rtc base=2020-01-01T00:00:00` → `ZERTIFIKAT NOCH NICHT GUELTIG`; `-rtc base=2026-10-27T22:17:15` (sechs Sekunden vor Ablauf des Blatts) → Kette geprüft, `HTTPS HTTP/1.1 200 OK`. Positiv unter TCG GICv2, GICv3 und hvf. Start 601,7 Mio. Befehle.
+
+## Systemschrift Fira Code, zusammengesetzte Glyphen und deutsche Tastatur (16.09.2026)
+
+| Symbol | Wert | Beleg |
+|---|---|---|
+| Herkunft der Schrift | Fira Code, SIL Open Font License 1.1. Das Projektverzeichnis enthält keine gebaute Schriftdatei, nur `FiraCode.glyphs`; der mitgelieferte Bauweg nutzt Docker. Gebaut nativ mit `fontmake 3.12.1` in einer eigenen Umgebung: `fontmake -g FiraCode.glyphs -o ttf -i ".* Regular"` | Quellverzeichnis des Projekts, Datei `LICENSE`; Ergebnis 204.776 Byte, SHA-256 beginnt `7861bf32` |
+| Metriken | `unitsPerEm` 2000, `indexToLocFormat` 0 (kurze loca), `numGlyphs` 2060, `cmap` Format 4 unter Plattform 3 / Kodierung 1, feste Vorschubbreite 1200, also 0,6 Geviert, `yMin` −423, `yMax` 1747 | direkt aus den Tabellen `head`, `maxp`, `hmtx` der Datei gelesen |
+| Zusammengesetzte Glyphen | Aufbau je Bauteil: 2 Byte Kennzeichen, 2 Byte Glyphennummer, dann die Argumente. Bit 0 `ARG_1_AND_2_ARE_WORDS`, Bit 1 `ARGS_ARE_XY_VALUES`, Bit 3 `WE_HAVE_A_SCALE` (2 Byte), Bit 5 `MORE_COMPONENTS`, Bit 6 `X_AND_Y_SCALE` (4 Byte), Bit 7 `TWO_BY_TWO` (8 Byte) | Microsoft OpenType-Spezifikation, Tabelle `glyf`, Abschnitt "Composite Glyph Description" |
+| Beispiel ä | Glyphe 142 aus Bauteil 138 (`a`) mit Kennzeichen 0x0226 und Verschiebung 0,0 sowie Bauteil 1998 (`dieresis`) mit Kennzeichen 0x0006 und Verschiebung −16,−3 | aus der Datei gelesen |
+| Bedarf dieser Schrift | 888 von 2.060 Glyphen sind zusammengesetzt, größte Schachtelungstiefe 3, höchster Punktbedarf 515 und höchste Konturzahl 96, beides nur bei Rasterflächen `░ ▒ ▓` und Zeichen des privaten Bereichs. Die Grenzen des Renderers bleiben bei 256 Punkten und 16 Konturen, überschreitende Glyphen melden `TTF GRENZE ERREICHT` | alle 2.060 Glyphen durchgerechnet |
+| Grenze der Schachtelung | vier Ebenen, damit eine beschädigte Schrift mit einem Kreis aus Bauteilen den Stack nicht füllt. Jede Ebene kostet 112 Byte Stack | Entscheidung, gemessener Bedarf dieser Schrift ist 3 |
+| Linux-Tastencodes | `KEY_MINUS` 12, `KEY_LEFTBRACE` 26, `KEY_RIGHTBRACE` 27, `KEY_SEMICOLON` 39, `KEY_APOSTROPHE` 40, `KEY_BACKSLASH` 43, `KEY_102ND` 86, `KEY_RIGHTALT` 100 | Linux, `include/uapi/linux/input-event-codes.h`; die virtio-Tastatur liefert genau diese Codes |
+| Deutsche Belegung | Grundebene mit z und y vertauscht, `ß ´ ü + ö ä ^ #` an den genannten Tasten, Umschaltebene `! " § $ % & / ( ) = ? \` Ü * Ö Ä ° ' ; : _`, dritte Ebene über AltGr `² ³ { [ ] } \ @ € ~ µ \|` | Deutsche Standardbelegung T1, DIN 2137; am laufenden System über eingespeiste Tastendrücke geprüft |
+| Zeichensätze | Die Tastentabellen liefern Unicode-Codepunkte, der Tastenring führt 16 Bit je Taste. Damit passt auch U+20AC hindurch, das in Latin-1 fehlt | Entscheidung |

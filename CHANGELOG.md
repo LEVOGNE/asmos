@@ -4,6 +4,28 @@ Entwicklungsgedächtnis von asmOS: Funktionen, Architekturentscheidungen, Sicher
 
 ## 16.09.2026
 
+### Runde 28: Fira Code als Systemschrift, Umlaute, deutsche Tastatur
+
+**Funktionen**
+- Systemschrift ist Fira Code, 2.060 Glyphen, aus den Projektquellen mit fontmake gebaut, weil das Verzeichnis keine fertige Datei enthält und der offizielle Weg über Docker liefe.
+- Zusammengesetzte Glyphen werden gezeichnet: der Lader merkt sich die Bauteilliste, eine neue Routine zeichnet jedes Bauteil mit verschobenem Ursprung über denselben Weg wie eine einfache Glyphe. Dadurch erscheinen Umlaute und alle Zeichen mit Akzent.
+- Der Textpfad liest UTF-8 statt einzelner Bytes.
+- Deutsche Tastatur mit QWERTZ, Umlauten und dritter Ebene über AltGr. Der Tastenring führt Codepunkte statt Bytes.
+- Das Terminal legt Eingaben als UTF-8 ab, die Rücktaste löscht ein ganzes Zeichen, der Zeilenumbruch bricht kein Zeichen auf.
+
+**Architektur**
+- Rekursion mit Tiefenbegrenzung auf vier Ebenen, damit eine beschädigte Schrift den Stack nicht füllen kann.
+- Bauteile mit eigener Skalierungsmatrix werden übersprungen statt falsch gezeichnet.
+- Schriftpuffer von 64 KB auf 320 KB, die Schrift ist 204.776 Byte groß.
+- Fenstertext von Größe 26 auf 19, weil Fira Code feste Breiten hat und eine Zeile mit 96 Zeichen sonst nicht in das Fenster passt.
+
+**Messung**
+- Kernel 76.105 auf 77.433 Byte, Start 623,3 auf 597,1 Mio. Befehle.
+- Von 2.060 Glyphen liegen acht über den Grenzen des Renderers, ausschließlich Rasterflächen und Zeichen des privaten Bereichs.
+
+**Gefunden beim Bau**
+- Ein längerer Fenstertitel im Testbau verschob die Vektortabelle, die Linker-Zusicherung meldete es. Testtexte müssen die Bytelänge des Originals behalten.
+
 ### Runde 27: Doppelpufferung und Anzeigetakt
 
 **Architektur**

@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-76.105%20Byte-brightgreen?style=flat-square" alt="76105 Byte">
+<img src="https://img.shields.io/badge/Kernel-77.433%20Byte-brightgreen?style=flat-square" alt="77433 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,8 +22,8 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>76.105&nbsp;Byte</b> groß, also <b>74&nbsp;KB</b>.<br>
-Mit Systemschrift und Wurzelzertifikat sind es <b>124&nbsp;KB</b> auf dem Datenträger.<br>
+Das fertige System ist <b>77.433&nbsp;Byte</b> groß, also <b>76&nbsp;KB</b>.<br>
+Mit Systemschrift und Wurzelzertifikat sind es <b>276&nbsp;KB</b> auf dem Datenträger.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -38,7 +38,7 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Sich melden</b></td><td>Bei einem Prozessorfehler keine stille Endlosschleife, sondern eine Diagnose mit Ursache, Adresse und Prozessorzustand</td></tr>
 <tr><td><b>Zeit messen</b></td><td>Hardware-Zeitgeber mit echten Unterbrechungen. Die Taktfrequenz wird ausgelesen, nicht angenommen</td></tr>
 <tr><td><b>Ein Bild malen</b></td><td><b>3840 × 1600</b> Bildpunkte, intern 32 Bit je Punkt mit Alphakanal in der Byte-Reihenfolge der Ausgabe, Rechtecke, Text und Transparenz</td></tr>
-<tr><td><b>Schreiben</b></td><td><b>Eigener TrueType-Renderer.</b> Der Kernel liest eine Schriftdatei vom Datenträger, wertet ihre Tabellen aus, zerlegt die Bézierkurven, füllt die Flächen nach der Umlaufregel und glättet die Kanten. Jede Größe scharf, keine eingebauten Glyphen</td></tr>
+<tr><td><b>Schreiben</b></td><td><b>Eigener TrueType-Renderer.</b> Der Kernel liest eine Schriftdatei vom Datenträger, wertet ihre Tabellen aus, zerlegt die Bézierkurven, füllt die Flächen nach der Umlaufregel und glättet die Kanten. Jede Größe scharf, keine eingebauten Glyphen. Systemschrift ist <b>Fira Code</b> mit 2.060 Glyphen. Zusammengesetzte Glyphen werden aus ihren Bestandteilen aufgebaut, dadurch erscheinen Umlaute und alle anderen Zeichen mit Akzent. Texte im Kernel sind UTF-8</td></tr>
 <tr><td><b>Eine Maus führen</b></td><td>Zeiger bewegt sich, überdeckter Hintergrund wird gesichert und sauber wiederhergestellt. Einfach-, Doppel- und Dreifachklick werden unterschieden</td></tr>
 <tr><td><b>Fenster zeigen</b></td><td>Fenster mit Titelleiste, TrueType-Beschriftung und zwei Knöpfen: Einklappen auf die Titelleiste und Schließen. Anklicken holt sie nach vorn, an der Titelleiste lassen sie sich ziehen. Neu gezeichnet wird nur, was sich wirklich geändert hat. Jedes Fenster hält sein fertig gerastertes Bild in einem eigenen Puffer, Ziehen ist dadurch ein Kopieren, kein Neurastern. <b>Fenster sind Klassen:</b> eine Basisklasse im Kernel liefert Rahmen, Knöpfe, Fokus, Tastenweiterleitung und Puffer, jeder Fensterinhalt (Terminal, Netzwerk, Dateien) ist eine Tabelle mit den Methoden, die er überschreibt, der Rest wird geerbt</td></tr>
 <tr><td><b>Sich bewegen</b></td><td><b>Eigene Animationsschicht.</b> Fenster blenden ein, klappen weich zu und auf, blenden beim Schließen aus, Fokuswechsel und Ziehen laufen weich statt sprunghaft. Zeitgesteuert, nicht bildzahlgesteuert, dadurch gleich schnell auf schneller und langsamer Maschine. Ein zweiter Klick während der Bewegung kehrt sie ohne Sprung um</td></tr>
@@ -47,6 +47,7 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Dateien zeigen</b></td><td>Ein Fenster listet den Inhalt des Datenträgers auf, gelesen beim Start aus dem echten Wurzelverzeichnis. Der Text wird auf den Fensterkörper beschnitten, läuft also nie über den Rand</td></tr>
 <tr><td><b>Ins Netz gehen</b></td><td><b>Eigener Netzwerktreiber und die ersten Protokolle.</b> virtio-net mit Empfangs- und Sendequeue, Ethernet, ARP, IPv4, ICMP, UDP und DHCP: Beim Start holt sich das System per DHCP Adresse, Gateway und Nameserver, fragt das Gateway per ARP nach seiner Hardwareadresse, schickt ihm ein Ping, löst per DNS einen Namen auf und holt sich per TCP die erste Zeile einer Webseite: <code>HTTP/1.1 200 OK</code> von example.com. Bis zu vier Verbindungen laufen gleichzeitig, jede mit eigenem Sendepuffer und eigener Empfangsroutine. Die Adresse wird nach halber Leasezeit erneuert. Alles erscheint auf der seriellen Leitung und im Netzwerkfenster</td></tr>
 <tr><td><b>Verschlüsselt reden</b></td><td><b>Eigenes TLS 1.3.</b> SHA-256, HMAC, HKDF, AES-128-GCM und X25519, die ersten vier über die Kryptobefehle des Prozessors, dazu ECDSA über P-256 und P-384 mit eigener Montgomery-Arithmetik. Beim Start holt das System <code>HTTPS HTTP/1.1 200 OK</code> von example.com und prüft dabei Serversignatur, Zertifikatskette bis zu einer Wurzel vom Datenträger, CA-Berechtigung und Schlüsselnutzung jedes Ausstellers, Hostname und Gültigkeitszeitraum gegen die Echtzeituhr. Der Handshake erzwingt die Nachrichtenreihenfolge, die Schlüssel kommen aus dem Zufallsgerät der Maschine (virtio-rng), 28 Testvektoren laufen bei jedem Start, und ohne bestandene Tests oder ohne Zufallsgerät bleibt TLS gesperrt</td></tr>
+<tr><td><b>Deutsch tippen</b></td><td><b>Deutsche Tastatur.</b> QWERTZ mit ä ö ü ß, den Zeichen der zweiten Ebene über die Umschalttaste und der dritten Ebene über AltGr: <code>@ \ ~ | { [ ] } € µ ² ³</code>. Die Eingabe wird als UTF-8 im Terminal abgelegt, die Rücktaste entfernt ein ganzes Zeichen, nicht ein Byte</td></tr>
 <tr><td><b>Befehle annehmen</b></td><td><b>Terminal mit curl.</b> <code>curl https://example.com/</code> löst den Namen auf, baut TLS 1.3 mit voller Zertifikatsprüfung auf und zeigt Statuszeile und Seiteninhalt im Terminal, <code>curl http://…</code> dasselbe ohne Verschlüsselung. <code>hilfe</code> listet die Befehle. Fehler wie ein unbekannter Name oder eine fremde Zertifikatskette werden im Terminal gemeldet, die Einzelheiten stehen im Netzwerkfenster</td></tr>
 <tr><td><b>Sich abschalten</b></td><td>Roter Knopf oben rechts: Unterbrechungen sperren, Zeitgeber anhalten, Geräte zurücksetzen, Puffer überschreiben, Maschine abschalten</td></tr>
 </table>
@@ -183,7 +184,7 @@ In `kernel.S` stecken **2.212 Sprungmarken**. Jede gehört zu einem Zuständigke
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **76.105 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 61.936 Byte Code, 14.169 Byte Konstanten |
+| **`kernel.bin`** | **77.433 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 62.768 Byte Code, 14.665 Byte Konstanten |
 | `kernel.elf` | 254 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -199,10 +200,10 @@ Wollte man asmOS heute auf ein Gerät bringen, wären es genau drei Dateien:
 
 | Datei | Größe | Wozu |
 |---|---:|---|
-| `kernel.bin` | 76.105 Byte | das gesamte Betriebssystem |
-| `FONT.TTF` | 50.516 Byte | die Systemschrift, vom Kernel selbst ausgewertet |
+| `kernel.bin` | 77.433 Byte | das gesamte Betriebssystem |
+| `FONT.TTF` | 204.776 Byte | die Systemschrift FiraCode, vom Kernel selbst ausgewertet |
 | `ROOT.DER` | 574 Byte | das Wurzelzertifikat für die TLS-Kettenprüfung |
-| **zusammen** | **127.195 Byte, also 124 KB** | |
+| **zusammen** | **282.783 Byte, also 276 KB** | |
 
 Das 64-MB-Abbild `disk.img` ist nur der leere FAT32-Testdatenträger, auf dem diese Dateien liegen. Die Selbsttests samt Testvektoren machen rund 9 KB des Kernels aus, ein Auslieferungsbau könnte sie weglassen. Dass es trotzdem noch nicht auf echter Hardware läuft, steht im nächsten Abschnitt.
 
@@ -333,9 +334,9 @@ Der Code ist vollständig selbst geschrieben.
 | Bestandteil | Herkunft |
 |---|---|
 | **Icons** | <b>Tabler Icons</b>, MIT-Lizenz, Copyright © 2020-2026 Paweł Kuna. Mit <code>tools/iconc.py</code> in ein eigenes Vektorformat gewandelt, die eingebetteten Daten sind abgeleitete Werke |
-| **Systemschrift** | <b>Babel Sans</b> von <b>Manfred Klein</b>, bezogen über dafont in der Kategorie Serifenlos, dort als kostenlos geführt. Der Kernel wertet die TrueType-Datei selbst aus |
+| **Systemschrift** | <b>Fira Code</b>, <b>SIL Open Font License 1.1</b>, Copyright © 2014-2026 The Fira Code Project Authors. Aus den Quellen des Projekts mit fontmake gebaut, der Kernel wertet die TrueType-Datei selbst aus |
 
-Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. <code>make disk</code> kopiert sie beim Erzeugen des Testdatenträgers vom Entwicklungsrechner und bricht ab, wenn sie fehlt, statt einen Datenträger ohne Schrift zu bauen. <code>make font-rescue</code> holt sie notfalls aus einem vorhandenen <code>disk.img</code> zurück. Die Angabe „kostenlos" ist eine Kategorie der Bezugsseite und kein formaler Lizenztext; wer die Schrift weitergeben will, sollte die Bedingungen des Autors prüfen.
+Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. <code>make disk</code> kopiert sie beim Erzeugen des Testdatenträgers vom Entwicklungsrechner und bricht ab, wenn sie fehlt, statt einen Datenträger ohne Schrift zu bauen. <code>make font-rescue</code> holt sie notfalls aus einem vorhandenen <code>disk.img</code> zurück. Die SIL Open Font License erlaubt Nutzung, Veränderung und Weitergabe, auch kommerziell, solange der Lizenztext beiliegt und die Schrift nicht allein verkauft wird.
 
 ---
 
@@ -639,3 +640,43 @@ Die Ursache lag nicht im Ziehen. Der Kernel verlor kein Eingabeereignis, er zeic
 | Einblendbilder | 13 | 13 |
 
 **Offen bleibt**, was allein am Emulator liegt: QEMU zeigt 33 Bilder je Sekunde, mehr geht dort nicht. Auf dem Raspberry Pi 5 kommt der Pufferwechsel an das Vertikalsignal, dann sind es 60 Bilder je Sekunde ohne Zerreißen.
+
+### Stand 16.09.2026, Runde 28: Fira Code als Systemschrift, Umlaute, deutsche Tastatur
+
+**Die Aufgabe war, die Systemschrift vollständig durch Fira Code zu ersetzen, mit Umlauten und deutscher Tastatur, und zwar als Vektorschrift.** Die bisherige Schrift hatte 244 eigenständige Glyphen und keine Umlaute; der Renderer konnte zusammengesetzte Glyphen nur erkennen und melden, nicht zeichnen.
+
+**Woher die Schrift kommt.** Das heruntergeladene Projektverzeichnis enthält keine fertige Schriftdatei, sondern nur die Quellen, und der offizielle Bauweg läuft über Docker, das in diesem Projekt nicht benutzt wird. Gebaut wurde deshalb nativ mit `fontmake` in einer eigenen Python-Umgebung aus `FiraCode.glyphs`. Ergebnis: 204.776 Byte, 2.060 Glyphen, 2000 Einheiten je Geviert, feste Vorschubbreite 1200, also 0,6 Geviert je Zeichen.
+
+**Vier Änderungen am Kernel:**
+
+- *Zusammengesetzte Glyphen werden gezeichnet.* Meldet eine Glyphe eine negative Konturzahl, merkt sich der Lader Anfang und Ende ihrer Bauteilliste. Eine neue Routine liest daraus je Bauteil die Kennzeichen, die Glyphennummer und die Verschiebung, verschiebt den Zeichenursprung um diese Verschiebung mal Maßstab und zeichnet das Bauteil über denselben Weg wie jede andere Glyphe, also rekursiv. Die Tiefe ist auf vier Ebenen begrenzt, gemessen brauchen die Glyphen dieser Schrift höchstens drei. Bauteile mit eigener Skalierungsmatrix werden übersprungen statt falsch gezeichnet; in dieser Schrift kommt keine vor.
+- *UTF-8 im Textpfad.* Statt einzelner Bytes liest der Textausgeber vollständige Zeichen mit ein, zwei oder drei Bytes und schlägt den Codepunkt in der Zeichentabelle der Schrift nach. Eine ungültige Folge wird zu einem Fragezeichen, nicht zu zwei falschen Buchstaben.
+- *Deutsche Tastatur.* Drei Tabellen mit je 101 Einträgen zu 16 Bit, ausgewählt über Umschalttaste und AltGr. Der Tastenring führt jetzt Codepunkte statt Bytes, damit auch das Eurozeichen hindurchpasst.
+- *Terminal.* Eingegebene Zeichen werden als UTF-8 in die Zeile geschrieben, die Rücktaste überspringt Folgebytes und löscht damit ein ganzes Zeichen. Der Zeilenumbruch bricht nie mitten in einem Zeichen.
+
+**Nachweise.** Alle über eingespeiste Tastendrücke am laufenden System, ohne Handarbeit:
+
+| Geprüft | Ergebnis |
+|---|---|
+| Umlaute im Fenstertitel, Testbau | `äöüß` und `ÄÖÜé§` erscheinen vollständig |
+| Grundebene und Umschaltebene | `öäüßÖÄÜ` |
+| Dritte Ebene über AltGr | `@ { [ ] } \ ~ \|` und `€ µ ² ³` |
+| QWERTZ | die Taste an der Stelle des amerikanischen `y` liefert `z` |
+| Rücktaste über einem Mehrbytezeichen | löscht ö und ä jeweils vollständig, danach das davorstehende Zeichen |
+| Befehl im Terminal | `hilfe` und `curl https://example.com/` unverändert, 559 Byte Inhalt |
+| `make check`, `make check-net` | beide laufen durch |
+
+**Die Grenzen des Renderers gegen die neue Schrift nachgerechnet:** von 2.060 Glyphen liegen vier über der Punktgrenze und vier über der Konturgrenze. Es sind ausschließlich Rasterflächen wie `░ ▒ ▓` und Zeichen des privaten Bereichs, kein einziges Textzeichen. Diese Glyphen melden wie bisher `TTF GRENZE ERREICHT` und bleiben leer. 888 der 2.060 Glyphen sind zusammengesetzt, darunter alle Umlaute.
+
+| Kennzahl | Runde 27 | Runde 28 |
+|---|---|---|
+| Größe des fertigen Systems | 76.105 Byte | **77.433 Byte** (+1.328) |
+| Zeilen Assembler | 21.101 | 21.407 |
+| Sprungmarken | 2.212 | 2.240 |
+| Schriftdatei auf dem Datenträger | 50.516 Byte | 204.776 Byte |
+| Glyphen der Schrift | 244 | 2.060 |
+| Befehle bis Ruhe, 6 s | 623,3 Mio. | **597,1 Mio.** |
+
+Dass der Start weniger Befehle braucht, liegt nicht an der Schrift, sondern an der Schriftgröße im Fenstertext: Fira Code hat für alle Zeichen dieselbe Breite, eine Zeile mit 96 Zeichen braucht deshalb Größe 19 statt 26, damit sie in das Fenster passt. Die kleinere Fläche spart mehr, als die aufwendigeren Glyphen kosten.
+
+**Ein Bildgleichheitsbeweis ist hier nicht möglich**, weil sich das Schriftbild absichtlich vollständig geändert hat. Verglichen wurde stattdessen Zeile für Zeile am Bildschirmfoto: im Netzwerkfenster passt jede Zeile jetzt vollständig in das Fenster, vorher war die längste Zeile am rechten Rand abgeschnitten.

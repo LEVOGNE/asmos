@@ -51,6 +51,7 @@
 .equ ASCII_BS,              0x08
 .equ ASCII_SPACE,           0x20
 .equ ASCII_UNDERSCORE,      0x5f
+.equ ASCII_QUESTION,        0x3f
 .equ HEX_ALPHA_ADJUST,      0x27
 .equ HEX_NIBBLE_MASK,       0xf
 .equ HEX_START_SHIFT,       60
@@ -537,7 +538,7 @@
 .equ EXT_FLAGS_NO_MIRROR,   0x80
 .equ EXT_FLAGS_ACTIVE,      0x0f
 .equ FAT_MIN_CLUSTER,       2
-.equ FONT_MAX_SIZE,          (64 * 1024)
+.equ FONT_MAX_SIZE,          (320 * 1024)
 .equ TTF_NUM_TABLES,        4
 .equ FONT_TABLE_DIR,         12
 .equ FONT_TABLE_ENTRY,       16
@@ -585,7 +586,17 @@
 .equ GLYPH_MAX_CONTOURS,    16
 .equ GLYPH_NCONTOURS,       0
 .equ GLYPH_NPOINTS,         4
-.equ GLYPH_STATE_SIZE,      8
+.equ GLYPH_COMP_PTR,        8
+.equ GLYPH_COMP_END,        16
+.equ GLYPH_STATE_SIZE,      24
+
+.equ COMP_ARGS_WORDS,       0x0001
+.equ COMP_ARGS_XY,          0x0002
+.equ COMP_HAVE_SCALE,       0x0008
+.equ COMP_MORE,             0x0020
+.equ COMP_XY_SCALE,         0x0040
+.equ COMP_TWO_BY_TWO,       0x0080
+.equ FONT_DEPTH_MAX,        4
 
 .equ VG_EDGE_XTOP,             0
 .equ VG_EDGE_YTOP,             4
@@ -813,9 +824,10 @@
 .equ GUI_LINE_MAX,          96
 .equ KEY_RING_SIZE,         32
 .equ KEY_RING_MASK,         31
-.equ KEY_CODE_MAX,          58
+.equ KEY_CODE_MAX,          101
 .equ KEY_LEFTSHIFT,         42
 .equ KEY_RIGHTSHIFT,        54
+.equ KEY_RIGHTALT,          100
 .equ ASCII_DEL,             0x7f
 .equ VIN_CFG_EV_BITS,       0x11
 .equ VIN_BASE,              0
@@ -839,7 +851,7 @@
 .equ FILES_PAD_X,           20
 .equ FILES_PAD_Y,           42
 .equ FILES_LINE_H,          38
-.equ FILES_TEXT_SIZE,       26
+.equ FILES_TEXT_SIZE,       19
 .equ WIN_FADE_MS,           260
 .equ WIN_DRAG_MS,           90
 .equ WIN_KEEP_VISIBLE,      120
@@ -6998,7 +7010,7 @@ font_load_glyph:
     cbz     w0, font_load_glyph_empty
     mov     w23, w0
     cmp     w23, #GLYPH_MAX_CONTOURS
-    b.hi    font_load_glyph_composite
+    b.hi    font_load_glyph_outside
     ladr    x24, glyph_state
     str     w23, [x24, #GLYPH_NCONTOURS]
     add     x25, x22, #GLYF_ENDPTS
@@ -7030,7 +7042,7 @@ font_load_ends_done:
     ldrh    w27, [x1, w0, uxtw #1]
     add     w27, w27, #1
     cmp     w27, #GLYPH_MAX_POINTS
-    b.hi    font_load_glyph_composite
+    b.hi    font_load_glyph_outside
     str     w27, [x24, #GLYPH_NPOINTS]
     add     x25, x25, x23, lsl #1
     mov     x0, x25
@@ -7164,6 +7176,16 @@ font_load_y_done:
     b       font_load_glyph_end
 
 font_load_glyph_composite:
+    add     x0, x22, #GLYF_ENDPTS
+    cmp     x0, x21
+    b.hi    font_load_glyph_outside
+    ladr    x1, glyph_state
+    str     wzr, [x1, #GLYPH_NCONTOURS]
+    str     wzr, [x1, #GLYPH_NPOINTS]
+    stp     x0, x21, [x1, #GLYPH_COMP_PTR]
+    mov     w0, #2
+    b       font_load_glyph_end
+
 font_load_glyph_outside:
     bl      font_limit_report
 
@@ -7849,6 +7871,176 @@ font_set_size_done:
     ldp     x29, x30, [sp], #16
     ret
 
+font_glyph_draw:
+    stp     x29, x30, [sp, #-112]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
+    str     x27, [sp, #80]
+    mov     w19, w0
+    mov     x20, x1
+    mov     w0, w19
+    bl      font_load_glyph
+    cbz     w0, font_glyph_draw_done
+    cmp     w0, #2
+    b.eq    font_glyph_draw_comp
+    bl      font_build_edges
+    mov     x0, x20
+    bl      vg_fill
+    b       font_glyph_draw_done
+
+font_glyph_draw_comp:
+    ladr    x0, font_depth
+    ldrb    w1, [x0]
+    cmp     w1, #FONT_DEPTH_MAX
+    b.hs    font_glyph_draw_done
+    add     w1, w1, #1
+    strb    w1, [x0]
+    ladr    x0, glyph_state
+    ldp     x21, x22, [x0, #GLYPH_COMP_PTR]
+
+font_glyph_draw_part:
+    add     x0, x21, #4
+    cmp     x0, x22
+    b.hi    font_glyph_draw_end
+    mov     x0, x21
+    bl      font_be16
+    mov     w23, w0
+    add     x0, x21, #2
+    bl      font_be16
+    mov     w24, w0
+    add     x21, x21, #4
+    tst     w23, #COMP_ARGS_WORDS
+    b.eq    font_glyph_draw_bytes
+    add     x0, x21, #4
+    cmp     x0, x22
+    b.hi    font_glyph_draw_end
+    mov     x0, x21
+    bl      font_be16s
+    mov     w25, w0
+    add     x0, x21, #2
+    bl      font_be16s
+    mov     w26, w0
+    add     x21, x21, #4
+    b       font_glyph_draw_scale
+
+font_glyph_draw_bytes:
+    add     x0, x21, #2
+    cmp     x0, x22
+    b.hi    font_glyph_draw_end
+    ldrsb   w25, [x21]
+    ldrsb   w26, [x21, #1]
+    add     x21, x21, #2
+
+font_glyph_draw_scale:
+    tst     w23, #COMP_TWO_BY_TWO
+    mov     w0, #8
+    b.ne    font_glyph_draw_skip
+    tst     w23, #COMP_XY_SCALE
+    mov     w0, #4
+    b.ne    font_glyph_draw_skip
+    tst     w23, #COMP_HAVE_SCALE
+    mov     w0, #2
+    b.ne    font_glyph_draw_skip
+    mov     w0, #0
+
+font_glyph_draw_skip:
+    add     x21, x21, x0
+    cmp     x21, x22
+    b.hi    font_glyph_draw_end
+    ladr    x27, vg_scale
+    ldr     w0, [x27]
+    ldp     w1, w2, [x27, #4]
+    stp     w1, w2, [sp, #88]
+    tst     w23, #COMP_ARGS_XY
+    b.eq    font_glyph_draw_go
+    mul     w3, w25, w0
+    add     w1, w1, w3
+    mul     w3, w26, w0
+    sub     w2, w2, w3
+    stp     w1, w2, [x27, #4]
+
+font_glyph_draw_go:
+    mov     w0, w24
+    mov     x1, x20
+    bl      font_glyph_draw
+    ladr    x27, vg_scale
+    ldp     w1, w2, [sp, #88]
+    stp     w1, w2, [x27, #4]
+    tst     w23, #COMP_MORE
+    b.ne    font_glyph_draw_part
+
+font_glyph_draw_end:
+    ladr    x0, font_depth
+    ldrb    w1, [x0]
+    sub     w1, w1, #1
+    strb    w1, [x0]
+
+font_glyph_draw_done:
+    ldr     x27, [sp, #80]
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #112
+    ret
+
+font_utf8_next:
+    ldrb    w1, [x0], #1
+    cbz     w1, font_utf8_end
+    cmp     w1, #0x80
+    b.lo    font_utf8_one
+    and     w2, w1, #0xe0
+    cmp     w2, #0xc0
+    b.eq    font_utf8_two
+    and     w2, w1, #0xf0
+    cmp     w2, #0xe0
+    b.eq    font_utf8_three
+    b       font_utf8_bad
+
+font_utf8_two:
+    ldrb    w2, [x0]
+    and     w3, w2, #0xc0
+    cmp     w3, #0x80
+    b.ne    font_utf8_bad
+    add     x0, x0, #1
+    and     w1, w1, #0x1f
+    and     w2, w2, #0x3f
+    orr     w1, w2, w1, lsl #6
+    b       font_utf8_one
+
+font_utf8_three:
+    ldrb    w2, [x0]
+    and     w3, w2, #0xc0
+    cmp     w3, #0x80
+    b.ne    font_utf8_bad
+    ldrb    w3, [x0, #1]
+    and     w4, w3, #0xc0
+    cmp     w4, #0x80
+    b.ne    font_utf8_bad
+    add     x0, x0, #2
+    and     w1, w1, #0x0f
+    and     w2, w2, #0x3f
+    orr     w1, w2, w1, lsl #6
+    and     w3, w3, #0x3f
+    orr     w1, w3, w1, lsl #6
+    b       font_utf8_one
+
+font_utf8_bad:
+    mov     w1, #ASCII_QUESTION
+
+font_utf8_one:
+    mov     x2, x0
+    mov     w0, w1
+    mov     x1, x2
+    ret
+
+font_utf8_end:
+    mov     x1, x0
+    mov     w0, #0
+    ret
+
 font_text:
     stp     x29, x30, [sp, #-80]!
     stp     x19, x20, [sp, #16]
@@ -7869,7 +8061,9 @@ font_text:
     lsl     w20, w20, #FIX_SHIFT
 
 font_text_loop:
-    ldrb    w0, [x21], #1
+    mov     x0, x21
+    bl      font_utf8_next
+    mov     x21, x1
     cbz     w0, font_text_done
     bl      font_glyph_index
     mov     w25, w0
@@ -7877,11 +8071,8 @@ font_text_loop:
     str     w19, [x0, #4]
     str     w20, [x0, #8]
     mov     w0, w25
-    bl      font_load_glyph
-    cbz     w0, font_text_advance
-    bl      font_build_edges
-    mov     x0, x23
-    bl      vg_fill
+    mov     x1, x23
+    bl      font_glyph_draw
 
 font_text_advance:
     mov     w0, w25
@@ -14867,18 +15058,33 @@ keyboard_apply:
     b.eq    keyboard_apply_shift
     cmp     w1, #KEY_RIGHTSHIFT
     b.eq    keyboard_apply_shift
+    cmp     w1, #KEY_RIGHTALT
+    b.eq    keyboard_apply_altgr
     cbz     w2, keyboard_apply_done
     cmp     w1, #KEY_CODE_MAX
     b.hs    keyboard_apply_done
+    ladr    x3, key_altgr
+    ldrb    w3, [x3]
+    ladr    x4, key_table_altgr
+    cbnz    w3, keyboard_apply_pick
     ladr    x3, key_shift
     ldrb    w3, [x3]
     ladr    x4, key_table_lower
     ladr    x5, key_table_upper
     cmp     w3, #0
     csel    x4, x4, x5, eq
-    ldrb    w0, [x4, w1, uxtw]
+
+keyboard_apply_pick:
+    ldrh    w0, [x4, w1, uxtw #1]
     cbz     w0, keyboard_apply_done
     b       key_put
+
+keyboard_apply_altgr:
+    ladr    x3, key_altgr
+    cmp     w2, #0
+    cset    w4, ne
+    strb    w4, [x3]
+    ret
 
 keyboard_apply_shift:
     cmp     w1, #KEY_LEFTSHIFT
@@ -14906,7 +15112,7 @@ key_put:
     cmp     w4, w3
     b.eq    key_put_full
     ladr    x5, key_ring
-    strb    w0, [x5, w2, uxtw]
+    strh    w0, [x5, w2, uxtw #1]
     str     w4, [x1]
     ret
 
@@ -14924,7 +15130,7 @@ key_get:
     cmp     w2, w3
     b.eq    key_get_empty
     ladr    x4, key_ring
-    ldrb    w0, [x4, w2, uxtw]
+    ldrh    w0, [x4, w2, uxtw #1]
     add     w2, w2, #1
     and     w2, w2, #KEY_RING_MASK
     str     w2, [x1]
@@ -15432,7 +15638,7 @@ term_take_dirty:
 
 term_input:
     stp     x29, x30, [sp, #-32]!
-    str     x19, [sp, #16]
+    stp     x19, x20, [sp, #16]
     mov     w19, w0
     ladr    x1, term_busy
     ldrb    w1, [x1]
@@ -15448,16 +15654,59 @@ term_input:
     cmp     w19, #ASCII_SPACE
     b.lo    term_input_done
     cmp     w19, #ASCII_DEL
-    b.hs    term_input_done
+    b.lo    term_input_size
+    cmp     w19, #0xa0
+    b.lo    term_input_done
+
+term_input_size:
+    mov     w20, #1
+    cmp     w19, #0x80
+    b.lo    term_input_space
+    mov     w20, #2
+    cmp     w19, #0x800
+    b.lo    term_input_space
+    mov     w20, #3
+
+term_input_space:
     ladr    x1, term_col
     ldr     w2, [x1]
-    cmp     w2, #(TERM_COLS - 1)
-    b.hs    term_input_done
+    add     w3, w2, w20
+    cmp     w3, #(TERM_COLS - 1)
+    b.hi    term_input_done
     bl      term_line
     ladr    x1, term_col
     ldr     w2, [x1]
-    strb    w19, [x0, x2]
-    add     w2, w2, #1
+    add     x3, x0, x2
+    cmp     w20, #1
+    b.ne    term_input_enc2
+    strb    w19, [x3]
+    b       term_input_enc_done
+
+term_input_enc2:
+    cmp     w20, #2
+    b.ne    term_input_enc3
+    lsr     w4, w19, #6
+    orr     w4, w4, #0xc0
+    strb    w4, [x3]
+    and     w4, w19, #0x3f
+    orr     w4, w4, #0x80
+    strb    w4, [x3, #1]
+    b       term_input_enc_done
+
+term_input_enc3:
+    lsr     w4, w19, #12
+    orr     w4, w4, #0xe0
+    strb    w4, [x3]
+    lsr     w4, w19, #6
+    and     w4, w4, #0x3f
+    orr     w4, w4, #0x80
+    strb    w4, [x3, #1]
+    and     w4, w19, #0x3f
+    orr     w4, w4, #0x80
+    strb    w4, [x3, #2]
+
+term_input_enc_done:
+    add     w2, w2, w20
     strb    wzr, [x0, x2]
     str     w2, [x1]
     b       term_input_mark
@@ -15467,12 +15716,23 @@ term_input_back:
     ldr     w2, [x1]
     cmp     w2, #TERM_PROMPT_LEN
     b.ls    term_input_done
-    sub     w2, w2, #1
-    str     w2, [x1]
     bl      term_line
     ladr    x1, term_col
     ldr     w2, [x1]
+
+term_input_back_step:
+    sub     w2, w2, #1
+    cmp     w2, #TERM_PROMPT_LEN
+    b.ls    term_input_back_set
+    ldrb    w3, [x0, x2]
+    and     w4, w3, #0xc0
+    cmp     w4, #0x80
+    b.eq    term_input_back_step
+
+term_input_back_set:
     strb    wzr, [x0, x2]
+    ladr    x1, term_col
+    str     w2, [x1]
     b       term_input_mark
 
 term_input_enter:
@@ -15495,7 +15755,7 @@ term_input_mark:
     strb    w1, [x0]
 
 term_input_done:
-    ldr     x19, [sp, #16]
+    ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
 
@@ -15540,8 +15800,18 @@ term_print_row:
 term_print_char:
     ldrb    w3, [x19]
     cbz     w3, term_print_end
-    cmp     w2, #TERM_WRAP
-    b.hs    term_print_wrap
+    mov     w4, #1
+    cmp     w3, #0xc0
+    b.lo    term_print_fit
+    mov     w4, #2
+    cmp     w3, #0xe0
+    b.lo    term_print_fit
+    mov     w4, #3
+
+term_print_fit:
+    add     w5, w2, w4
+    cmp     w5, #TERM_WRAP
+    b.hi    term_print_wrap
     strb    w3, [x20, x2]
     add     x19, x19, #1
     add     w2, w2, #1
@@ -20212,15 +20482,47 @@ gui_prefixes:
     .ascii  "TLS "
     .word   0
 key_table_lower:
-    .byte   0x00,0x00,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x30,0x2d,0x3d,0x08,0x09
-    .byte   0x71,0x77,0x65,0x72,0x74,0x79,0x75,0x69,0x6f,0x70,0x5b,0x5d,0x0a,0x00,0x61,0x73
-    .byte   0x64,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x3b,0x27,0x60,0x00,0x5c,0x7a,0x78,0x63,0x76
-    .byte   0x62,0x6e,0x6d,0x2c,0x2e,0x2f,0x00,0x2a,0x00,0x20
+    .hword  0x0000,0x0000,0x0031,0x0032,0x0033,0x0034,0x0035,0x0036
+    .hword  0x0037,0x0038,0x0039,0x0030,0x00df,0x00b4,0x0008,0x0009
+    .hword  0x0071,0x0077,0x0065,0x0072,0x0074,0x007a,0x0075,0x0069
+    .hword  0x006f,0x0070,0x00fc,0x002b,0x000a,0x0000,0x0061,0x0073
+    .hword  0x0064,0x0066,0x0067,0x0068,0x006a,0x006b,0x006c,0x00f6
+    .hword  0x00e4,0x005e,0x0000,0x0023,0x0079,0x0078,0x0063,0x0076
+    .hword  0x0062,0x006e,0x006d,0x002c,0x002e,0x002d,0x0000,0x002a
+    .hword  0x0000,0x0020,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0037
+    .hword  0x0038,0x0039,0x002d,0x0034,0x0035,0x0036,0x002b,0x0031
+    .hword  0x0032,0x0033,0x0030,0x002c,0x0000,0x0000,0x003c,0x0000
+    .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x000a,0x0000,0x002f,0x0000,0x0000
 key_table_upper:
-    .byte   0x00,0x00,0x21,0x40,0x23,0x24,0x25,0x5e,0x26,0x2a,0x28,0x29,0x5f,0x2b,0x08,0x09
-    .byte   0x51,0x57,0x45,0x52,0x54,0x59,0x55,0x49,0x4f,0x50,0x7b,0x7d,0x0a,0x00,0x41,0x53
-    .byte   0x44,0x46,0x47,0x48,0x4a,0x4b,0x4c,0x3a,0x22,0x7e,0x00,0x7c,0x5a,0x58,0x43,0x56
-    .byte   0x42,0x4e,0x4d,0x3c,0x3e,0x3f,0x00,0x2a,0x00,0x20
+    .hword  0x0000,0x0000,0x0021,0x0022,0x00a7,0x0024,0x0025,0x0026
+    .hword  0x002f,0x0028,0x0029,0x003d,0x003f,0x0060,0x0008,0x0009
+    .hword  0x0051,0x0057,0x0045,0x0052,0x0054,0x005a,0x0055,0x0049
+    .hword  0x004f,0x0050,0x00dc,0x002a,0x000a,0x0000,0x0041,0x0053
+    .hword  0x0044,0x0046,0x0047,0x0048,0x004a,0x004b,0x004c,0x00d6
+    .hword  0x00c4,0x00b0,0x0000,0x0027,0x0059,0x0058,0x0043,0x0056
+    .hword  0x0042,0x004e,0x004d,0x003b,0x003a,0x005f,0x0000,0x002a
+    .hword  0x0000,0x0020,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0037
+    .hword  0x0038,0x0039,0x002d,0x0034,0x0035,0x0036,0x002b,0x0031
+    .hword  0x0032,0x0033,0x0030,0x002c,0x0000,0x0000,0x003e,0x0000
+    .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x000a,0x0000,0x002f,0x0000,0x0000
+key_table_altgr:
+    .hword  0x0000,0x0000,0x0000,0x00b2,0x00b3,0x0000,0x0000,0x0000
+    .hword  0x007b,0x005b,0x005d,0x007d,0x005c,0x0000,0x0008,0x0009
+    .hword  0x0040,0x0000,0x20ac,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x0000,0x0000,0x0000,0x007e,0x000a,0x0000,0x0000,0x0000
+    .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x0000,0x0000,0x00b5,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x0000,0x0020,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x007c,0x0000
+    .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
+    .hword  0x000a,0x0000,0x0000,0x0000,0x0000
 .balign 8
 p256_curve:
     .quad   p256_ctx, p256_n_ctx, p256_b_mont, p256_g_mont, 32
@@ -20798,12 +21100,14 @@ vin_tablet:
 vin_keyboard:
     .space  VIN_SIZE
 key_ring:
-    .space  KEY_RING_SIZE
+    .space  (KEY_RING_SIZE * 2)
 key_head:
     .space  4
 key_tail:
     .space  4
 key_shift:
+    .space  1
+key_altgr:
     .space  1
 key_overflow:
     .space  1
@@ -21009,6 +21313,8 @@ vg_org_y:
 vg_edge_count:
     .space  4
 font_limit_flag:
+    .space  1
+font_depth:
     .space  1
 
 .balign 8

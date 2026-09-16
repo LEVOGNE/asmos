@@ -66,5 +66,11 @@ Regel: Jedes Skript prüft den Rückgabewert des Baus, nicht das Vorhandensein d
 **Bedingte Vergleiche haben enge Grenzen** (Runde 27). `ccmp` nimmt nur Werte von 0 bis 31, der Vergleich mit der Bildhöhe war ungültig.
 Regel: Immediate-Grenzen prüfen, bevor eine Konstante in `ccmp`, `cmp` mit Schiebefeld oder `mov` landet; im Zweifel über ein Register vergleichen.
 
+**Ein Testtext hat die Vektortabelle verschoben** (Runde 28). Für den Umlautbeweis wurde ein Fenstertitel im Testbau durch einen längeren Text ersetzt. Der Titel liegt im Füllraum der Vektortabelle, der Bau schlug mit "Vektoreintrag 15 verschoben" fehl.
+Regel: Ein Text, der in einem Testbau ersetzt wird, behält die Bytelänge des Originals. Bei UTF-8 zählen Bytes, nicht Zeichen: `äöüß` sind acht Byte und passen an die Stelle von `Terminal`.
+
+**Eine Hilfsroutine zerstörte den gemerkten Wert** (Runde 28). In der Rücktaste des Terminals stand die Spalte in `w2`, und `term_line` benutzt `w2` selbst für die Zeilenbreite. Vor dem Umbau fiel das nicht auf, weil die Spalte dort erst nach dem Aufruf geladen wurde.
+Regel: Wer eine Routine um einen Aufruf ergänzt, prüft für jedes vorher geladene Register, ob der Aufruf es zerstört. Auch kurze Hilfsroutinen ohne Stackrahmen benutzen `x0` bis `x3`.
+
 **Behauptungen aus Durchsichten ungeprüft übernehmen.** Mehrere Durchsichten meldeten Fehler, die am Code nicht bestanden (NEON im Interrupt, Stackfehler, ungültiges Immediate, Pfadlängenzählung).
 Regel: Jeder gemeldete Befund wird am Code nachvollzogen, mit Zeile und auslösendem Zustand, bevor er gebaut oder weitergegeben wird.

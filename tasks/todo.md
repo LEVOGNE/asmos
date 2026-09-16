@@ -1,6 +1,6 @@
 # Aufgaben
 
-Stand 15.09.2026, nach Runde 26.
+Stand 16.09.2026, nach Runde 28.
 
 ## Erledigt in Runde 26
 
@@ -22,6 +22,15 @@ Stand 15.09.2026, nach Runde 26.
 - [x] Zeiger und Fenster erscheinen zusammen, weil beide vor der Umschaltung im selben Puffer stehen
 - [x] Prüfskript bricht bei Baufehlern ab
 
+## Erledigt in Runde 28
+
+- [x] Fira Code aus den Projektquellen gebaut und als Systemschrift eingesetzt
+- [x] Zusammengesetzte Glyphen werden gezeichnet, Umlaute erscheinen
+- [x] UTF-8 im Textpfad
+- [x] Deutsche Tastatur mit QWERTZ, Umlauten und AltGr, über eingespeiste Tastendrücke geprüft
+- [x] Terminal legt Eingaben als UTF-8 ab, Rücktaste löscht ganze Zeichen
+- [x] Textgröße an die feste Breite angepasst, keine abgeschnittenen Zeilen mehr
+
 ## Offen, klein
 
 - [ ] Mausposition in einem Stück übernehmen, heute kann ein Bild einen Zeiger mit neuem x und altem y zeigen
@@ -29,6 +38,9 @@ Stand 15.09.2026, nach Runde 26.
 - [ ] Terminal zeilenweise ergänzen wie das Netzwerkfenster
 - [ ] curl: Abbruch per Taste, Umleitungen, Ausgabe von Kopfzeilen auf Wunsch
 - [ ] Mehrere Wurzelzertifikate vom Datenträger
+- [ ] Bauteile mit eigener Skalierungsmatrix zeichnen, heute werden sie übersprungen
+- [ ] Glyphen über 256 Punkten oder 16 Konturen, betrifft nur Rasterflächen
+- [ ] Kerneltexte auf echte Umlaute umstellen, bisher sind sie umschrieben
 
 ## Offen, Fahrplan
 
@@ -36,11 +48,12 @@ Stand 15.09.2026, nach Runde 26.
 - [ ] Sperrlisten und OCSP, Namensbeschränkungen, Sitzungswiederaufnahme, Key Update
 - [ ] RSA-Signaturen für Zertifikate
 - [ ] Eigener TLS-Testserver für Prüfungen gegen bösartige Gegenstellen
-- [ ] UTF-8 im Textpfad, zusammengesetzte Glyphen
 - [ ] FAT32 schreibend
 - [ ] Meilenstein 14: Portierung Raspberry Pi 5, zuerst Beleg für den Debug-UART am BCM2712
 - [ ] Meilenstein 15: Inferenzschicht
 
 ## Zusammenfassung
+
+Runde 28 hat die Systemschrift ersetzt und den Renderer um zusammengesetzte Glyphen erweitert. Jeder Punkt ist am laufenden System belegt, die Tastatur über eingespeiste Tastendrücke.
 
 Runde 26 hat alle offenen Punkte der drei Fehlersuchen und der fremden Durchsicht abgearbeitet und das Terminal zum ersten bedienbaren Netzwerkwerkzeug gemacht. Jeder Punkt hat einen Testbau oder eine Messung, die ihn belegt.
