@@ -4,6 +4,22 @@ Entwicklungsgedächtnis von asmOS: Funktionen, Architekturentscheidungen, Sicher
 
 ## 16.09.2026
 
+### Runde 29: Netzhaertung vor der Agentenschicht
+
+**Sicherheit**
+- `tls_send_record` prueft jetzt die Laenge der Nutzlast. Vorher schrieb es ungeprueft in einen 512 Byte grossen Puffer, dahinter liegen der Finished-Puffer und der Empfangspuffer. Heute nicht ausloesbar, weil der einzige Aufrufer mit variabler Laenge bei 384 Byte gedeckelt war; der erste POST mit Koerper haette daraus einen stillen Speicherueberschreiber gemacht. Der Sendepuffer ist jetzt 2048 Byte gross, die Grenze wird erzwungen und meldet `TLS FEHLER: Record zu lang`.
+- Das Verbindungsende traegt einen Grund (`TCB_END`): sauberer Schluss, Zeitueberschreitung oder Abbruch durch die Gegenstelle. Vorher war eine abgeschnittene Antwort von einer vollstaendigen nicht unterscheidbar, weil beide denselben Rueckruf ausloesten.
+- Das Terminal laesst sich waehrend eines laufenden Abrufs mit Escape abbrechen. Vorher verwarf es jede Taste, und eine abgerissene Rueckrufkette sperrte es dauerhaft. `tls_abort` schliesst die Sitzung, wischt die Schluessel und schliesst die Verbindung.
+
+**Nachweise**
+- Testbau mit kuenstlich enger Grenze: zwei Sendeversuche melden `Record zu lang` statt zu ueberschreiben.
+- Abruf auf einen Host, dessen Port 80 nicht antwortet: nach der Frist erscheint `curl: Gegenstelle antwortete nicht mehr, Inhalt ist unvollstaendig`.
+- Derselbe Abruf mit Escape nach 1,5 Sekunden: `curl: abgebrochen`, Prompt zurueck, Terminal bedienbar.
+- Ruhebild byteweise gleich dem vorigen Stand, 0 abweichende Bildpunkte ausserhalb des Netzfensters. `make check` und `make check-net` laufen durch.
+
+**Gefunden beim Bau**
+- Der neue Abbruchblock lag im Durchfallpfad von `term_input_mark` und erzeugte eine Endlosschleife, die die Hauptschleife einfror. Das Bild blieb auf dem Stand vor dem Tastendruck stehen, was wie eine nicht angekommene Taste aussah.
+
 ### Runde 28: Fira Code als Systemschrift, Umlaute, deutsche Tastatur
 
 **Funktionen**

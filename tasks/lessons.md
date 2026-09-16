@@ -72,5 +72,11 @@ Regel: Ein Text, der in einem Testbau ersetzt wird, behält die Bytelänge des O
 **Eine Hilfsroutine zerstörte den gemerkten Wert** (Runde 28). In der Rücktaste des Terminals stand die Spalte in `w2`, und `term_line` benutzt `w2` selbst für die Zeilenbreite. Vor dem Umbau fiel das nicht auf, weil die Spalte dort erst nach dem Aufruf geladen wurde.
 Regel: Wer eine Routine um einen Aufruf ergänzt, prüft für jedes vorher geladene Register, ob der Aufruf es zerstört. Auch kurze Hilfsroutinen ohne Stackrahmen benutzen `x0` bis `x3`.
 
+**Ein neuer Block lag im Durchfallpfad eines bestehenden** (Runde 29). Der Abbruchzweig des Terminals wurde zwischen `term_input_mark` und `term_input_done` eingefügt. `term_input_mark` fällt durch, der Zweig sprang am Ende wieder auf `term_input_mark`, und daraus wurde eine Endlosschleife, die die Hauptschleife einfror. Das Bild blieb auf dem Stand vor dem Tastendruck stehen, weshalb es zuerst wie eine nicht angekommene Taste aussah.
+Regel: Beim Einfügen eines Blocks nicht nur prüfen, welche Sprünge auf ihn zeigen, sondern auch, ob der Vorgänger in ihn durchfällt. Ein Block mit eigenem Einsprung gehört hinter das nächste `ret`. Und wenn eine Eingabe scheinbar nicht ankommt, zuerst prüfen, ob die Hauptschleife überhaupt noch läuft: ein eingefrorenes Bild und eine ignorierte Taste sehen gleich aus.
+
+**Ein Prüfziel benutzte nicht den Testkernel** (Runde 29). `make check` startet fest `kernel.bin`, nur `make check-net` beachtet `CHECK_KERNEL`. Ein Testbau lief deshalb scheinbar ohne Befund.
+Regel: Vor jedem Testbaulauf prüfen, welches Ziel welchen Kernel startet, oder den Emulator direkt mit dem Testkernel aufrufen.
+
 **Behauptungen aus Durchsichten ungeprüft übernehmen.** Mehrere Durchsichten meldeten Fehler, die am Code nicht bestanden (NEON im Interrupt, Stackfehler, ungültiges Immediate, Pfadlängenzählung).
 Regel: Jeder gemeldete Befund wird am Code nachvollzogen, mit Zeile und auslösendem Zustand, bevor er gebaut oder weitergegeben wird.

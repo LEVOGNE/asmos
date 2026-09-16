@@ -31,12 +31,18 @@ Stand 16.09.2026, nach Runde 28.
 - [x] Terminal legt Eingaben als UTF-8 ab, Rücktaste löscht ganze Zeichen
 - [x] Textgröße an die feste Breite angepasst, keine abgeschnittenen Zeilen mehr
 
+## Erledigt in Runde 29
+
+- [x] `tls_send_record` prüft die Nutzlastlänge, Sendepuffer auf 2048 Byte
+- [x] Verbindungsende trägt einen Grund, Zeitüberschreitung ist von sauberem Schluss unterscheidbar
+- [x] Abbruch eines laufenden Abrufs mit Escape, `tls_abort` schließt die Sitzung sauber
+
 ## Offen, klein
 
 - [ ] Mausposition in einem Stück übernehmen, heute kann ein Bild einen Zeiger mit neuem x und altem y zeigen
 - [ ] Glyphen-Cache für Titel und Terminal, jede Terminalzeile wird bei Änderung neu gerastert
 - [ ] Terminal zeilenweise ergänzen wie das Netzwerkfenster
-- [ ] curl: Abbruch per Taste, Umleitungen, Ausgabe von Kopfzeilen auf Wunsch
+- [ ] curl: Umleitungen, Ausgabe von Kopfzeilen auf Wunsch
 - [ ] Mehrere Wurzelzertifikate vom Datenträger
 - [ ] Bauteile mit eigener Skalierungsmatrix zeichnen, heute werden sie übersprungen
 - [ ] Glyphen über 256 Punkten oder 16 Konturen, betrifft nur Rasterflächen

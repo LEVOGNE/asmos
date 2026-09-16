@@ -52,6 +52,7 @@
 .equ ASCII_SPACE,           0x20
 .equ ASCII_UNDERSCORE,      0x5f
 .equ ASCII_QUESTION,        0x3f
+.equ ASCII_ESC,             0x1b
 .equ HEX_ALPHA_ADJUST,      0x27
 .equ HEX_NIBBLE_MASK,       0xf
 .equ HEX_START_SHIFT,       60
@@ -351,8 +352,12 @@
 .equ TCB_TIMER,             32
 .equ TCB_TX_LEN,            36
 .equ TCB_HANDLER,           40
-.equ TCB_TX_BUF,            48
+.equ TCB_END,               48
+.equ TCB_TX_BUF,            56
 .equ TCB_SIZE,              (TCB_TX_BUF + TCP_TX_BUF_SIZE)
+.equ TCP_END_OK,            0
+.equ TCP_END_TIMEOUT,       1
+.equ TCP_END_RESET,         2
 .equ TCP_RETRY_TICKS,       45
 .equ TCP_RETRY_MAX,         4
 .equ TCP_LINE_MAX,          96
@@ -382,7 +387,8 @@
 .equ TLS_REC_MAX,           (16384 + 256)
 .equ TLS_RX_SIZE,           (TLS_REC_MAX + 5)
 .equ TLS_HS_SIZE,           16384
-.equ TLS_OUT_SIZE,          512
+.equ TLS_OUT_SIZE,          2048
+.equ TLS_OUT_MAX,           (TLS_OUT_SIZE - 22)
 .equ TLSP_HOST,             0
 .equ TLSP_REQ,              16
 .equ TLSP_APP,              32
@@ -11027,6 +11033,7 @@ tcp_finish:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
     mov     x19, x0
+    strb    w1, [x19, #TCB_END]
     strb    wzr, [x19, #TCB_STATE]
     str     wzr, [x19, #TCB_TX_LEN]
     ldr     x3, [x19, #TCB_HANDLER]
@@ -11303,6 +11310,7 @@ tcp_handle_acked_last:
     cmp     w0, #TCP_STATE_LAST_ACK
     b.ne    tcp_handle_data
     mov     x0, x26
+    mov     w1, #TCP_END_OK
     bl      tcp_finish
     ladr    x0, tcp_close_msg
     bl      uart_puts
@@ -11375,6 +11383,7 @@ tcp_handle_fin_final:
     mov     x0, x26
     bl      tcp_ack_out
     mov     x0, x26
+    mov     w1, #TCP_END_OK
     bl      tcp_finish
     ladr    x0, tcp_close_msg
     bl      uart_puts
@@ -11409,6 +11418,7 @@ tcp_handle_rst_sync:
 
 tcp_handle_rst_do:
     mov     x0, x26
+    mov     w1, #TCP_END_RESET
     bl      tcp_finish
     ladr    x0, tcp_rst_msg
     bl      uart_puts
@@ -11499,6 +11509,7 @@ tcp_tick_resend_fin:
 
 tcp_tick_giveup:
     mov     x0, x19
+    mov     w1, #TCP_END_TIMEOUT
     bl      tcp_finish
     ladr    x0, tcp_timeout_msg
     bl      uart_puts
@@ -13488,6 +13499,9 @@ tls_send_record:
     mov     w19, w0
     mov     x20, x1
     mov     w21, w2
+    mov     w9, #TLS_OUT_MAX
+    cmp     w21, w9
+    b.hi    tls_send_record_long
     ladr    x22, tls_out_buf
     mov     w0, #TLS_REC_APPDATA
     strb    w0, [x22]
@@ -13527,9 +13541,42 @@ tls_send_record:
     mov     x1, x22
     add     w2, w21, #(5 + 1 + GCM_TAG_SIZE)
     bl      tcp_write
+    mov     w0, #0
+    b       tls_send_record_done
+
+tls_send_record_long:
+    ladr    x0, tls_toolong_msg
+    bl      tls_fail
+    mov     w0, #1
+
+tls_send_record_done:
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
+    ret
+
+tls_abort:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x19, tls_ctx
+    ldrb    w0, [x19, #TLS_STATE]
+    cmp     w0, #TLS_STATE_CLOSED
+    b.eq    tls_abort_done
+    mov     w0, #TLS_STATE_CLOSED
+    strb    w0, [x19, #TLS_STATE]
+    ldr     x0, [x19, #TLS_TCB]
+    str     xzr, [x19, #TLS_TCB]
+    cbz     x0, tls_abort_wipe
+    bl      tcp_close
+
+tls_abort_wipe:
+    add     x0, x19, #TLS_PRIV
+    mov     w1, #(TLS_CTX_SIZE - TLS_PRIV)
+    bl      mem_wipe
+
+tls_abort_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
     ret
 
 tls_on_data:
@@ -15642,7 +15689,7 @@ term_input:
     mov     w19, w0
     ladr    x1, term_busy
     ldrb    w1, [x1]
-    cbnz    w1, term_input_done
+    cbnz    w1, term_input_busy
     cmp     w19, #ASCII_BS
     b.eq    term_input_back
     cmp     w19, #ASCII_DEL
@@ -15758,6 +15805,14 @@ term_input_done:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #32
     ret
+
+term_input_busy:
+    cmp     w19, #ASCII_ESC
+    b.ne    term_input_done
+    ladr    x0, curl_cancel_msg
+    bl      term_print
+    bl      curl_cancel
+    b       term_input_mark
 
 term_advance:
     stp     x29, x30, [sp, #-16]!
@@ -16052,6 +16107,8 @@ curl_start_path_end:
     ladr    x0, curl_line_len
     stp     wzr, wzr, [x0]
     str     wzr, [x0, #8]
+    ladr    x0, curl_end
+    strb    wzr, [x0]
     ladr    x0, curl_state
     mov     w1, #1
     strb    w1, [x0]
@@ -16121,6 +16178,8 @@ curl_resolved_print:
     mov     w1, #HTTP_PORT
     ladr    x2, curl_http_on_data
     bl      tcp_open
+    ladr    x9, curl_tcb
+    str     x0, [x9]
     ladr    x1, curl_conn_fail_msg
     cbz     x0, curl_resolved_fail
     ladr    x1, curl_request
@@ -16155,12 +16214,18 @@ curl_resolved_done:
     ret
 
 curl_http_on_data:
-    cbz     w2, curl_finish
+    cbz     w2, curl_end_note
     b       curl_feed
 
 curl_tls_app:
-    cbz     w2, curl_finish
+    cbz     w2, curl_end_note
     b       curl_feed
+
+curl_end_note:
+    ldrb    w1, [x0, #TCB_END]
+    ladr    x0, curl_end
+    strb    w1, [x0]
+    b       curl_finish
 
 curl_feed:
     stp     x29, x30, [sp, #-48]!
@@ -16264,6 +16329,33 @@ curl_line_end_done:
     ldp     x29, x30, [sp], #16
     ret
 
+curl_cancel:
+    stp     x29, x30, [sp, #-16]!
+    ladr    x0, curl_state
+    ldrb    w0, [x0]
+    cbz     w0, curl_cancel_done
+    ladr    x0, curl_https
+    ldrb    w0, [x0]
+    cbz     w0, curl_cancel_http
+    bl      tls_abort
+    b       curl_cancel_state
+
+curl_cancel_http:
+    ladr    x0, curl_tcb
+    ldr     x0, [x0]
+    cbz     x0, curl_cancel_state
+    bl      tcp_close
+
+curl_cancel_state:
+    ladr    x0, curl_tcb
+    str     xzr, [x0]
+    ldp     x29, x30, [sp], #16
+    b       curl_abort
+
+curl_cancel_done:
+    ldp     x29, x30, [sp], #16
+    ret
+
 curl_abort:
     stp     x29, x30, [sp, #-16]!
     ladr    x0, curl_state
@@ -16288,7 +16380,7 @@ curl_finish_report:
     cbnz    w0, curl_finish_bytes
     ladr    x0, curl_noanswer_msg
     bl      term_print
-    b       curl_finish_prompt
+    b       curl_finish_end
 
 curl_finish_bytes:
     ladr    x0, curl_msg
@@ -16300,6 +16392,21 @@ curl_finish_bytes:
     ladr    x1, curl_done_tail
     bl      term_append
     ladr    x0, curl_msg
+    bl      term_print
+
+curl_finish_end:
+    ladr    x0, curl_end
+    ldrb    w1, [x0]
+    strb    wzr, [x0]
+    cbz     w1, curl_finish_prompt
+    cmp     w1, #TCP_END_TIMEOUT
+    b.ne    curl_finish_reset
+    ladr    x0, curl_timeout_msg
+    bl      term_print
+    b       curl_finish_prompt
+
+curl_finish_reset:
+    ladr    x0, curl_reset_msg
     bl      term_print
 
 curl_finish_prompt:
@@ -20452,6 +20559,12 @@ curl_cut_msg:
     .asciz  "curl: Ausgabe gekuerzt"
 curl_noanswer_msg:
     .asciz  "curl: Verbindung ohne Antwort beendet, Details im Netzwerkfenster"
+curl_timeout_msg:
+    .asciz  "curl: Gegenstelle antwortete nicht mehr, Inhalt ist unvollstaendig"
+curl_reset_msg:
+    .asciz  "curl: Gegenstelle hat die Verbindung abgebrochen, Inhalt ist unvollstaendig"
+curl_cancel_msg:
+    .asciz  "curl: abgebrochen"
 curl_bad_url_msg:
     .asciz  "curl: Adresse ungueltig, erlaubt sind a-z 0-9 . - und ein Pfad ohne Leerzeichen"
 curl_nonet_msg:
@@ -20482,7 +20595,7 @@ gui_prefixes:
     .ascii  "TLS "
     .word   0
 key_table_lower:
-    .hword  0x0000,0x0000,0x0031,0x0032,0x0033,0x0034,0x0035,0x0036
+    .hword  0x0000,0x001b,0x0031,0x0032,0x0033,0x0034,0x0035,0x0036
     .hword  0x0037,0x0038,0x0039,0x0030,0x00df,0x00b4,0x0008,0x0009
     .hword  0x0071,0x0077,0x0065,0x0072,0x0074,0x007a,0x0075,0x0069
     .hword  0x006f,0x0070,0x00fc,0x002b,0x000a,0x0000,0x0061,0x0073
@@ -20496,7 +20609,7 @@ key_table_lower:
     .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
     .hword  0x000a,0x0000,0x002f,0x0000,0x0000
 key_table_upper:
-    .hword  0x0000,0x0000,0x0021,0x0022,0x00a7,0x0024,0x0025,0x0026
+    .hword  0x0000,0x001b,0x0021,0x0022,0x00a7,0x0024,0x0025,0x0026
     .hword  0x002f,0x0028,0x0029,0x003d,0x003f,0x0060,0x0008,0x0009
     .hword  0x0051,0x0057,0x0045,0x0052,0x0054,0x005a,0x0055,0x0049
     .hword  0x004f,0x0050,0x00dc,0x002a,0x000a,0x0000,0x0041,0x0053
@@ -20510,7 +20623,7 @@ key_table_upper:
     .hword  0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000
     .hword  0x000a,0x0000,0x002f,0x0000,0x0000
 key_table_altgr:
-    .hword  0x0000,0x0000,0x0000,0x00b2,0x00b3,0x0000,0x0000,0x0000
+    .hword  0x0000,0x001b,0x0000,0x00b2,0x00b3,0x0000,0x0000,0x0000
     .hword  0x007b,0x005b,0x005d,0x007d,0x005c,0x0000,0x0008,0x0009
     .hword  0x0040,0x0000,0x20ac,0x0000,0x0000,0x0000,0x0000,0x0000
     .hword  0x0000,0x0000,0x0000,0x007e,0x000a,0x0000,0x0000,0x0000
@@ -21180,6 +21293,11 @@ curl_header:
     .space  1
 curl_status_seen:
     .space  1
+curl_end:
+    .space  1
+.balign 8
+curl_tcb:
+    .space  8
 .balign 4
 curl_host_len:
     .space  4

@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-77.433%20Byte-brightgreen?style=flat-square" alt="77433 Byte">
+<img src="https://img.shields.io/badge/Kernel-77.897%20Byte-brightgreen?style=flat-square" alt="77897 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>77.433&nbsp;Byte</b> groß, also <b>76&nbsp;KB</b>.<br>
+Das fertige System ist <b>77.897&nbsp;Byte</b> groß, also <b>76&nbsp;KB</b>.<br>
 Mit Systemschrift und Wurzelzertifikat sind es <b>276&nbsp;KB</b> auf dem Datenträger.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
@@ -184,7 +184,7 @@ In `kernel.S` stecken **2.212 Sprungmarken**. Jede gehört zu einem Zuständigke
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **77.433 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 62.768 Byte Code, 14.665 Byte Konstanten |
+| **`kernel.bin`** | **77.897 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 62.768 Byte Code, 14.665 Byte Konstanten |
 | `kernel.elf` | 254 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -200,7 +200,7 @@ Wollte man asmOS heute auf ein Gerät bringen, wären es genau drei Dateien:
 
 | Datei | Größe | Wozu |
 |---|---:|---|
-| `kernel.bin` | 77.433 Byte | das gesamte Betriebssystem |
+| `kernel.bin` | 77.897 Byte | das gesamte Betriebssystem |
 | `FONT.TTF` | 204.776 Byte | die Systemschrift FiraCode, vom Kernel selbst ausgewertet |
 | `ROOT.DER` | 574 Byte | das Wurzelzertifikat für die TLS-Kettenprüfung |
 | **zusammen** | **282.783 Byte, also 276 KB** | |
@@ -680,3 +680,28 @@ Die Ursache lag nicht im Ziehen. Der Kernel verlor kein Eingabeereignis, er zeic
 Dass der Start weniger Befehle braucht, liegt nicht an der Schrift, sondern an der Schriftgröße im Fenstertext: Fira Code hat für alle Zeichen dieselbe Breite, eine Zeile mit 96 Zeichen braucht deshalb Größe 19 statt 26, damit sie in das Fenster passt. Die kleinere Fläche spart mehr, als die aufwendigeren Glyphen kosten.
 
 **Ein Bildgleichheitsbeweis ist hier nicht möglich**, weil sich das Schriftbild absichtlich vollständig geändert hat. Verglichen wurde stattdessen Zeile für Zeile am Bildschirmfoto: im Netzwerkfenster passt jede Zeile jetzt vollständig in das Fenster, vorher war die längste Zeile am rechten Rand abgeschnitten.
+
+
+### Stand 16.09.2026, Runde 29: Netzhärtung vor der Agentenschicht
+
+**Anlass.** Vor dem Einbau einer Agentenschicht, die über HTTPS mit einem Modellserver spricht, wurde der Netzcode auf genau die Stellen untersucht, die eine solche Schicht als Erstes trifft. Drei Befunde, alle am Code belegt und alle behoben.
+
+**Erstens, eine Falle, die noch nicht zugeschnappt war.** `tls_send_record` schrieb die Nutzlast ohne jede Längenprüfung in einen Puffer von 512 Byte. Dahinter liegen der Finished-Puffer und der Empfangspuffer. Auslösbar war das bisher nicht, weil der einzige Aufrufer mit veränderlicher Länge der curl-Request ist und der bei 384 Byte gedeckelt ist. Die Grenze ergab sich also aus Zufall, nicht aus Absicht. Die erste Anfrage mit einem JSON-Körper hätte daraus einen stillen Speicherüberschreiber gemacht. Jetzt ist der Puffer 2048 Byte groß, die Grenze wird geprüft und ein Verstoß meldet `TLS FEHLER: Record zu lang`. Gegenprobe mit künstlich auf 8 Byte gesetzter Grenze: beide Sendeversuche werden abgewiesen, nichts wird überschrieben.
+
+**Zweitens, ein Ende ohne Unterschied.** Eine Zeitüberschreitung und ein sauberer Verbindungsschluss lösten denselben Rückruf mit derselben Länge null aus. Für curl war das ein Schönheitsfehler, für einen Agenten wäre es eine Fehlerquelle mit Folgen, weil er auf einer halben Antwort weiterplant. Das Verbindungsende trägt jetzt einen Grund. Gegenprobe an einem Host, dessen Port 80 nicht antwortet:
+
+| vorher | nachher |
+|---|---|
+| `curl: Verbindung ohne Antwort beendet` | dieselbe Zeile, dazu `curl: Gegenstelle antwortete nicht mehr, Inhalt ist unvollstaendig` |
+
+**Drittens, kein Ausweg.** Solange ein Abruf lief, verwarf das Terminal jede Taste. Eine abgerissene Rückrufkette hätte es dauerhaft gesperrt. Escape bricht jetzt ab, schließt die TLS-Sitzung geordnet, wischt die Schlüssel und gibt den Prompt frei. Gegenprobe: Abruf auf einen nicht antwortenden Host, Escape nach 1,5 Sekunden, Ergebnis `curl: abgebrochen` und ein bedienbares Terminal.
+
+**Dabei gefunden.** Der neue Abbruchzweig lag im Durchfallpfad von `term_input_mark` und sprang an seinem Ende dorthin zurück. Das ergab eine Endlosschleife, die die Hauptschleife einfror. Das Bild blieb auf dem Stand vor dem Tastendruck stehen, was genauso aussieht wie eine Taste, die nie ankommt. Erst ein Testbau, der jeden Tastencode auf die serielle Leitung schreibt, zeigte, dass die Taste sehr wohl ankam.
+
+| Kennzahl | Runde 28 | Runde 29 |
+|---|---|---|
+| Größe des fertigen Systems | 77.433 Byte | **77.897 Byte** (+464) |
+| Zeilen Assembler | 21.407 | 21.525 |
+| Sprungmarken | 2.240 | 2.258 |
+| TLS-Sendepuffer | 512 Byte, ungeprüft | 2.048 Byte, geprüft |
+| Ruhebild | Vergleich | 0 abweichende Bildpunkte außerhalb des Netzfensters |
