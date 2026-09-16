@@ -31,6 +31,18 @@ Stand 16.09.2026, nach Runde 28.
 - [x] Terminal legt Eingaben als UTF-8 ab, Rücktaste löscht ganze Zeichen
 - [x] Textgröße an die feste Breite angepasst, keine abgeschnittenen Zeilen mehr
 
+## Erledigt in Runde 33
+
+- [x] Block `pol_`: Kontingente je Eigentümer, Reserve, Ablehnungszähler
+- [x] Zuteilung fragt die Politik, Gegenprobe belegt die Wirkung
+- [x] Terminalbefehl `politik`, zwei neue Fakten
+
+## Offen, Politik
+
+- [ ] Politik vom Datenträger laden, damit sie ohne Neubau änderbar ist
+- [ ] Zweiter Entscheidungspunkt: was bei Knappheit weichen muss, nicht nur wer nichts bekommt
+- [ ] Werkzeug, mit dem ein Agent ein Kontingent ändern darf, mit Bestätigung
+
 ## Erledigt in Runde 32
 
 - [x] Faktentabelle `sys_` mit 24 Einträgen, Selbstprüfung und Gegenprobe
@@ -41,7 +53,6 @@ Stand 16.09.2026, nach Runde 28.
 - [ ] Fakten maschinenlesbar ausgeben, nicht nur als Text für Menschen
 - [ ] Fakten nach Präfix filtern, etwa `zustand netz`
 - [ ] Ereignisse und Zähler ergänzen: Interrupts, Pakete, Bilder je Sekunde, Stackbedarf
-- [ ] Eine erste austauschbare Politik, die bei Speicherknappheit entscheidet
 
 ## Erledigt in Runde 31
 

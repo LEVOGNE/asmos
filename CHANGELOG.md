@@ -4,6 +4,22 @@ Entwicklungsgedächtnis von asmOS: Funktionen, Architekturentscheidungen, Sicher
 
 ## 16.09.2026
 
+### Runde 33: die erste austauschbare Politik
+
+**Architektur**
+- Neuer Block `pol_`. Er entscheidet, wer wie viel Speicher bekommen darf, und er steht nicht im Zuteilungscode, sondern in einer Tabelle daneben.
+- Die Trennung ist der eigentliche Punkt: `pmm_alloc_n` bleibt der Mechanismus und weiss, wie Seiten gefunden und markiert werden. Ob eine Anfrage erfuellt werden darf, fragt es bei `pol_allow`. Wer diese Antwort gibt, ist austauschbar.
+- Regeln je Eigentuemer: ein Kontingent in Seiten. Dazu eine Reserve, die nur der Kernel anbrechen darf. Vorgabe: Modell 75 Prozent, Agent und Fenster je 10 Prozent, Reserve 256 Seiten.
+- `pol_set` aendert ein Kontingent zur Laufzeit. Das ist die Stelle, an der spaeter ein Werkzeug eines Agenten ansetzt.
+- Keine stillen Ablehnungen: jede Ablehnung wird je Eigentuemer gezaehlt, die erste meldet sich auf der seriellen Leitung.
+- Terminalbefehl `politik` zeigt Reserve, Kontingente, Bestand und Ablehnungen.
+- Die Selbstauskunft kennt jetzt 26 Fakten, neu sind `politik.reserve` und `politik.abgelehnt`.
+
+**Nachweise**
+- Sechs Pruefschritte beim Start: Kontingent vorhanden, Anfrage darueber wird abgelehnt, Anfrage genau am Kontingent wird erfuellt, weitere Anfrage abgelehnt, nach Freigabe Bestand null, zwei Ablehnungen gezaehlt. Meldung `POLITIK OK`.
+- Gegenprobe: wird die Entscheidung in der Zuteilung ignoriert, meldet der Kernel `POLITIK FEHLER in Schritt 2`. Die Politik ist also nicht dekorativ.
+- Ruhebild byteweise gleich, `make check` und `make check-net` laufen durch.
+
 ### Runde 32: Selbstauskunft, das System kennt sich selbst als Tabelle
 
 **Architektur**

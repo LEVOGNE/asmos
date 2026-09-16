@@ -707,6 +707,12 @@
 .equ SYS_FMT_IP,            1
 .equ SYS_FMT_YESNO,         2
 .equ SYS_FMT_MAX,           3
+.equ POL_OWNERS,            8
+.equ POL_SHARE_FULL,        100
+.equ POL_SHARE_MODEL,       75
+.equ POL_SHARE_AGENT,       10
+.equ POL_SHARE_WINDOW,      10
+.equ POL_RESERVE_PAGES,     256
 
 .equ BLOCK_SHIFT,           21
 .equ BLOCK_SIZE,            (1 << BLOCK_SHIFT)
@@ -16029,8 +16035,17 @@ term_command_state:
     ladr    x1, term_cmd_state
     mov     w2, #8
     bl      mem_equal
-    cbz     w0, term_command_unknown
+    cbz     w0, term_command_pol
     bl      sys_show
+    b       term_command_done
+
+term_command_pol:
+    mov     x0, x19
+    ladr    x1, term_cmd_pol
+    mov     w2, #8
+    bl      mem_equal
+    cbz     w0, term_command_unknown
+    bl      pol_show
     b       term_command_done
 
 term_command_unknown:
@@ -19362,7 +19377,9 @@ boot_selftests:
     stp     x29, x30, [sp, #-16]!
     bl      crypto_selftest
     bl      llm_selftest
+    bl      pol_init
     bl      pmm_check
+    bl      pol_check
     bl      sys_check
     ldp     x29, x30, [sp], #16
     ret
@@ -19806,6 +19823,10 @@ pmm_alloc_n:
     mov     w20, w1
     cbz     w19, pmm_alloc_n_none
     cbz     w20, pmm_alloc_n_none
+    mov     w0, w20
+    mov     w1, w19
+    bl      pol_allow
+    cbnz    w0, pmm_alloc_n_none
     ladr    x21, pmm_base
     ldr     x22, [x21, #8]
     mov     x23, #0
@@ -20230,6 +20251,275 @@ sys_check_fail:
 sys_check_exit:
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #48
+    ret
+
+pol_init:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x19, pol_limit
+    mov     x0, x19
+    mov     x1, #(POL_OWNERS * 4)
+    bl      mem_wipe
+    ladr    x0, pmm_base
+    ldr     x0, [x0, #8]
+    mov     w1, #POL_SHARE_FULL
+    mov     w2, #POL_SHARE_MODEL
+    mul     w2, w0, w2
+    udiv    w2, w2, w1
+    str     w2, [x19, #(OWN_MODEL * 4)]
+    mov     w2, #POL_SHARE_AGENT
+    mul     w2, w0, w2
+    udiv    w2, w2, w1
+    str     w2, [x19, #(OWN_AGENT * 4)]
+    mov     w2, #POL_SHARE_WINDOW
+    mul     w2, w0, w2
+    udiv    w2, w2, w1
+    str     w2, [x19, #(OWN_WINDOW * 4)]
+    mov     w2, #-1
+    str     w2, [x19, #(OWN_KERNEL * 4)]
+    ladr    x0, pol_reserve
+    mov     w1, #POL_RESERVE_PAGES
+    str     w1, [x0]
+    ladr    x0, pol_ready
+    mov     w1, #1
+    strb    w1, [x0]
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+pol_limit_of:
+    cmp     w0, #POL_OWNERS
+    b.hs    pol_limit_none
+    ladr    x1, pol_limit
+    ldr     w0, [x1, w0, uxtw #2]
+    ret
+
+pol_limit_none:
+    mov     w0, #0
+    ret
+
+pol_set:
+    cmp     w0, #POL_OWNERS
+    b.hs    pol_set_done
+    cbz     w0, pol_set_done
+    ladr    x2, pol_limit
+    str     w1, [x2, w0, uxtw #2]
+
+pol_set_done:
+    ret
+
+pol_denied_of:
+    cmp     w0, #POL_OWNERS
+    b.hs    pol_limit_none
+    ladr    x1, pol_denied
+    ldr     w0, [x1, w0, uxtw #2]
+    ret
+
+pol_allow:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     w19, w0
+    mov     w20, w1
+    ladr    x0, pol_ready
+    ldrb    w0, [x0]
+    cbz     w0, pol_allow_yes
+    cmp     w19, #POL_OWNERS
+    b.hs    pol_allow_deny
+    cmp     w19, #OWN_KERNEL
+    b.eq    pol_allow_yes
+    mov     w0, w19
+    bl      pol_limit_of
+    mov     w21, w0
+    mov     w0, w19
+    bl      pmm_stat
+    add     w0, w0, w20
+    cmp     w0, w21
+    b.hi    pol_allow_deny
+    mov     w0, #OWN_FREE
+    bl      pmm_stat
+    ladr    x1, pol_reserve
+    ldr     w1, [x1]
+    add     w1, w1, w20
+    cmp     w0, w1
+    b.lo    pol_allow_deny
+
+pol_allow_yes:
+    mov     w0, #0
+    b       pol_allow_done
+
+pol_allow_deny:
+    cmp     w19, #POL_OWNERS
+    b.hs    pol_allow_deny_out
+    ladr    x0, pol_denied
+    ldr     w1, [x0, w19, uxtw #2]
+    add     w1, w1, #1
+    str     w1, [x0, w19, uxtw #2]
+    cmp     w1, #1
+    b.ne    pol_allow_deny_out
+    ladr    x0, pol_deny_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+
+pol_allow_deny_out:
+    mov     w0, #1
+
+pol_allow_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+pol_total_denied:
+    ladr    x1, pol_denied
+    mov     w2, #0
+    mov     w3, #0
+
+pol_total_loop:
+    cmp     w3, #POL_OWNERS
+    b.hs    pol_total_done
+    ldr     w4, [x1, w3, uxtw #2]
+    add     w2, w2, w4
+    add     w3, w3, #1
+    b       pol_total_loop
+
+pol_total_done:
+    mov     w0, w2
+    ret
+
+pol_reserve_value:
+    ladr    x0, pol_reserve
+    ldr     w0, [x0]
+    ret
+
+pol_show:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    ladr    x0, curl_msg
+    ladr    x1, pol_res_text
+    bl      term_append
+    mov     x19, x0
+    bl      pol_reserve_value
+    mov     w1, w0
+    mov     x0, x19
+    bl      term_put_dec
+    mov     x19, x0
+    ladr    x1, pol_res_tail
+    bl      term_append
+    ladr    x0, curl_msg
+    bl      term_print
+    mov     w19, #1
+
+pol_show_loop:
+    cmp     w19, #(OWN_WINDOW + 1)
+    b.hs    pol_show_done
+    ladr    x0, curl_msg
+    ladr    x1, pol_owner_names
+    ldr     x1, [x1, w19, uxtw #3]
+    bl      term_append
+    mov     x20, x0
+    mov     w0, w19
+    bl      pol_limit_of
+    mov     w1, w0
+    mov     x0, x20
+    bl      term_put_dec
+    mov     x20, x0
+    ladr    x1, pol_held_text
+    bl      term_append
+    mov     x20, x0
+    mov     w0, w19
+    bl      pmm_stat
+    mov     w1, w0
+    mov     x0, x20
+    bl      term_put_dec
+    mov     x20, x0
+    ladr    x1, pol_denied_text
+    bl      term_append
+    mov     x20, x0
+    mov     w0, w19
+    bl      pol_denied_of
+    mov     w1, w0
+    mov     x0, x20
+    bl      term_put_dec
+    ladr    x0, curl_msg
+    bl      term_print
+    add     w19, w19, #1
+    b       pol_show_loop
+
+pol_show_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+pol_check:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     w19, #1
+    mov     w0, #OWN_MODEL
+    bl      pol_limit_of
+    mov     w22, w0
+    cbz     w22, pol_check_fail
+    mov     w19, #2
+    mov     w0, #OWN_MODEL
+    mov     w1, #2
+    bl      pol_set
+    mov     w0, #3
+    mov     w1, #OWN_MODEL
+    bl      pmm_alloc_n
+    cbnz    x0, pol_check_fail
+    mov     w19, #3
+    mov     w0, #2
+    mov     w1, #OWN_MODEL
+    bl      pmm_alloc_n
+    mov     x20, x0
+    cbz     x20, pol_check_fail
+    mov     w19, #4
+    mov     w0, #1
+    mov     w1, #OWN_MODEL
+    bl      pmm_alloc_n
+    cbnz    x0, pol_check_fail
+    mov     w19, #5
+    mov     x0, x20
+    mov     w1, #2
+    bl      pmm_free_n
+    mov     w0, #OWN_MODEL
+    bl      pmm_stat
+    cbnz    w0, pol_check_fail
+    mov     w19, #6
+    mov     w0, #OWN_MODEL
+    bl      pol_denied_of
+    cmp     w0, #2
+    b.ne    pol_check_fail
+    mov     w0, #OWN_MODEL
+    mov     w1, w22
+    bl      pol_set
+    ladr    x0, pol_denied
+    mov     x1, #(POL_OWNERS * 4)
+    bl      mem_wipe
+    ladr    x0, pol_ok_msg
+    bl      uart_puts
+    ladr    x0, uart_newline
+    bl      uart_puts
+    mov     w0, #0
+    b       pol_check_exit
+
+pol_check_fail:
+    ladr    x0, pol_fail_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+    mov     w0, #1
+
+pol_check_exit:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
     ret
 
 .section .text.vectors
@@ -21519,6 +21809,8 @@ term_cmd_mem:
     .asciz  "speicher"
 term_cmd_state:
     .asciz  "zustand"
+term_cmd_pol:
+    .asciz  "politik"
 term_mem_1:
     .asciz  "Speicher: "
 term_mem_2:
@@ -21979,6 +22271,10 @@ sysn_22:
     .asciz  "zeit.takt"
 sysn_23:
     .asciz  "tasten.ueberlauf"
+sysn_24:
+    .asciz  "politik.reserve"
+sysn_25:
+    .asciz  "politik.abgelehnt"
 .balign 8
 sys_table:
     .quad   sysn_00, pmm_base + 8
@@ -22029,8 +22325,40 @@ sys_table:
     .word   SYS_KIND_CONST, SYS_FMT_DEC
     .quad   sysn_23, key_overflow
     .word   SYS_KIND_BYTE, SYS_FMT_YESNO
+    .quad   sysn_24, pol_reserve
+    .word   SYS_KIND_W32, SYS_FMT_DEC
+    .quad   sysn_25, pol_total_denied
+    .word   SYS_KIND_FUNC, SYS_FMT_DEC
 sys_table_end:
 
+.balign 8
+pol_owner_names:
+    .quad   poln_frei, poln_kernel, poln_modell, poln_agent
+    .quad   poln_fenster, poln_frei, poln_frei, poln_frei
+poln_frei:
+    .asciz  "-             max "
+poln_kernel:
+    .asciz  "kernel        max "
+poln_modell:
+    .asciz  "modell        max "
+poln_agent:
+    .asciz  "agent         max "
+poln_fenster:
+    .asciz  "fenster       max "
+pol_held_text:
+    .asciz  ", hat "
+pol_denied_text:
+    .asciz  ", abgelehnt "
+pol_res_text:
+    .asciz  "Politik: Reserve "
+pol_res_tail:
+    .asciz  " Seiten, die nur der Kernel anbrechen darf"
+pol_deny_msg:
+    .asciz  "POLITIK LEHNT AB, Eigentuemer "
+pol_ok_msg:
+    .asciz  "POLITIK OK"
+pol_fail_msg:
+    .asciz  "POLITIK FEHLER in Schritt "
 sys_eq_text:
     .asciz  " = "
 sys_yes_text:
@@ -22612,6 +22940,15 @@ vg_edge_count:
     .space  4
 pmm_owner:
     .space  PMM_MAX_PAGES
+.balign 4
+pol_limit:
+    .space  (POL_OWNERS * 4)
+pol_denied:
+    .space  (POL_OWNERS * 4)
+pol_reserve:
+    .space  4
+pol_ready:
+    .space  1
 .balign 4
 llm_scratch:
     .space  (LLM_SCRATCH * 4)

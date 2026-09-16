@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-82.849%20Byte-brightgreen?style=flat-square" alt="82849 Byte">
+<img src="https://img.shields.io/badge/Kernel-84.206%20Byte-brightgreen?style=flat-square" alt="84206 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>82.849&nbsp;Byte</b> groß, also <b>81&nbsp;KB</b>.<br>
+Das fertige System ist <b>84.206&nbsp;Byte</b> groß, also <b>82&nbsp;KB</b>.<br>
 Mit Systemschrift und Wurzelzertifikat sind es <b>276&nbsp;KB</b> auf dem Datenträger.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
@@ -49,6 +49,7 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Verschlüsselt reden</b></td><td><b>Eigenes TLS 1.3.</b> SHA-256, HMAC, HKDF, AES-128-GCM und X25519, die ersten vier über die Kryptobefehle des Prozessors, dazu ECDSA über P-256 und P-384 mit eigener Montgomery-Arithmetik. Beim Start holt das System <code>HTTPS HTTP/1.1 200 OK</code> von example.com und prüft dabei Serversignatur, Zertifikatskette bis zu einer Wurzel vom Datenträger, CA-Berechtigung und Schlüsselnutzung jedes Ausstellers, Hostname und Gültigkeitszeitraum gegen die Echtzeituhr. Der Handshake erzwingt die Nachrichtenreihenfolge, die Schlüssel kommen aus dem Zufallsgerät der Maschine (virtio-rng), 28 Testvektoren laufen bei jedem Start, und ohne bestandene Tests oder ohne Zufallsgerät bleibt TLS gesperrt</td></tr>
 <tr><td><b>Deutsch tippen</b></td><td><b>Deutsche Tastatur.</b> QWERTZ mit ä ö ü ß, den Zeichen der zweiten Ebene über die Umschalttaste und der dritten Ebene über AltGr: <code>@ \ ~ | { [ ] } € µ ² ³</code>. Die Eingabe wird als UTF-8 im Terminal abgelegt, die Rücktaste entfernt ein ganzes Zeichen, nicht ein Byte</td></tr>
 <tr><td><b>Befehle annehmen</b></td><td><b>Terminal mit curl.</b> <code>curl https://example.com/</code> löst den Namen auf, baut TLS 1.3 mit voller Zertifikatsprüfung auf und zeigt Statuszeile und Seiteninhalt im Terminal, <code>curl http://…</code> dasselbe ohne Verschlüsselung. <code>hilfe</code> listet die Befehle. Fehler wie ein unbekannter Name oder eine fremde Zertifikatskette werden im Terminal gemeldet, die Einzelheiten stehen im Netzwerkfenster</td></tr>
+<tr><td><b>Regeln statt fester Antworten</b></td><td><b>Die Speicherpolitik steht nicht im Code.</b> Wer wie viel Speicher bekommen darf, entscheidet eine Tabelle neben der Zuteilung: ein Kontingent je Eigentümer und eine Reserve, die nur der Kernel anbrechen darf. Die Zuteilung selbst weiß weiterhin, wie Seiten gefunden und markiert werden, aber nicht mehr, ob sie das darf. Der Befehl <code>politik</code> zeigt die Regeln, und sie sind zur Laufzeit änderbar</td></tr>
 <tr><td><b>Sich selbst kennen</b></td><td><b>Selbstauskunft als Tabelle im Kernel.</b> Vierundzwanzig Fakten über den eigenen Zustand: Speicher nach Eigentümer, Bildmaße, Fenster, Netzadressen, Kryptobereitschaft, Schriftdaten, Uhrzeit, Takt. Jeder Fakt nennt seine Quelle und wie sie zu lesen ist. Der Befehl <code>zustand</code> zeigt alles. Das System muss seinen Zustand also nicht raten, es liest ihn ab</td></tr>
 <tr><td><b>Rechnen wie ein Modell</b></td><td><b>Rechenkern für Sprachmodelle im Kernel.</b> Die Operationen, die in jedem Transformer-Modell und für jede Sprache gleich sind: Exponentialfunktion, RMS-Normierung, Softmax, SwiGLU, Skalarprodukt mit 8-Bit-Gewichten und Matrixmultiplikation. Sechs Testgruppen laufen bei jedem Start. Das Modell selbst ist damit eine Datei, so wie die Schrift eine Datei ist. Noch nicht enthalten: Position, Aufmerksamkeit, Wortstücke, Erzeugung</td></tr>
 <tr><td><b>Sich abschalten</b></td><td>Roter Knopf oben rechts: Unterbrechungen sperren, Zeitgeber anhalten, Geräte zurücksetzen, Puffer überschreiben, Maschine abschalten</td></tr>
@@ -186,7 +187,7 @@ In `kernel.S` stecken **2.212 Sprungmarken**. Jede gehört zu einem Zuständigke
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **82.849 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 62.768 Byte Code, 14.665 Byte Konstanten |
+| **`kernel.bin`** | **84.206 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 62.768 Byte Code, 14.665 Byte Konstanten |
 | `kernel.elf` | 254 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -202,7 +203,7 @@ Wollte man asmOS heute auf ein Gerät bringen, wären es genau drei Dateien:
 
 | Datei | Größe | Wozu |
 |---|---:|---|
-| `kernel.bin` | 82.849 Byte | das gesamte Betriebssystem |
+| `kernel.bin` | 84.206 Byte | das gesamte Betriebssystem |
 | `FONT.TTF` | 204.776 Byte | die Systemschrift FiraCode, vom Kernel selbst ausgewertet |
 | `ROOT.DER` | 574 Byte | das Wurzelzertifikat für die TLS-Kettenprüfung |
 | **zusammen** | **282.783 Byte, also 276 KB** | |
@@ -789,3 +790,34 @@ zeit.takt = 30               zeit.unix = 1789572824
 | Sprungmarken | 2.364 | 2.427 |
 | Fakten über den eigenen Zustand | keine | 24 |
 | Selbsttests beim Start | 28 Kryptovektoren, 6 Rechengruppen, 8 Speicherschritte | dazu 24 Faktenprüfungen |
+
+
+### Stand 16.09.2026, Runde 33: die erste Regel, die nicht im Code steht
+
+**Worum es geht.** In jedem Betriebssystem steckt hinter jeder Entscheidung eine Regel, die jemand vor langer Zeit festgelegt hat. Wer bekommt Speicher, was weicht bei Knappheit, was hat Vorrang. Diese Regeln stehen normalerweise mitten im Code, verteilt über tausende Zeilen, und sind damit nicht austauschbar. Diese Runde zieht die erste davon heraus.
+
+**Die Trennung.** Die Zuteilung weiß weiterhin, wie man freie Seiten findet, sie nebeneinander legt und in der Verwaltungstabelle markiert. Das ist der Mechanismus, er muss schnell und immer gleich sein. Ob eine Anfrage überhaupt erfüllt werden darf, weiß sie nicht mehr. Das fragt sie nach. Wer die Antwort gibt, ist von außen bestimmbar.
+
+Die erste Fassung dieser Antwort ist bewusst einfach und besteht aus zwei Zahlen je Eigentümer:
+
+```
+Politik: Reserve 256 Seiten, die nur der Kernel anbrechen darf
+kernel        max 4294967295, hat 256, abgelehnt 0
+modell        max 31872, hat 0, abgelehnt 0
+agent         max 4249, hat 0, abgelehnt 0
+fenster       max 4249, hat 0, abgelehnt 0
+```
+
+**Nachweis.** Sechs Prüfschritte laufen bei jedem Start: Das Kontingent wird auf zwei Seiten gesetzt, eine Anfrage nach drei Seiten wird abgelehnt, eine nach genau zwei erfüllt, eine weitere abgelehnt, nach der Freigabe ist der Bestand wieder null, und es wurden genau zwei Ablehnungen gezählt. Jede Ablehnung wird gezählt, die erste meldet sich auch auf der seriellen Leitung, denn ein stilles Nein wäre schlimmer als ein lautes.
+
+Damit die Prüfung nicht bloß sich selbst bestätigt, wurde in einem Testbau die Entscheidung zwar eingeholt, aber ignoriert. Der Kernel meldet daraufhin `POLITIK FEHLER in Schritt 2`. Die Politik hängt also wirklich im Weg und ist keine Anzeige.
+
+**Warum das der wichtigste kleine Schritt dieser Reihe ist.** Ein Sprachmodell kann in einem Betriebssystem niemals die Ausführung übernehmen, dafür sind seine Antwortzeiten um Größenordnungen zu lang. Es kann aber besitzen, was hier gerade entstanden ist: die Regel. Ab jetzt gibt es im System eine Stelle, an der eine Entscheidung wohnt, die weder im Zuteilungscode klebt noch beim Übersetzen festgelegt wird.
+
+| Kennzahl | Runde 32 | Runde 33 |
+|---|---|---|
+| Größe des fertigen Systems | 82.849 Byte | **84.206 Byte** (+1.357) |
+| Zeilen Assembler | 22.710 | 23.047 |
+| Sprungmarken | 2.427 | 2.469 |
+| Fakten über den eigenen Zustand | 24 | 26 |
+| Selbsttests beim Start | 66 | 72 |
