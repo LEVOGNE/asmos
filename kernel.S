@@ -693,6 +693,20 @@
 .equ OWN_AGENT,             3
 .equ OWN_WINDOW,            4
 .equ OWN_INVALID,           255
+.equ SYSF_NAME,             0
+.equ SYSF_SRC,              8
+.equ SYSF_KIND,             16
+.equ SYSF_FMT,              20
+.equ SYSF_SIZE,             24
+.equ SYS_KIND_FUNC,         0
+.equ SYS_KIND_W32,          1
+.equ SYS_KIND_X64,          2
+.equ SYS_KIND_BYTE,         3
+.equ SYS_KIND_CONST,        4
+.equ SYS_FMT_DEC,           0
+.equ SYS_FMT_IP,            1
+.equ SYS_FMT_YESNO,         2
+.equ SYS_FMT_MAX,           3
 
 .equ BLOCK_SHIFT,           21
 .equ BLOCK_SIZE,            (1 << BLOCK_SHIFT)
@@ -16006,8 +16020,17 @@ term_command_mem:
     ladr    x1, term_cmd_mem
     mov     w2, #9
     bl      mem_equal
-    cbz     w0, term_command_unknown
+    cbz     w0, term_command_state
     bl      term_mem_show
+    b       term_command_done
+
+term_command_state:
+    mov     x0, x19
+    ladr    x1, term_cmd_state
+    mov     w2, #8
+    bl      mem_equal
+    cbz     w0, term_command_unknown
+    bl      sys_show
     b       term_command_done
 
 term_command_unknown:
@@ -19340,6 +19363,7 @@ boot_selftests:
     bl      crypto_selftest
     bl      llm_selftest
     bl      pmm_check
+    bl      sys_check
     ldp     x29, x30, [sp], #16
     ret
 
@@ -19983,6 +20007,229 @@ pmm_check_exit:
     ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
     ldp     x29, x30, [sp], #64
+    ret
+
+sys_free_pages:
+    mov     w0, #OWN_FREE
+    b       pmm_stat
+
+sys_kernel_pages:
+    mov     w0, #OWN_KERNEL
+    b       pmm_stat
+
+sys_model_pages:
+    mov     w0, #OWN_MODEL
+    b       pmm_stat
+
+sys_agent_pages:
+    mov     w0, #OWN_AGENT
+    b       pmm_stat
+
+sys_tcp_open:
+    ladr    x1, tcp_table
+    mov     w2, #0
+    mov     w3, #0
+
+sys_tcp_loop:
+    cmp     w3, #TCP_MAX
+    b.hs    sys_tcp_done
+    mov     w4, #TCB_SIZE
+    umull   x5, w3, w4
+    ldrb    w6, [x1, x5]
+    cmp     w6, #0
+    cinc    w2, w2, ne
+    add     w3, w3, #1
+    b       sys_tcp_loop
+
+sys_tcp_done:
+    mov     w0, w2
+    ret
+
+sys_anim_active:
+    ladr    x0, anim_pending
+    ldrb    w0, [x0]
+    ret
+
+sys_count:
+    ladr    x0, sys_table_end
+    ladr    x1, sys_table
+    sub     x0, x0, x1
+    mov     x1, #SYSF_SIZE
+    udiv    x0, x0, x1
+    ret
+
+sys_value:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x19, sys_table
+    mov     x1, #SYSF_SIZE
+    umaddl  x19, w0, w1, x19
+    ldr     w1, [x19, #SYSF_KIND]
+    ldr     x2, [x19, #SYSF_SRC]
+    cmp     w1, #SYS_KIND_FUNC
+    b.eq    sys_value_call
+    cmp     w1, #SYS_KIND_W32
+    b.eq    sys_value_w32
+    cmp     w1, #SYS_KIND_X64
+    b.eq    sys_value_x64
+    cmp     w1, #SYS_KIND_BYTE
+    b.eq    sys_value_byte
+    mov     x0, x2
+    b       sys_value_done
+
+sys_value_call:
+    blr     x2
+    mov     x0, x0
+    b       sys_value_done
+
+sys_value_w32:
+    ldr     w0, [x2]
+    b       sys_value_done
+
+sys_value_x64:
+    ldr     x0, [x2]
+    b       sys_value_done
+
+sys_value_byte:
+    ldrb    w0, [x2]
+
+sys_value_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+sys_name:
+    ladr    x1, sys_table
+    mov     x2, #SYSF_SIZE
+    umaddl  x1, w0, w2, x1
+    ldr     x0, [x1, #SYSF_NAME]
+    ret
+
+sys_fmt:
+    ladr    x1, sys_table
+    mov     x2, #SYSF_SIZE
+    umaddl  x1, w0, w2, x1
+    ldr     w0, [x1, #SYSF_FMT]
+    ret
+
+sys_line:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    mov     w19, w0
+    mov     x20, x1
+    bl      sys_name
+    mov     x1, x0
+    mov     x0, x20
+    bl      term_append
+    mov     x21, x0
+    ladr    x1, sys_eq_text
+    bl      term_append
+    mov     x21, x0
+    mov     w0, w19
+    bl      sys_fmt
+    mov     w20, w0
+    mov     w0, w19
+    bl      sys_value
+    mov     x1, x0
+    cmp     w20, #SYS_FMT_IP
+    b.eq    sys_line_ip
+    cmp     w20, #SYS_FMT_YESNO
+    b.eq    sys_line_yesno
+    mov     x0, x21
+    bl      term_put_dec
+    b       sys_line_done
+
+sys_line_ip:
+    mov     x0, x21
+    bl      term_put_ip
+    b       sys_line_done
+
+sys_line_yesno:
+    mov     x0, x21
+    ladr    x2, sys_no_text
+    ladr    x3, sys_yes_text
+    cmp     x1, #0
+    csel    x1, x2, x3, eq
+    bl      term_append
+
+sys_line_done:
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+sys_show:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    bl      sys_count
+    mov     w20, w0
+    mov     w19, #0
+
+sys_show_loop:
+    cmp     w19, w20
+    b.hs    sys_show_done
+    mov     w0, w19
+    ladr    x1, curl_msg
+    bl      sys_line
+    ladr    x0, curl_msg
+    bl      term_print
+    add     w19, w19, #1
+    b       sys_show_loop
+
+sys_show_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+sys_check:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    bl      sys_count
+    mov     w20, w0
+    cbz     w20, sys_check_fail
+    mov     w19, #0
+
+sys_check_loop:
+    cmp     w19, w20
+    b.hs    sys_check_ok
+    mov     w0, w19
+    bl      sys_name
+    cbz     x0, sys_check_fail
+    ldrb    w1, [x0]
+    cbz     w1, sys_check_fail
+    mov     w0, w19
+    bl      sys_fmt
+    cmp     w0, #SYS_FMT_MAX
+    b.hs    sys_check_fail
+    mov     w0, w19
+    bl      sys_value
+    add     w19, w19, #1
+    b       sys_check_loop
+
+sys_check_ok:
+    ladr    x0, sys_ok_msg
+    bl      uart_puts
+    mov     x1, x20
+    ladr    x0, sys_facts_label
+    bl      uart_field
+    ladr    x0, uart_newline
+    bl      uart_puts
+    mov     w0, #0
+    b       sys_check_exit
+
+sys_check_fail:
+    ladr    x0, sys_fail_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+    mov     w0, #1
+
+sys_check_exit:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
     ret
 
 .section .text.vectors
@@ -21270,6 +21517,8 @@ term_help_3:
     .asciz  "hilfe                    diese Liste"
 term_cmd_mem:
     .asciz  "speicher"
+term_cmd_state:
+    .asciz  "zustand"
 term_mem_1:
     .asciz  "Speicher: "
 term_mem_2:
@@ -21682,6 +21931,118 @@ llm_t_dot_w:
 llm_t_dot_out:
     .float  -10.78654
 
+sysn_00:
+    .asciz  "speicher.seiten"
+sysn_01:
+    .asciz  "speicher.frei"
+sysn_02:
+    .asciz  "speicher.kernel"
+sysn_03:
+    .asciz  "speicher.modell"
+sysn_04:
+    .asciz  "speicher.agent"
+sysn_05:
+    .asciz  "speicher.basis"
+sysn_06:
+    .asciz  "ram.groesse"
+sysn_07:
+    .asciz  "bild.breite"
+sysn_08:
+    .asciz  "bild.hoehe"
+sysn_09:
+    .asciz  "bild.umschaltungen"
+sysn_10:
+    .asciz  "fenster.anzahl"
+sysn_11:
+    .asciz  "fenster.plaetze"
+sysn_12:
+    .asciz  "netz.ip"
+sysn_13:
+    .asciz  "netz.gateway"
+sysn_14:
+    .asciz  "netz.dns"
+sysn_15:
+    .asciz  "netz.maske"
+sysn_16:
+    .asciz  "netz.verbindungen"
+sysn_17:
+    .asciz  "krypto.bereit"
+sysn_18:
+    .asciz  "tls.zustand"
+sysn_19:
+    .asciz  "schrift.glyphen"
+sysn_20:
+    .asciz  "schrift.einheiten"
+sysn_21:
+    .asciz  "zeit.unix"
+sysn_22:
+    .asciz  "zeit.takt"
+sysn_23:
+    .asciz  "tasten.ueberlauf"
+.balign 8
+sys_table:
+    .quad   sysn_00, pmm_base + 8
+    .word   SYS_KIND_X64, SYS_FMT_DEC
+    .quad   sysn_01, sys_free_pages
+    .word   SYS_KIND_FUNC, SYS_FMT_DEC
+    .quad   sysn_02, sys_kernel_pages
+    .word   SYS_KIND_FUNC, SYS_FMT_DEC
+    .quad   sysn_03, sys_model_pages
+    .word   SYS_KIND_FUNC, SYS_FMT_DEC
+    .quad   sysn_04, sys_agent_pages
+    .word   SYS_KIND_FUNC, SYS_FMT_DEC
+    .quad   sysn_05, pmm_base
+    .word   SYS_KIND_X64, SYS_FMT_DEC
+    .quad   sysn_06, ram_base + 8
+    .word   SYS_KIND_X64, SYS_FMT_DEC
+    .quad   sysn_07, FB_WIDTH
+    .word   SYS_KIND_CONST, SYS_FMT_DEC
+    .quad   sysn_08, FB_HEIGHT
+    .word   SYS_KIND_CONST, SYS_FMT_DEC
+    .quad   sysn_09, fb_flip_count
+    .word   SYS_KIND_W32, SYS_FMT_DEC
+    .quad   sysn_10, win_count
+    .word   SYS_KIND_W32, SYS_FMT_DEC
+    .quad   sysn_11, WIN_MAX
+    .word   SYS_KIND_CONST, SYS_FMT_DEC
+    .quad   sysn_12, net_ip
+    .word   SYS_KIND_W32, SYS_FMT_IP
+    .quad   sysn_13, net_gw
+    .word   SYS_KIND_W32, SYS_FMT_IP
+    .quad   sysn_14, net_dns
+    .word   SYS_KIND_W32, SYS_FMT_IP
+    .quad   sysn_15, net_mask
+    .word   SYS_KIND_W32, SYS_FMT_IP
+    .quad   sysn_16, sys_tcp_open
+    .word   SYS_KIND_FUNC, SYS_FMT_DEC
+    .quad   sysn_17, crypto_ready
+    .word   SYS_KIND_BYTE, SYS_FMT_YESNO
+    .quad   sysn_18, tls_ctx + TLS_STATE
+    .word   SYS_KIND_BYTE, SYS_FMT_DEC
+    .quad   sysn_19, font_state + FONT_NGLYPHS
+    .word   SYS_KIND_W32, SYS_FMT_DEC
+    .quad   sysn_20, font_state + FONT_UNITS
+    .word   SYS_KIND_W32, SYS_FMT_DEC
+    .quad   sysn_21, rtc_now
+    .word   SYS_KIND_FUNC, SYS_FMT_DEC
+    .quad   sysn_22, TIMER_HZ
+    .word   SYS_KIND_CONST, SYS_FMT_DEC
+    .quad   sysn_23, key_overflow
+    .word   SYS_KIND_BYTE, SYS_FMT_YESNO
+sys_table_end:
+
+sys_eq_text:
+    .asciz  " = "
+sys_yes_text:
+    .asciz  "ja"
+sys_no_text:
+    .asciz  "nein"
+sys_ok_msg:
+    .asciz  "SELBSTAUSKUNFT OK"
+sys_facts_label:
+    .asciz  ", Fakten "
+sys_fail_msg:
+    .asciz  "SELBSTAUSKUNFT FEHLER bei Fakt "
 pmm_total_label:
     .asciz  "SPEICHER seiten="
 pmm_free_label:

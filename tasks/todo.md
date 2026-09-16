@@ -31,6 +31,18 @@ Stand 16.09.2026, nach Runde 28.
 - [x] Terminal legt Eingaben als UTF-8 ab, Rücktaste löscht ganze Zeichen
 - [x] Textgröße an die feste Breite angepasst, keine abgeschnittenen Zeilen mehr
 
+## Erledigt in Runde 32
+
+- [x] Faktentabelle `sys_` mit 24 Einträgen, Selbstprüfung und Gegenprobe
+- [x] Terminalbefehl `zustand`
+
+## Offen, Selbstauskunft
+
+- [ ] Fakten maschinenlesbar ausgeben, nicht nur als Text für Menschen
+- [ ] Fakten nach Präfix filtern, etwa `zustand netz`
+- [ ] Ereignisse und Zähler ergänzen: Interrupts, Pakete, Bilder je Sekunde, Stackbedarf
+- [ ] Eine erste austauschbare Politik, die bei Speicherknappheit entscheidet
+
 ## Erledigt in Runde 31
 
 - [x] Seitenallokator in Betrieb, mehrere zusammenhängende Seiten

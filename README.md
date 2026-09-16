@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-81.153%20Byte-brightgreen?style=flat-square" alt="81153 Byte">
+<img src="https://img.shields.io/badge/Kernel-82.849%20Byte-brightgreen?style=flat-square" alt="82849 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>81.153&nbsp;Byte</b> groß, also <b>79&nbsp;KB</b>.<br>
+Das fertige System ist <b>82.849&nbsp;Byte</b> groß, also <b>81&nbsp;KB</b>.<br>
 Mit Systemschrift und Wurzelzertifikat sind es <b>276&nbsp;KB</b> auf dem Datenträger.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
@@ -49,6 +49,7 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Verschlüsselt reden</b></td><td><b>Eigenes TLS 1.3.</b> SHA-256, HMAC, HKDF, AES-128-GCM und X25519, die ersten vier über die Kryptobefehle des Prozessors, dazu ECDSA über P-256 und P-384 mit eigener Montgomery-Arithmetik. Beim Start holt das System <code>HTTPS HTTP/1.1 200 OK</code> von example.com und prüft dabei Serversignatur, Zertifikatskette bis zu einer Wurzel vom Datenträger, CA-Berechtigung und Schlüsselnutzung jedes Ausstellers, Hostname und Gültigkeitszeitraum gegen die Echtzeituhr. Der Handshake erzwingt die Nachrichtenreihenfolge, die Schlüssel kommen aus dem Zufallsgerät der Maschine (virtio-rng), 28 Testvektoren laufen bei jedem Start, und ohne bestandene Tests oder ohne Zufallsgerät bleibt TLS gesperrt</td></tr>
 <tr><td><b>Deutsch tippen</b></td><td><b>Deutsche Tastatur.</b> QWERTZ mit ä ö ü ß, den Zeichen der zweiten Ebene über die Umschalttaste und der dritten Ebene über AltGr: <code>@ \ ~ | { [ ] } € µ ² ³</code>. Die Eingabe wird als UTF-8 im Terminal abgelegt, die Rücktaste entfernt ein ganzes Zeichen, nicht ein Byte</td></tr>
 <tr><td><b>Befehle annehmen</b></td><td><b>Terminal mit curl.</b> <code>curl https://example.com/</code> löst den Namen auf, baut TLS 1.3 mit voller Zertifikatsprüfung auf und zeigt Statuszeile und Seiteninhalt im Terminal, <code>curl http://…</code> dasselbe ohne Verschlüsselung. <code>hilfe</code> listet die Befehle. Fehler wie ein unbekannter Name oder eine fremde Zertifikatskette werden im Terminal gemeldet, die Einzelheiten stehen im Netzwerkfenster</td></tr>
+<tr><td><b>Sich selbst kennen</b></td><td><b>Selbstauskunft als Tabelle im Kernel.</b> Vierundzwanzig Fakten über den eigenen Zustand: Speicher nach Eigentümer, Bildmaße, Fenster, Netzadressen, Kryptobereitschaft, Schriftdaten, Uhrzeit, Takt. Jeder Fakt nennt seine Quelle und wie sie zu lesen ist. Der Befehl <code>zustand</code> zeigt alles. Das System muss seinen Zustand also nicht raten, es liest ihn ab</td></tr>
 <tr><td><b>Rechnen wie ein Modell</b></td><td><b>Rechenkern für Sprachmodelle im Kernel.</b> Die Operationen, die in jedem Transformer-Modell und für jede Sprache gleich sind: Exponentialfunktion, RMS-Normierung, Softmax, SwiGLU, Skalarprodukt mit 8-Bit-Gewichten und Matrixmultiplikation. Sechs Testgruppen laufen bei jedem Start. Das Modell selbst ist damit eine Datei, so wie die Schrift eine Datei ist. Noch nicht enthalten: Position, Aufmerksamkeit, Wortstücke, Erzeugung</td></tr>
 <tr><td><b>Sich abschalten</b></td><td>Roter Knopf oben rechts: Unterbrechungen sperren, Zeitgeber anhalten, Geräte zurücksetzen, Puffer überschreiben, Maschine abschalten</td></tr>
 </table>
@@ -185,7 +186,7 @@ In `kernel.S` stecken **2.212 Sprungmarken**. Jede gehört zu einem Zuständigke
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **81.153 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 62.768 Byte Code, 14.665 Byte Konstanten |
+| **`kernel.bin`** | **82.849 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 62.768 Byte Code, 14.665 Byte Konstanten |
 | `kernel.elf` | 254 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -201,7 +202,7 @@ Wollte man asmOS heute auf ein Gerät bringen, wären es genau drei Dateien:
 
 | Datei | Größe | Wozu |
 |---|---:|---|
-| `kernel.bin` | 81.153 Byte | das gesamte Betriebssystem |
+| `kernel.bin` | 82.849 Byte | das gesamte Betriebssystem |
 | `FONT.TTF` | 204.776 Byte | die Systemschrift FiraCode, vom Kernel selbst ausgewertet |
 | `ROOT.DER` | 574 Byte | das Wurzelzertifikat für die TLS-Kettenprüfung |
 | **zusammen** | **282.783 Byte, also 276 KB** | |
@@ -760,3 +761,31 @@ Dass der Start weniger Befehle braucht, liegt nicht an der Schrift, sondern an d
 | Sprungmarken | 2.323 | 2.364 |
 | Verwalteter Speicher | statisch zugeteilt | 42.496 Seiten mit Eigentümer |
 | Selbsttests beim Start | 28 Kryptovektoren, 6 Rechengruppen | dazu 8 Speicherschritte |
+
+
+### Stand 16.09.2026, Runde 32: das System kennt sich selbst als Tabelle
+
+**Die Frage dahinter.** Wenn irgendwann ein Modell über dieses System entscheiden soll, darf es dessen Zustand nicht raten. Ein Modell, das den freien Speicher schätzt, ist gefährlich. Eines, das ihn abfragt, nicht. Also braucht der Kernel eine Stelle, an der er exakt und vollständig sagt, wie es um ihn steht.
+
+**Was gebaut wurde.** Eine Faktentabelle im Kernel mit vierundzwanzig Einträgen. Jeder Eintrag nennt einen Namen, die Quelle des Wertes und wie er zu lesen und darzustellen ist. Quelle kann ein Wert im Speicher sein, ein einzelnes Byte, eine feste Zahl oder eine Funktion, die erst rechnen muss. Der Befehl `zustand` gibt alles aus:
+
+```
+speicher.frei = 42240        netz.ip = 10.0.2.15
+speicher.kernel = 256        netz.gateway = 10.0.2.2
+speicher.modell = 0          netz.dns = 10.0.2.3
+bild.breite = 3840           krypto.bereit = ja
+fenster.anzahl = 3           schrift.glyphen = 2060
+zeit.takt = 30               zeit.unix = 1789572824
+```
+
+**Warum das mehr ist als eine Anzeige.** Diese Tabelle ist in Assembler geschrieben und damit Teil des Systems, nicht ein Bericht über es. Sie wird bei jedem Start einmal vollständig gelesen, ein fehlender Name oder ein ungültiges Format fällt sofort auf: `SELBSTAUSKUNFT OK, Fakten 24`. Die Gegenprobe mit einem geleerten Namen meldet `SELBSTAUSKUNFT FEHLER bei Fakt 12`.
+
+**Zur Frage, ob ein Modell selbst in Assembler geschrieben werden kann.** Die Rechenoperationen sind es bereits, seit der vorigen Runde. Das Wissen eines neuronalen Netzes steckt aber in seinen Gewichten, und die entstehen aus Training, nicht aus Programmierung. Ein kleines Modell mit einer halben Milliarde Gewichten wäre als Quelltext eine Datei von rund drei Gigabyte mit sechzig Millionen Zeilen, die tagelang übersetzt würde. Was sich dagegen sehr wohl in Assembler schreiben lässt, ist das Wissen des Systems über sich selbst, und genau das steht jetzt in dieser Tabelle: exakt, ohne Training und ohne Möglichkeit, es sich auszudenken.
+
+| Kennzahl | Runde 31 | Runde 32 |
+|---|---|---|
+| Größe des fertigen Systems | 81.153 Byte | **82.849 Byte** (+1.696) |
+| Zeilen Assembler | 22.349 | 22.710 |
+| Sprungmarken | 2.364 | 2.427 |
+| Fakten über den eigenen Zustand | keine | 24 |
+| Selbsttests beim Start | 28 Kryptovektoren, 6 Rechengruppen, 8 Speicherschritte | dazu 24 Faktenprüfungen |

@@ -4,6 +4,28 @@ Entwicklungsgedächtnis von asmOS: Funktionen, Architekturentscheidungen, Sicher
 
 ## 16.09.2026
 
+### Runde 32: Selbstauskunft, das System kennt sich selbst als Tabelle
+
+**Architektur**
+- Neuer Block `sys_`: eine Faktentabelle im Kernel, 24 Eintraege. Jeder Eintrag nennt einen Namen, eine Quelle und wie sie zu lesen und zu formatieren ist. Quellen sind ein direkter Wert im Speicher, ein Byte, ein 64-Bit-Wert, eine Konstante oder eine Funktion.
+- Damit ist das Wissen des Systems ueber sich selbst in Assembler geschrieben, exakt und maschinenlesbar. Ein Agent muss nichts ueber asmOS wissen, er fragt. Das ist zugleich die wirksamste Absicherung gegen erfundene Angaben.
+- Terminalbefehl `zustand` gibt alle Fakten als `name = wert` aus.
+
+**Erfasst**
+- Speicher: verwaltete Seiten, frei, Kernel, Modell, Agent, Basisadresse, RAM-Groesse
+- Bild: Breite, Hoehe, Pufferumschaltungen
+- Fenster: Anzahl und Plaetze
+- Netz: Adresse, Gateway, Nameserver, Maske, offene Verbindungen
+- Kryptografie: bereit, TLS-Zustand
+- Schrift: Glyphen, Einheiten je Geviert
+- Zeit: Unixzeit aus der Echtzeituhr, Takt
+- Eingabe: Tastenueberlauf
+
+**Nachweise**
+- `SELBSTAUSKUNFT OK, Fakten 24` beim Start; jeder Eintrag wird dabei einmal gelesen, ein Nullzeiger oder ein leerer Name faellt sofort auf.
+- Gegenprobe mit geleertem Namen: `SELBSTAUSKUNFT FEHLER bei Fakt 12`.
+- Ruhebild byteweise gleich, `make check` und `make check-net` laufen durch.
+
 ### Runde 31: Speicher wird dynamisch und kennt seinen Eigentuemer
 
 **Architektur**
