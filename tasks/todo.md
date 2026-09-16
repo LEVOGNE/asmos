@@ -31,6 +31,21 @@ Stand 16.09.2026, nach Runde 28.
 - [x] Terminal legt Eingaben als UTF-8 ab, Rücktaste löscht ganze Zeichen
 - [x] Textgröße an die feste Breite angepasst, keine abgeschnittenen Zeilen mehr
 
+## Erledigt in Runde 30
+
+- [x] Block `llm_`: Exponentialfunktion, RMS-Normierung, Softmax, SwiGLU, Q8-Skalarprodukt, Matrixmultiplikation
+- [x] Sechs Testgruppen mit Gegenprobe, Belege in `docs/quellen.md`
+
+## Offen, Rechenkern
+
+- [ ] Rotationskodierung der Position (RoPE)
+- [ ] Aufmerksamkeit mit Schlüssel-Wert-Zwischenspeicher
+- [ ] Modelldateiformat und Lader vom Datenträger
+- [ ] Zerlegung in Wortstücke (Tokenizer)
+- [ ] Auswahl des nächsten Stücks und Erzeugungsschleife
+- [ ] NEON für das Skalarprodukt, erst nach Messung an einem echten Modell
+- [ ] Seitenallokator produktiv nutzen, heute ist er vorhanden, aber nirgends verdrahtet
+
 ## Erledigt in Runde 29
 
 - [x] `tls_send_record` prüft die Nutzlastlänge, Sendepuffer auf 2048 Byte

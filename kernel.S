@@ -388,6 +388,10 @@
 .equ TLS_RX_SIZE,           (TLS_REC_MAX + 5)
 .equ TLS_HS_SIZE,           16384
 .equ TLS_OUT_SIZE,          2048
+.equ LLM_QB,                32
+.equ LLM_QSHIFT,            5
+.equ LLM_QBLOCK,            36
+.equ LLM_SCRATCH,           256
 .equ TLS_OUT_MAX,           (TLS_OUT_SIZE - 22)
 .equ TLSP_HOST,             0
 .equ TLSP_REQ,              16
@@ -1252,7 +1256,7 @@ boot_memory_ready:
     bl      gic_put_version
     msr     daifclr, #DAIF_I
     bl      net_init
-    bl      crypto_selftest
+    bl      boot_selftests
     bl      desktop_start
 
 .if BOOT_SELFTEST
@@ -19246,6 +19250,404 @@ time_selftest_exit:
     ldp     x29, x30, [sp], #48
     ret
 
+boot_selftests:
+    stp     x29, x30, [sp, #-16]!
+    bl      crypto_selftest
+    bl      llm_selftest
+    ldp     x29, x30, [sp], #16
+    ret
+
+llm_expf:
+    ladr    x9, llm_c_invln2
+    ldr     s1, [x9]
+    fmul    s2, s0, s1
+    frintn  s2, s2
+    fcvtzs  w10, s2
+    ladr    x9, llm_c_ln2hi
+    ldr     s3, [x9]
+    fmsub   s0, s2, s3, s0
+    ladr    x9, llm_c_ln2lo
+    ldr     s3, [x9]
+    fmsub   s0, s2, s3, s0
+    ladr    x9, llm_c_exp
+    ldr     s4, [x9]
+    ldr     s5, [x9, #4]
+    fmadd   s4, s4, s0, s5
+    ldr     s5, [x9, #8]
+    fmadd   s4, s4, s0, s5
+    ldr     s5, [x9, #12]
+    fmadd   s4, s4, s0, s5
+    fmov    s5, #1.0
+    fmadd   s4, s4, s0, s5
+    fmadd   s4, s4, s0, s5
+    add     w10, w10, #127
+    cmp     w10, #1
+    b.lt    llm_expf_zero
+    cmp     w10, #254
+    b.gt    llm_expf_big
+    lsl     w10, w10, #23
+    fmov    s6, w10
+    fmul    s0, s4, s6
+    ret
+
+llm_expf_zero:
+    fmov    s0, wzr
+    ret
+
+llm_expf_big:
+    ladr    x9, llm_c_big
+    ldr     s0, [x9]
+    ret
+
+llm_rmsnorm:
+    fmov    s1, wzr
+    mov     w9, #0
+
+llm_rmsnorm_sum:
+    cmp     w9, w3
+    b.hs    llm_rmsnorm_scale
+    ldr     s2, [x1, w9, uxtw #2]
+    fmadd   s1, s2, s2, s1
+    add     w9, w9, #1
+    b       llm_rmsnorm_sum
+
+llm_rmsnorm_scale:
+    scvtf   s3, w3
+    fdiv    s1, s1, s3
+    fadd    s1, s1, s0
+    fsqrt   s1, s1
+    fmov    s2, #1.0
+    fdiv    s1, s2, s1
+    mov     w9, #0
+
+llm_rmsnorm_apply:
+    cmp     w9, w3
+    b.hs    llm_rmsnorm_done
+    ldr     s2, [x1, w9, uxtw #2]
+    ldr     s3, [x2, w9, uxtw #2]
+    fmul    s2, s2, s1
+    fmul    s2, s2, s3
+    str     s2, [x0, w9, uxtw #2]
+    add     w9, w9, #1
+    b       llm_rmsnorm_apply
+
+llm_rmsnorm_done:
+    ret
+
+llm_softmax:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    mov     x19, x0
+    mov     w20, w1
+    cmp     w20, #0
+    b.le    llm_softmax_done
+    ldr     s0, [x19]
+    mov     w9, #1
+
+llm_softmax_max:
+    cmp     w9, w20
+    b.hs    llm_softmax_start
+    ldr     s1, [x19, w9, uxtw #2]
+    fmax    s0, s0, s1
+    add     w9, w9, #1
+    b       llm_softmax_max
+
+llm_softmax_start:
+    str     s0, [sp, #32]
+    fmov    s0, wzr
+    str     s0, [sp, #36]
+    str     wzr, [sp, #40]
+
+llm_softmax_exp:
+    ldr     w9, [sp, #40]
+    cmp     w9, w20
+    b.hs    llm_softmax_div
+    ldr     s0, [x19, w9, uxtw #2]
+    ldr     s1, [sp, #32]
+    fsub    s0, s0, s1
+    bl      llm_expf
+    ldr     w9, [sp, #40]
+    str     s0, [x19, w9, uxtw #2]
+    ldr     s1, [sp, #36]
+    fadd    s1, s1, s0
+    str     s1, [sp, #36]
+    add     w9, w9, #1
+    str     w9, [sp, #40]
+    b       llm_softmax_exp
+
+llm_softmax_div:
+    ldr     s1, [sp, #36]
+    fmov    s2, #1.0
+    fdiv    s1, s2, s1
+    mov     w9, #0
+
+llm_softmax_norm:
+    cmp     w9, w20
+    b.hs    llm_softmax_done
+    ldr     s0, [x19, w9, uxtw #2]
+    fmul    s0, s0, s1
+    str     s0, [x19, w9, uxtw #2]
+    add     w9, w9, #1
+    b       llm_softmax_norm
+
+llm_softmax_done:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
+llm_silu_mul:
+    stp     x29, x30, [sp, #-64]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    mov     w22, w3
+    str     wzr, [sp, #48]
+
+llm_silu_loop:
+    ldr     w9, [sp, #48]
+    cmp     w9, w22
+    b.hs    llm_silu_done
+    ldr     s0, [x20, w9, uxtw #2]
+    str     s0, [sp, #52]
+    fneg    s0, s0
+    bl      llm_expf
+    fmov    s1, #1.0
+    fadd    s0, s0, s1
+    fdiv    s0, s1, s0
+    ldr     s1, [sp, #52]
+    fmul    s0, s0, s1
+    ldr     w9, [sp, #48]
+    ldr     s1, [x21, w9, uxtw #2]
+    fmul    s0, s0, s1
+    str     s0, [x19, w9, uxtw #2]
+    add     w9, w9, #1
+    str     w9, [sp, #48]
+    b       llm_silu_loop
+
+llm_silu_done:
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #64
+    ret
+
+llm_dot_q8:
+    fmov    s0, wzr
+    mov     w9, #0
+
+llm_dot_block:
+    cmp     w9, w2
+    b.hs    llm_dot_done
+    ldr     s1, [x0], #4
+    fmov    s2, wzr
+    mov     w10, #0
+
+llm_dot_in:
+    cmp     w10, #LLM_QB
+    b.hs    llm_dot_blockend
+    ldrsb   w11, [x0, w10, uxtw]
+    scvtf   s3, w11
+    add     w12, w9, w10
+    ldr     s4, [x1, w12, uxtw #2]
+    fmadd   s2, s3, s4, s2
+    add     w10, w10, #1
+    b       llm_dot_in
+
+llm_dot_blockend:
+    fmadd   s0, s2, s1, s0
+    add     x0, x0, #LLM_QB
+    add     w9, w9, #LLM_QB
+    b       llm_dot_block
+
+llm_dot_done:
+    ret
+
+llm_matmul_q8:
+    stp     x29, x30, [sp, #-80]!
+    stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    mov     w22, w3
+    mov     w23, w4
+    mov     w24, #0
+    lsr     w9, w23, #LLM_QSHIFT
+    mov     w10, #LLM_QBLOCK
+    mul     w9, w9, w10
+    str     w9, [sp, #64]
+
+llm_matmul_row:
+    cmp     w24, w22
+    b.hs    llm_matmul_done
+    mov     x0, x20
+    mov     x1, x21
+    mov     w2, w23
+    bl      llm_dot_q8
+    str     s0, [x19, w24, uxtw #2]
+    ldr     w9, [sp, #64]
+    add     x20, x20, w9, uxtw
+    add     w24, w24, #1
+    b       llm_matmul_row
+
+llm_matmul_done:
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #80
+    ret
+
+llm_close:
+    fsub    s2, s0, s1
+    fabs    s2, s2
+    fabs    s3, s1
+    fmov    s4, #1.0
+    fmax    s3, s3, s4
+    ladr    x9, llm_c_tol
+    ldr     s5, [x9]
+    fmul    s3, s3, s5
+    fcmp    s2, s3
+    cset    w0, le
+    ret
+
+llm_cmp_arr:
+    mov     w9, #0
+
+llm_cmp_loop:
+    cmp     w9, w2
+    b.hs    llm_cmp_ok
+    ldr     s0, [x0, w9, uxtw #2]
+    ldr     s1, [x1, w9, uxtw #2]
+    fsub    s2, s0, s1
+    fabs    s2, s2
+    fabs    s3, s1
+    fmov    s4, #1.0
+    fmax    s3, s3, s4
+    ladr    x10, llm_c_tol
+    ldr     s5, [x10]
+    fmul    s3, s3, s5
+    fcmp    s2, s3
+    b.gt    llm_cmp_bad
+    add     w9, w9, #1
+    b       llm_cmp_loop
+
+llm_cmp_ok:
+    mov     w0, #1
+    ret
+
+llm_cmp_bad:
+    mov     w0, #0
+    ret
+
+llm_selftest:
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    mov     w19, #1
+    mov     w20, #0
+
+llm_st_exp:
+    cmp     w20, #8
+    b.hs    llm_st_norm
+    ladr    x0, llm_t_exp_in
+    ldr     s0, [x0, w20, uxtw #2]
+    bl      llm_expf
+    ladr    x0, llm_t_exp_out
+    ldr     s1, [x0, w20, uxtw #2]
+    bl      llm_close
+    cbz     w0, llm_st_fail
+    add     w20, w20, #1
+    b       llm_st_exp
+
+llm_st_norm:
+    mov     w19, #2
+    ladr    x0, llm_scratch
+    ladr    x1, llm_t_norm_in
+    ladr    x2, llm_t_norm_w
+    mov     w3, #8
+    ladr    x9, llm_c_eps
+    ldr     s0, [x9]
+    bl      llm_rmsnorm
+    ladr    x0, llm_scratch
+    ladr    x1, llm_t_norm_out
+    mov     w2, #8
+    bl      llm_cmp_arr
+    cbz     w0, llm_st_fail
+
+llm_st_soft:
+    mov     w19, #3
+    ladr    x0, llm_t_soft_in
+    ladr    x1, llm_scratch
+    mov     w2, #24
+    bl      mem_copy
+    ladr    x0, llm_scratch
+    mov     w1, #6
+    bl      llm_softmax
+    ladr    x0, llm_scratch
+    ladr    x1, llm_t_soft_out
+    mov     w2, #6
+    bl      llm_cmp_arr
+    cbz     w0, llm_st_fail
+
+llm_st_silu:
+    mov     w19, #4
+    ladr    x0, llm_scratch
+    ladr    x1, llm_t_silu_a
+    ladr    x2, llm_t_silu_b
+    mov     w3, #6
+    bl      llm_silu_mul
+    ladr    x0, llm_scratch
+    ladr    x1, llm_t_silu_out
+    mov     w2, #6
+    bl      llm_cmp_arr
+    cbz     w0, llm_st_fail
+
+llm_st_dot:
+    mov     w19, #5
+    ladr    x0, llm_t_dot_w
+    ladr    x1, llm_t_dot_vec
+    mov     w2, #64
+    bl      llm_dot_q8
+    ladr    x9, llm_t_dot_out
+    ldr     s1, [x9]
+    bl      llm_close
+    cbz     w0, llm_st_fail
+
+llm_st_mat:
+    mov     w19, #6
+    ladr    x0, llm_scratch
+    ladr    x1, llm_t_dot_w
+    ladr    x2, llm_t_dot_vec
+    mov     w3, #1
+    mov     w4, #64
+    bl      llm_matmul_q8
+    ladr    x0, llm_scratch
+    ladr    x1, llm_t_dot_out
+    mov     w2, #1
+    bl      llm_cmp_arr
+    cbz     w0, llm_st_fail
+
+llm_st_ok:
+    ladr    x0, llm_ok_msg
+    bl      uart_puts
+    mov     w0, #0
+    b       llm_selftest_exit
+
+llm_st_fail:
+    ladr    x0, llm_fail_msg
+    bl      uart_puts
+    mov     x0, x19
+    bl      uart_putdec
+    ladr    x0, uart_newline
+    bl      uart_puts
+    mov     w0, #1
+
+llm_selftest_exit:
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+    ret
+
 .section .text.vectors
 .balign VEC_TABLE_ALIGN
 .global vec_table
@@ -20882,6 +21284,56 @@ icon_x:
 icon_minus:
     .byte   1, 16, 2, 1, 72, 128, 2, 184, 128
 
+.balign 4
+llm_c_invln2:
+    .float  1.44269504
+llm_c_ln2hi:
+    .float  0.693145751953125
+llm_c_ln2lo:
+    .float  1.428606765330187e-06
+llm_c_exp:
+    .float  0.00833333333, 0.0416666667, 0.166666667, 0.5
+llm_c_big:
+    .float  3.4e38
+llm_c_tol:
+    .float  0.0002
+llm_c_eps:
+    .float  1e-5
+llm_t_exp_in:
+    .float  0, 1, -1, 5, -5, 0.5, -0.693147004, 10
+llm_t_exp_out:
+    .float  1, 2.71828175, 0.36787945, 148.413162, 0.006737947, 1.64872122, 0.500000119, 22026.4648
+llm_t_norm_in:
+    .float  0.5, -1.5, 2, 0.25, -0.75, 1, 3, -2.5
+llm_t_norm_w:
+    .float  1, 0.5, 2, 1.5, 1, 0.25, 0.75, 2
+llm_t_norm_out:
+    .float  0.292508483, -0.438762695, 2.34006786, 0.219381347, -0.438762695, 0.146254241, 1.31628811, -2.92508459
+llm_t_soft_in:
+    .float  1, 2, 3, -1, 0, 2.5
+llm_t_soft_out:
+    .float  0.0621417463, 0.168918774, 0.459168851, 0.00840997044, 0.0228606705, 0.278499991
+llm_t_silu_a:
+    .float  0.5, -1, 2, -3, 0, 1.5
+llm_t_silu_b:
+    .float  1, 2, -1, 0.5, 3, -2
+llm_t_silu_out:
+    .float  0.311229676, -0.537882864, -1.76159418, -0.0711388066, 0, -2.4527235
+llm_t_dot_vec:
+    .float  0.190977857, -1.74884415, -1.76159537, -1.1761651, 0.721599877, -0.289630771, -0.743411303, 0.342247456, -0.18726249, -0.80093199, 1.17751789, 0.795977712, -1.02361393, 0.297694832, 0.100786015, 1.50055003, 0.917781174, -0.848248959, 1.92069936, -1.5277369, -0.327508718, 1.02856374, -1.39206183, -0.0441475995, -1.843171, 0.672863424, 1.05828345, 0.292103767, 1.50191128, -0.745009959, 0.781181455, 0.377479494, 0.319580823, -0.175178677, 1.35987115, 1.77872443, -0.103606649, 0.65660882, -1.75732231, 0.805968106, 0.588515401, 1.97238374, 1.2876991, -0.861617863, -0.456834227, 0.674610853, -1.90974832, -0.15321885, -1.32780647, -1.53161681, -1.76418233, 1.072932, -1.48263907, -1.00954068, -0.436201185, 1.48568785, -1.67767477, -0.203250393, 0.197759643, 1.53353536, 1.2771194, 1.45593786, -0.886315763, -0.338813931
+llm_t_dot_w:
+    .float  0.0122999996
+    .byte   -45, 115, -89, -26, 39, -115, -109, 83, 10, -103, -34, 22, -113, 105, 2, -73, -118, -105, -16, -20, -110, -66, -104, 14, -19, -112, 84, 17, -96, 115, -70, 34
+    .float  -0.0456000008
+    .byte   33, 22, 115, -112, 20, 22, -26, -115, 122, -71, -116, 15, 92, -93, -53, -20, -91, 11, -97, 19, -49, 16, 81, 47, -81, -101, 21, 19, 36, -79, -32, -103
+llm_t_dot_out:
+    .float  -10.78654
+
+llm_ok_msg:
+    .asciz  "LLM KERN OK, 6 Testgruppen\n"
+llm_fail_msg:
+    .asciz  "LLM KERN FEHLER in Gruppe "
+
 .section .bss
 
 .balign 8
@@ -21430,6 +21882,9 @@ vg_org_y:
 .balign 8
 vg_edge_count:
     .space  4
+.balign 4
+llm_scratch:
+    .space  (LLM_SCRATCH * 4)
 font_limit_flag:
     .space  1
 font_depth:

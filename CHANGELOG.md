@@ -4,6 +4,22 @@ Entwicklungsgedächtnis von asmOS: Funktionen, Architekturentscheidungen, Sicher
 
 ## 16.09.2026
 
+### Runde 30: Rechenkern fuer Sprachmodelle als Kernelblock
+
+**Architektur**
+- Neuer Block `llm_` mit den Operationen, die in jedem Transformer-Modell und fuer jede Sprache gleich sind: Exponentialfunktion, RMS-Normierung, Softmax, SwiGLU-Verknuepfung, Skalarprodukt mit 8-Bit-Gewichten und Matrixmultiplikation.
+- Aktivierungen in 32-Bit-Gleitkomma, Gewichte in 8 Bit. Quantisierungsformat: 32 Gewichte je Block mit einem gemeinsamen Skalar, zusammen 36 Byte, wie `Q8_0` in GGML. Bewusst nur dieses eine Format statt eines vollstaendigen GGUF-Lesers.
+- Das Modell ist damit Daten, nicht Programm, genau wie die Schrift. Der Kernel enthaelt die Mathematik, nicht das Modell.
+- Die Selbsttests des Starts laufen jetzt ueber `boot_selftests`, weil der Startblock auf das Byte voll ist und kein zusaetzlicher Aufruf hineinpasst.
+
+**Nachweise**
+- Sechs Testgruppen gegen Referenzwerte vom Entwicklungsrechner, Toleranz 2e-4 relativ: `LLM KERN OK, 6 Testgruppen`.
+- Gegenprobe mit einem um 0,001 verschobenen Erwartungswert: `LLM KERN FEHLER in Gruppe 3`. Der Test ist also nicht blind.
+- Ruhebild byteweise gleich, `make check` und `make check-net` laufen durch. Der Selbsttest erscheint in der Befehlsmessung nicht, er ist zu klein.
+
+**Noch nicht enthalten**
+- Rotationskodierung der Position, Aufmerksamkeit mit Zwischenspeicher, Zerlegung in Wortstuecke, Modelldateiformat, Auswahl des naechsten Stuecks, Erzeugungsschleife. Der Kern ist skalar; NEON erst nach einer Messung an einem echten Modell.
+
 ### Runde 29: Netzhaertung vor der Agentenschicht
 
 **Sicherheit**

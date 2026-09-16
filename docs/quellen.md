@@ -1939,3 +1939,19 @@ Gegenproben (15.09.2026): `-rtc base=2030-01-01T00:00:00` → `ZERTIFIKAT ABGELA
 | Linux-Tastencodes | `KEY_MINUS` 12, `KEY_LEFTBRACE` 26, `KEY_RIGHTBRACE` 27, `KEY_SEMICOLON` 39, `KEY_APOSTROPHE` 40, `KEY_BACKSLASH` 43, `KEY_102ND` 86, `KEY_RIGHTALT` 100 | Linux, `include/uapi/linux/input-event-codes.h`; die virtio-Tastatur liefert genau diese Codes |
 | Deutsche Belegung | Grundebene mit z und y vertauscht, `ß ´ ü + ö ä ^ #` an den genannten Tasten, Umschaltebene `! " § $ % & / ( ) = ? \` Ü * Ö Ä ° ' ; : _`, dritte Ebene über AltGr `² ³ { [ ] } \ @ € ~ µ \|` | Deutsche Standardbelegung T1, DIN 2137; am laufenden System über eingespeiste Tastendrücke geprüft |
 | Zeichensätze | Die Tastentabellen liefern Unicode-Codepunkte, der Tastenring führt 16 Bit je Taste. Damit passt auch U+20AC hindurch, das in Latin-1 fehlt | Entscheidung |
+
+## Rechenkern für Sprachmodelle, Block `llm_` (16.09.2026)
+
+Der Block enthält die Operationen, die in jedem Transformer-Modell und für jede Sprache identisch sind. Was sich je Modell unterscheidet, sind nur Maße und Gewichte, und die sind Daten, keine Programmlogik.
+
+| Baustein | Formel und Festlegung | Beleg |
+|---|---|---|
+| `llm_expf` | Argumentreduktion `x = k·ln2 + r` mit ln2 in zwei Teilen (hoch und niedrig), danach Horner-Polynom fünften Grades für `e^r`, zuletzt Multiplikation mit `2^k` über direktes Setzen des Exponentenfeldes. Bereichsgrenzen: Exponent unter 1 liefert 0, über 254 den größten endlichen Wert | Cody und Waite, "Software Manual for the Elementary Functions", Standardverfahren für exp in Gleitkomma; Polynom aus der Taylorreihe, Koeffizienten 1/120, 1/24, 1/6, 1/2 |
+| `llm_rmsnorm` | `y_i = x_i / sqrt(mean(x²) + eps) · w_i`, ohne Mittelwertabzug und ohne Verschiebung | Zhang und Sennrich, "Root Mean Square Layer Normalization", 2019; so verwendet in Llama, Mistral, Qwen und Gemma |
+| `llm_softmax` | Maximum abziehen, dann `exp`, dann durch die Summe teilen. Der Abzug verhindert Überlauf und ändert das Ergebnis mathematisch nicht | Standard, unter anderem Goodfellow et al., "Deep Learning", Abschnitt 4.1 |
+| `llm_silu_mul` | `out_i = a_i · sigmoid(a_i) · b_i`, also die SwiGLU-Verknüpfung der beiden Zweige des Vorwärtsnetzes | Shazeer, "GLU Variants Improve Transformer", 2020; Elfwing et al. zu SiLU, 2017 |
+| Quantisierungsformat Q8 | Ein Block sind 32 Gewichte als vorzeichenbehaftete Bytes mit einem gemeinsamen Skalar in 32-Bit-Gleitkomma davor, zusammen 36 Byte. Das Skalarprodukt summiert je Block ganzzahlig und multipliziert einmal je Block mit dem Skalar | Entspricht dem Aufbau von `Q8_0` in GGML, dort ebenfalls 32 Werte je Block mit einem Skalar. Bewusst nur dieses eine Format statt eines vollständigen GGUF-Lesers |
+| Gleitkomma im Kernel | Aktivierungen in 32-Bit-Gleitkomma, Gewichte in 8 Bit. `CPACR_EL1.FPEN` wird beim Start freigeschaltet, damit sind Gleitkomma- und NEON-Register nutzbar | ARM ARM, `CPACR_EL1`; die Freischaltung existiert seit der NEON-Ausgabe im Bildpfad |
+| Prüfung | Sechs Testgruppen gegen Referenzwerte, die auf dem Entwicklungsrechner in doppelter Genauigkeit gerechnet und auf 32 Bit gerundet wurden. Toleranz 2·10⁻⁴ relativ. Gegenprobe mit einem absichtlich um 0,001 verschobenen Erwartungswert meldet `LLM KERN FEHLER in Gruppe 3` | eigene Messung, Verfahren wie bei den Kryptobausteinen |
+
+Noch nicht enthalten und deshalb ausdrücklich offen: Rotationskodierung der Position, Aufmerksamkeit mit Schlüssel-Wert-Zwischenspeicher, Zerlegung in Wortstücke, Modelldateiformat, Auswahl des nächsten Stücks und die Erzeugungsschleife. Der vorhandene Teil ist bewusst skalar gehalten; eine Beschleunigung mit NEON erfolgt erst nach einer Messung an einem echten Modell, wie es die Projektregel für Optimierungen verlangt.

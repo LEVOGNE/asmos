@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-77.897%20Byte-brightgreen?style=flat-square" alt="77897 Byte">
+<img src="https://img.shields.io/badge/Kernel-79.855%20Byte-brightgreen?style=flat-square" alt="79855 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>77.897&nbsp;Byte</b> groß, also <b>76&nbsp;KB</b>.<br>
+Das fertige System ist <b>79.855&nbsp;Byte</b> groß, also <b>78&nbsp;KB</b>.<br>
 Mit Systemschrift und Wurzelzertifikat sind es <b>276&nbsp;KB</b> auf dem Datenträger.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
@@ -49,6 +49,7 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Verschlüsselt reden</b></td><td><b>Eigenes TLS 1.3.</b> SHA-256, HMAC, HKDF, AES-128-GCM und X25519, die ersten vier über die Kryptobefehle des Prozessors, dazu ECDSA über P-256 und P-384 mit eigener Montgomery-Arithmetik. Beim Start holt das System <code>HTTPS HTTP/1.1 200 OK</code> von example.com und prüft dabei Serversignatur, Zertifikatskette bis zu einer Wurzel vom Datenträger, CA-Berechtigung und Schlüsselnutzung jedes Ausstellers, Hostname und Gültigkeitszeitraum gegen die Echtzeituhr. Der Handshake erzwingt die Nachrichtenreihenfolge, die Schlüssel kommen aus dem Zufallsgerät der Maschine (virtio-rng), 28 Testvektoren laufen bei jedem Start, und ohne bestandene Tests oder ohne Zufallsgerät bleibt TLS gesperrt</td></tr>
 <tr><td><b>Deutsch tippen</b></td><td><b>Deutsche Tastatur.</b> QWERTZ mit ä ö ü ß, den Zeichen der zweiten Ebene über die Umschalttaste und der dritten Ebene über AltGr: <code>@ \ ~ | { [ ] } € µ ² ³</code>. Die Eingabe wird als UTF-8 im Terminal abgelegt, die Rücktaste entfernt ein ganzes Zeichen, nicht ein Byte</td></tr>
 <tr><td><b>Befehle annehmen</b></td><td><b>Terminal mit curl.</b> <code>curl https://example.com/</code> löst den Namen auf, baut TLS 1.3 mit voller Zertifikatsprüfung auf und zeigt Statuszeile und Seiteninhalt im Terminal, <code>curl http://…</code> dasselbe ohne Verschlüsselung. <code>hilfe</code> listet die Befehle. Fehler wie ein unbekannter Name oder eine fremde Zertifikatskette werden im Terminal gemeldet, die Einzelheiten stehen im Netzwerkfenster</td></tr>
+<tr><td><b>Rechnen wie ein Modell</b></td><td><b>Rechenkern für Sprachmodelle im Kernel.</b> Die Operationen, die in jedem Transformer-Modell und für jede Sprache gleich sind: Exponentialfunktion, RMS-Normierung, Softmax, SwiGLU, Skalarprodukt mit 8-Bit-Gewichten und Matrixmultiplikation. Sechs Testgruppen laufen bei jedem Start. Das Modell selbst ist damit eine Datei, so wie die Schrift eine Datei ist. Noch nicht enthalten: Position, Aufmerksamkeit, Wortstücke, Erzeugung</td></tr>
 <tr><td><b>Sich abschalten</b></td><td>Roter Knopf oben rechts: Unterbrechungen sperren, Zeitgeber anhalten, Geräte zurücksetzen, Puffer überschreiben, Maschine abschalten</td></tr>
 </table>
 
@@ -184,7 +185,7 @@ In `kernel.S` stecken **2.212 Sprungmarken**. Jede gehört zu einem Zuständigke
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **77.897 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 62.768 Byte Code, 14.665 Byte Konstanten |
+| **`kernel.bin`** | **79.855 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 62.768 Byte Code, 14.665 Byte Konstanten |
 | `kernel.elf` | 254 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -200,7 +201,7 @@ Wollte man asmOS heute auf ein Gerät bringen, wären es genau drei Dateien:
 
 | Datei | Größe | Wozu |
 |---|---:|---|
-| `kernel.bin` | 77.897 Byte | das gesamte Betriebssystem |
+| `kernel.bin` | 79.855 Byte | das gesamte Betriebssystem |
 | `FONT.TTF` | 204.776 Byte | die Systemschrift FiraCode, vom Kernel selbst ausgewertet |
 | `ROOT.DER` | 574 Byte | das Wurzelzertifikat für die TLS-Kettenprüfung |
 | **zusammen** | **282.783 Byte, also 276 KB** | |
@@ -704,4 +705,32 @@ Dass der Start weniger Befehle braucht, liegt nicht an der Schrift, sondern an d
 | Zeilen Assembler | 21.407 | 21.525 |
 | Sprungmarken | 2.240 | 2.258 |
 | TLS-Sendepuffer | 512 Byte, ungeprüft | 2.048 Byte, geprüft |
+| Ruhebild | Vergleich | 0 abweichende Bildpunkte außerhalb des Netzfensters |
+
+
+### Stand 16.09.2026, Runde 30: der Rechenkern eines Sprachmodells als Kernelblock
+
+**Die Leitfrage war, was von einem Sprachmodell eigentlich in ein Betriebssystem gehört.** Die Antwort, die dieser Runde zugrunde liegt: die Mathematik gehört hinein, das Modell nicht. Ein Transformer rechnet bei jeder Sprache und bei jedem Hersteller dieselben Operationen. Was sich unterscheidet, sind Maße und Gewichte, und das sind Daten. Genau so wird im Projekt schon die Schrift behandelt: der Kernel kann TrueType auswerten, die Schriftdatei liegt auf dem Datenträger.
+
+**Was jetzt im Kernel steht.** Ein Block `llm_` mit sechs Operationen, alle in 32-Bit-Gleitkomma für die Zwischenwerte und 8 Bit für die Gewichte:
+
+| Operation | Wofür |
+|---|---|
+| Exponentialfunktion | Grundlage von Softmax und SwiGLU, es gibt keine Mathematikbibliothek im System |
+| RMS-Normierung | die Normierung, die Llama, Mistral, Qwen und Gemma verwenden |
+| Softmax | verteilt die Aufmerksamkeit und wählt am Ende das nächste Wortstück |
+| SwiGLU | die Verknüpfung der beiden Zweige des Vorwärtsnetzes |
+| Skalarprodukt mit 8-Bit-Gewichten | die eigentliche Rechenarbeit, 32 Gewichte teilen sich einen Skalar |
+| Matrixmultiplikation | setzt daraus eine ganze Gewichtsschicht zusammen |
+
+**Nachweis.** Sechs Testgruppen laufen bei jedem Start gegen Werte, die auf dem Entwicklungsrechner in doppelter Genauigkeit gerechnet wurden, Toleranz zwei Zehntausendstel. Die Meldung lautet `LLM KERN OK, 6 Testgruppen`. Damit der Test nicht blind ist, wurde ein Erwartungswert um ein Tausendstel verschoben: der Kernel meldet daraufhin `LLM KERN FEHLER in Gruppe 3`.
+
+**Was ehrlicherweise fehlt.** Positionskodierung, Aufmerksamkeit mit Zwischenspeicher, die Zerlegung von Text in Wortstücke, das Dateiformat für Gewichte und die Erzeugungsschleife. Ohne diese Teile rechnet der Kern richtig, aber noch nichts Ganzes. Der Kern ist außerdem bewusst skalar geschrieben. Eine Beschleunigung mit den Vektorbefehlen kommt erst, wenn an einem echten Modell gemessen wurde, welche Schleife die Zeit kostet. Das ist dieselbe Reihenfolge wie bei der Bildausgabe: erst richtig, dann messen, dann schnell.
+
+| Kennzahl | Runde 29 | Runde 30 |
+|---|---|---|
+| Größe des fertigen Systems | 77.897 Byte | **79.855 Byte** (+1.958) |
+| Zeilen Assembler | 21.525 | 21.980 |
+| Sprungmarken | 2.258 | 2.323 |
+| Selbsttests beim Start | 28 Kryptovektoren | 28 Kryptovektoren und 6 Rechengruppen |
 | Ruhebild | Vergleich | 0 abweichende Bildpunkte außerhalb des Netzfensters |
