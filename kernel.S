@@ -722,6 +722,7 @@
 .equ OUT_STRIDE,            (FB_WIDTH * OUT_BPP)
 .equ OUT_SIZE,              (OUT_STRIDE * FB_HEIGHT)
 .equ OUT_BLOCKS,            ((OUT_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE)
+.equ FB_FLIP_MAX,           8
 .equ CH_SHIFT_B,            0
 .equ CH_SHIFT_G,            8
 .equ CH_SHIFT_R,            16
@@ -1020,6 +1021,9 @@
 .ifc \sym,fb_output
     ladr_far \reg, \sym
 .else
+.ifc \sym,fb_output_b
+    ladr_far \reg, \sym
+.else
 .ifc \sym,__bss_end
     ladr_far \reg, \sym
 .else
@@ -1030,6 +1034,7 @@
     ladr_far \reg, \sym
 .else
     adr     \reg, \sym
+.endif
 .endif
 .endif
 .endif
@@ -1381,15 +1386,21 @@ fb_target_set:
 fb_init:
     stp     x29, x30, [sp, #-32]!
     str     x19, [sp, #16]
+    ladr    x0, fb_front
+    ladr    x1, fb_output
+    ladr    x2, fb_output_b
+    stp     x1, x2, [x0]
+    ladr    x0, fb_ramfb_key
+    mov     w1, #-1
+    str     w1, [x0]
     bl      fb_target_screen
     bl      fwcfg_find_ramfb
     cmn     w0, #1
     b.eq    fb_init_missing
     mov     w19, w0
+    ladr    x0, fb_ramfb_key
+    str     w19, [x0]
     ladr    x0, fb_config
-    ladr    x1, fb_output
-    rev     x1, x1
-    str     x1, [x0, #FB_CFG_ADDR]
     ldr     w1, =FB_FOURCC_XR24
     rev     w1, w1
     str     w1, [x0, #FB_CFG_FOURCC]
@@ -1403,11 +1414,8 @@ fb_init:
     mov     w1, #OUT_STRIDE
     rev     w1, w1
     str     w1, [x0, #FB_CFG_STRIDE]
-    lsl     w0, w19, #16
-    orr     w0, w0, #(FWCFG_DMA_SELECT | FWCFG_DMA_WRITE)
-    mov     w1, #FB_CFG_SIZE
-    ladr    x2, fb_config
-    bl      fwcfg_dma
+    ladr    x0, fb_output
+    bl      fb_ramfb_set
     cbnz    w0, fb_init_missing
     ladr    x0, fb_ready_msg
     bl      uart_puts
@@ -1434,6 +1442,154 @@ fb_init_missing:
     ldp     x29, x30, [sp], #32
     ret
 
+fb_ramfb_set:
+    stp     x29, x30, [sp, #-32]!
+    str     x19, [sp, #16]
+    ladr    x9, fb_ramfb_key
+    ldr     w19, [x9]
+    cmn     w19, #1
+    b.eq    fb_ramfb_set_none
+    ladr    x9, fb_config
+    rev     x0, x0
+    str     x0, [x9, #FB_CFG_ADDR]
+    lsl     w0, w19, #16
+    orr     w0, w0, #(FWCFG_DMA_SELECT | FWCFG_DMA_WRITE)
+    mov     w1, #FB_CFG_SIZE
+    ladr    x2, fb_config
+    bl      fwcfg_dma
+    b       fb_ramfb_set_done
+
+fb_ramfb_set_none:
+    mov     w0, #1
+
+fb_ramfb_set_done:
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
+    ret
+
+fb_flip_mark:
+    ladr    x9, fb_flip_replay
+    ldrb    w10, [x9]
+    cbnz    w10, fb_flip_mark_done
+    cmp     w0, #0
+    ccmp    w1, #0, #4, eq
+    b.ne    fb_flip_mark_part
+    mov     w9, #FB_WIDTH
+    cmp     w2, w9
+    mov     w9, #FB_HEIGHT
+    ccmp    w3, w9, #0, eq
+    b.ne    fb_flip_mark_part
+    ladr    x9, fb_frame_full
+    mov     w10, #1
+    strb    w10, [x9]
+
+fb_flip_mark_part:
+    ladr    x9, fb_flip_full
+    ldrb    w10, [x9]
+    cbnz    w10, fb_flip_mark_done
+    ladr    x9, fb_flip_count
+    ldr     w10, [x9]
+    cmp     w10, #FB_FLIP_MAX
+    b.hs    fb_flip_mark_full
+    ladr    x11, fb_flip_list
+    add     x11, x11, x10, lsl #4
+    stp     w0, w1, [x11]
+    stp     w2, w3, [x11, #8]
+    add     w10, w10, #1
+    str     w10, [x9]
+
+fb_flip_mark_done:
+    ret
+
+fb_flip_mark_full:
+    ladr    x9, fb_flip_full
+    mov     w10, #1
+    strb    w10, [x9]
+    ladr    x9, fb_frame_full
+    strb    w10, [x9]
+    ret
+
+fb_flip:
+    ladr    x9, fb_flip_count
+    ldr     w10, [x9]
+    ladr    x9, fb_flip_full
+    ldrb    w11, [x9]
+    orr     w10, w10, w11
+    cbz     w10, fb_flip_ret
+    stp     x29, x30, [sp, #-48]!
+    stp     x19, x20, [sp, #16]
+    str     x21, [sp, #32]
+    ladr    x9, fb_flip_replay
+    mov     w10, #1
+    strb    w10, [x9]
+    ladr    x9, fb_stale_back
+    ldrb    w10, [x9]
+    cbz     w10, fb_flip_show
+    strb    wzr, [x9]
+    ladr    x9, fb_frame_full
+    ldrb    w10, [x9]
+    cbnz    w10, fb_flip_show
+    bl      fb_present_all
+
+fb_flip_show:
+    ladr    x19, fb_front
+    ldp     x20, x21, [x19]
+    mov     x0, x21
+    bl      fb_ramfb_set
+    stp     x21, x20, [x19]
+    ladr    x9, fb_stale_front
+    ldrb    w10, [x9]
+    strb    wzr, [x9]
+    ladr    x9, fb_stale_back
+    strb    w10, [x9]
+    cbnz    w10, fb_flip_end
+    ladr    x9, fb_frame_full
+    ldrb    w10, [x9]
+    cbz     w10, fb_flip_rects
+    ladr    x9, fb_stale_back
+    strb    w10, [x9]
+    b       fb_flip_end
+
+fb_flip_rects:
+    ladr    x9, fb_flip_full
+    ldrb    w10, [x9]
+    cbz     w10, fb_flip_list_start
+    ladr    x9, fb_stale_back
+    strb    w10, [x9]
+    b       fb_flip_end
+
+fb_flip_list_start:
+    mov     w20, #0
+
+fb_flip_rect:
+    ladr    x9, fb_flip_count
+    ldr     w9, [x9]
+    cmp     w20, w9
+    b.hs    fb_flip_end
+    ladr    x11, fb_flip_list
+    add     x11, x11, x20, lsl #4
+    ldp     w0, w1, [x11]
+    ldp     w2, w3, [x11, #8]
+    bl      fb_present
+    add     w20, w20, #1
+    b       fb_flip_rect
+
+fb_flip_end:
+    ladr    x9, fb_flip_replay
+    strb    wzr, [x9]
+    ladr    x9, fb_flip_count
+    str     wzr, [x9]
+    ladr    x9, fb_flip_full
+    strb    wzr, [x9]
+    ladr    x9, fb_frame_full
+    strb    wzr, [x9]
+    ldr     x21, [sp, #32]
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #48
+
+fb_flip_ret:
+    ret
+
 fb_present_all:
     mov     w0, #0
     mov     w1, #0
@@ -1442,15 +1598,19 @@ fb_present_all:
     b       fb_present
 
 fb_present:
-    stp     x29, x30, [sp, #-16]!
+    stp     x29, x30, [sp, #-32]!
     bl      fb_rect_screen
     cbz     w2, fb_present_done
+    stp     x0, x1, [sp, #16]
+    bl      fb_flip_mark
+    ldp     x0, x1, [sp, #16]
     mov     x8, #FB_STRIDE
     mov     x9, #OUT_STRIDE
     ladr    x6, fb_render
     madd    x6, x1, x8, x6
     add     x6, x6, x0, lsl #2
-    ladr    x7, fb_output
+    ladr    x7, fb_back
+    ldr     x7, [x7]
     madd    x7, x1, x9, x7
     add     x7, x7, x0, lsl #2
     ladr    x10, fb_fade
@@ -1523,7 +1683,7 @@ fb_present_next:
     subs    w3, w3, #1
     b.ne    fb_present_row
 fb_present_done:
-    ldp     x29, x30, [sp], #16
+    ldp     x29, x30, [sp], #32
     ret
 
 fb_clip_full:
@@ -1629,7 +1789,8 @@ fb_pixel_addr:
 out_pixel_addr:
     mov     x9, #OUT_STRIDE
     madd    x9, x1, x9, xzr
-    ladr    x10, fb_output
+    ladr    x10, fb_back
+    ldr     x10, [x10]
     add     x9, x10, x9
     add     x0, x9, x0, lsl #2
     ret
@@ -3449,6 +3610,9 @@ power_off:
     ladr    x0, fb_output
     ldr     x1, =OUT_SIZE
     bl      power_wipe
+    ladr    x0, fb_output_b
+    ldr     x1, =OUT_SIZE
+    bl      power_wipe
     ladr    x0, font_buffer
     mov     x1, #FONT_MAX_SIZE
     bl      power_wipe
@@ -4812,7 +4976,7 @@ mmu_init:
     mov     x0, #RAM_BASE_FIXED
     sub     x21, x21, x0
     lsr     x21, x21, #BLOCK_SHIFT
-    mov     x0, #OUT_BLOCKS
+    mov     x0, #(2 * OUT_BLOCKS)
     add     x0, x21, x0
     ladr    x1, mmu_nc_end
     str     x0, [x1]
@@ -7864,6 +8028,9 @@ timer_tick:
     ladr    x0, timer_interval
     ldr     x1, [x0]
     msr     cntv_tval_el0, x1
+    ladr    x0, fb_frame_pending
+    mov     w1, #1
+    strb    w1, [x0]
     ladr    x0, anim_active
     ldr     w1, [x0]
     cbz     w1, timer_tick_net
@@ -8079,7 +8246,20 @@ console_drain_gui:
     orr     w19, w19, w0
 
 console_drain_repaint:
-    cbz     w19, console_drain_blink
+    cbz     w19, console_drain_frame
+    ladr    x0, gui_repaint_pending
+    mov     w1, #1
+    strb    w1, [x0]
+
+console_drain_frame:
+    ladr    x0, gui_repaint_pending
+    ldrb    w0, [x0]
+    cbz     w0, console_drain_blink
+    ladr    x0, fb_frame_pending
+    bl      console_take_flag
+    cbz     w0, console_drain_blink
+    ladr    x0, gui_repaint_pending
+    strb    wzr, [x0]
     bl      cursor_hide
     bl      win_repaint_render
     bl      cursor_show
@@ -8088,12 +8268,16 @@ console_drain_repaint:
     cbnz    w0, console_drain_fade
     bl      win_repaint_present
     bl      cursor_present
-    b       console_drain_blink
+    b       console_drain_flip
 
 console_drain_fade:
     bl      dirty_reset
     bl      fb_present_all
     bl      cursor_present
+
+console_drain_flip:
+    bl      fb_flip
+
 console_drain_blink:
     ladr    x0, console_blink_pending
     bl      console_take_flag
@@ -20313,6 +20497,32 @@ fwcfg_count:
 fwcfg_entry:
     .space  FWCFG_ENTRY_SIZE
 
+.balign 8
+fb_front:
+    .space  8
+fb_back:
+    .space  8
+fb_ramfb_key:
+    .space  4
+fb_flip_count:
+    .space  4
+fb_flip_full:
+    .space  1
+fb_flip_replay:
+    .space  1
+fb_frame_full:
+    .space  1
+fb_stale_front:
+    .space  1
+fb_stale_back:
+    .space  1
+gui_repaint_pending:
+    .space  1
+fb_frame_pending:
+    .space  1
+.balign 4
+fb_flip_list:
+    .space  (FB_FLIP_MAX * 16)
 .balign 16
 fb_config:
     .space  FB_CFG_SIZE
@@ -20885,4 +21095,7 @@ win_buf_arena:
 .section .framebuffer, "aw", %nobits
 .balign BLOCK_SIZE
 fb_output:
+    .space  OUT_SIZE
+.balign BLOCK_SIZE
+fb_output_b:
     .space  OUT_SIZE
