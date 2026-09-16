@@ -11,19 +11,19 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-70.961%20Byte-brightgreen?style=flat-square" alt="70961 Byte">
+<img src="https://img.shields.io/badge/Kernel-75.529%20Byte-brightgreen?style=flat-square" alt="75529 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
 
 <img src="docs/screenshot.png" width="640" alt="asmOS im Betrieb: Fenster mit TrueType-Titeln und Mauszeiger">
 
-<sub><i>Das laufende System: eigener Bildspeicher, eigene TrueType-Schrift, eigener Mauszeiger, animierte Fenster.</i></sub>
+<sub><i>Das laufende System: links das Terminal nach <code>curl https://example.com/</code>, in der Mitte das Netzwerkfenster mit Handshake und Kettenprüfung, rechts der Inhalt des Datenträgers.</i></sub>
 
 <br><br>
 
-Das fertige System ist <b>70.961&nbsp;Byte</b> groß, also <b>69&nbsp;KB</b>.<br>
-Mit Systemschrift und Wurzelzertifikat sind es <b>119&nbsp;KB</b> auf dem Datenträger.<br>
+Das fertige System ist <b>75.529&nbsp;Byte</b> groß, also <b>74&nbsp;KB</b>.<br>
+Mit Systemschrift und Wurzelzertifikat sind es <b>124&nbsp;KB</b> auf dem Datenträger.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
 </div>
@@ -45,8 +45,9 @@ Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 <tr><td><b>Speicher verwalten</b></td><td>Erkennt selbst, wie viel Arbeitsspeicher da ist, verwaltet ihn seitenweise und schaltet die Speicherverwaltungseinheit des Prozessors ein</td></tr>
 <tr><td><b>Dateien lesen</b></td><td>Spricht mit einem Datenträger und liest echte FAT32-Dateien, so wie ein USB-Stick sie enthält</td></tr>
 <tr><td><b>Dateien zeigen</b></td><td>Ein Fenster listet den Inhalt des Datenträgers auf, gelesen beim Start aus dem echten Wurzelverzeichnis. Der Text wird auf den Fensterkörper beschnitten, läuft also nie über den Rand</td></tr>
-<tr><td><b>Ins Netz gehen</b></td><td><b>Eigener Netzwerktreiber und die ersten Protokolle.</b> virtio-net mit Empfangs- und Sendequeue, Ethernet, ARP, IPv4, ICMP, UDP und DHCP: Beim Start holt sich das System per DHCP Adresse, Gateway und Nameserver, fragt das Gateway per ARP nach seiner Hardwareadresse, schickt ihm ein Ping, löst per DNS einen Namen auf und holt sich per TCP die erste Zeile einer Webseite: <code>HTTP/1.1 200 OK</code> von example.com. Bis zu vier Verbindungen laufen gleichzeitig, jede mit eigenem Sendepuffer und eigener Empfangsroutine. Alles erscheint auf der seriellen Leitung und im Netzwerkfenster</td></tr>
+<tr><td><b>Ins Netz gehen</b></td><td><b>Eigener Netzwerktreiber und die ersten Protokolle.</b> virtio-net mit Empfangs- und Sendequeue, Ethernet, ARP, IPv4, ICMP, UDP und DHCP: Beim Start holt sich das System per DHCP Adresse, Gateway und Nameserver, fragt das Gateway per ARP nach seiner Hardwareadresse, schickt ihm ein Ping, löst per DNS einen Namen auf und holt sich per TCP die erste Zeile einer Webseite: <code>HTTP/1.1 200 OK</code> von example.com. Bis zu vier Verbindungen laufen gleichzeitig, jede mit eigenem Sendepuffer und eigener Empfangsroutine. Die Adresse wird nach halber Leasezeit erneuert. Alles erscheint auf der seriellen Leitung und im Netzwerkfenster</td></tr>
 <tr><td><b>Verschlüsselt reden</b></td><td><b>Eigenes TLS 1.3.</b> SHA-256, HMAC, HKDF, AES-128-GCM und X25519, die ersten vier über die Kryptobefehle des Prozessors, dazu ECDSA über P-256 und P-384 mit eigener Montgomery-Arithmetik. Beim Start holt das System <code>HTTPS HTTP/1.1 200 OK</code> von example.com und prüft dabei Serversignatur, Zertifikatskette bis zu einer Wurzel vom Datenträger, CA-Berechtigung und Schlüsselnutzung jedes Ausstellers, Hostname und Gültigkeitszeitraum gegen die Echtzeituhr. Der Handshake erzwingt die Nachrichtenreihenfolge, die Schlüssel kommen aus dem Zufallsgerät der Maschine (virtio-rng), 28 Testvektoren laufen bei jedem Start, und ohne bestandene Tests oder ohne Zufallsgerät bleibt TLS gesperrt</td></tr>
+<tr><td><b>Befehle annehmen</b></td><td><b>Terminal mit curl.</b> <code>curl https://example.com/</code> löst den Namen auf, baut TLS 1.3 mit voller Zertifikatsprüfung auf und zeigt Statuszeile und Seiteninhalt im Terminal, <code>curl http://…</code> dasselbe ohne Verschlüsselung. <code>hilfe</code> listet die Befehle. Fehler wie ein unbekannter Name oder eine fremde Zertifikatskette werden im Terminal gemeldet, die Einzelheiten stehen im Netzwerkfenster</td></tr>
 <tr><td><b>Sich abschalten</b></td><td>Roter Knopf oben rechts: Unterbrechungen sperren, Zeitgeber anhalten, Geräte zurücksetzen, Puffer überschreiben, Maschine abschalten</td></tr>
 </table>
 
@@ -69,7 +70,7 @@ make disk
 make run
 ```
 
-`make disk` muss nur einmal laufen. Es öffnet sich ein Fenster mit den Fenstern und dem Mauszeiger. Im Terminal läuft die Konsole mit blinkendem Cursor, dort kannst du tippen.
+`make disk` muss nur einmal laufen. Es öffnet sich ein Fenster mit den Fenstern und dem Mauszeiger. Im Terminal läuft die Konsole mit blinkendem Cursor. Probier `hilfe` und `curl https://example.com/`. HTTPS gelingt nur bei Servern mit ECDSA-Zertifikat, deren Kette bei der Wurzel auf dem Datenträger endet; über HTTP geht jede Seite, zum Beispiel `curl http://httpforever.com/`.
 
 > **Schneller geht es mit `make fast`.** Das schaltet die Hardware-Beschleunigung des Macs zu und läuft rund **4,4-mal schneller**. Der Code läuft dann allerdings auf dem echten Prozessor des Rechners statt auf einem emulierten Cortex-A72.
 
@@ -120,7 +121,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>482 KB · 19.706 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>510 KB · 20.888 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -128,7 +129,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 <td>Sagt dem Baukasten, wohin im Speicher was gehört: Code ab Adresse <code>0x40080000</code>, danach Daten, Stack, Bildpuffer. Enthält ausserdem 17 Prüfzusicherungen, die den Bau abbrechen lassen, falls die Tabelle der Fehlerbehandlung verrutscht.</td>
 </tr>
 <tr>
-<td><b><code>Makefile</code></b><br><sub>6,0 KB</sub></td>
+<td><b><code>Makefile</code></b><br><sub>7,0 KB</sub></td>
 <td>Die Kommandozentrale, siehe Befehlstabelle oben.</td>
 </tr>
 <tr>
@@ -149,28 +150,28 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 19.706 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 20.888 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **2.026 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **2.183 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
-| `sha_` `hmac_` `hkdf_` `aes_` `ghash_` `fe_` `x25519_` `mp_` `ec_` `ecdsa_` `asn1_` `x509_` `time_` `rtc_` `rng_` `crypto_` | 522 | **Kryptografie und Zertifikate**: SHA-256, SHA-384, HMAC, HKDF, AES-128-GCM über die ARMv8-Erweiterung, X25519, Montgomery-Arithmetik, ECDSA über P-256 und P-384 als Rechentabellen, DER-Parser für X.509 mit Erweiterungen, Kettenprüfung mit Berechtigungen, Kalender und Echtzeituhr, virtio-rng, Selbsttest gegen 28 Vektoren beim Start mit Sperre bei Fehlschlag |
-| `net_` `tcp_` `dhcp_` `dns_` `http_` | 253 | **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP, DNS mit vollständiger Antwortzuordnung, TCP mit Verbindungstabelle, Überlappung und verzögertem FIN |
-| `tls_` | 199 | **TLS 1.3**: ClientHello als Vorlage, ServerHello, Schlüsselableitung, stückweise Record- und Handshake-Puffer, erzwungene Nachrichtenfolge, Certificate, CertificateVerify, Finished, verschlüsselte Anwendungsdaten |
-| `win_` `dirty_` | 166 | **Fenster**: Basisklasse, Klassentabellen, Stapelreihenfolge, Ziehen, Knöpfe, Einklappen, Schließen mit Pufferverdichtung, Teilaktualisierung, Fensterpuffer |
+| `sha_` `hmac_` `hkdf_` `aes_` `ghash_` `fe_` `x25519_` `mp_` `ec_` `ecdsa_` `asn1_` `x509_` `time_` `rtc_` `rng_` `crypto_` | 526 | **Kryptografie und Zertifikate**: SHA-256, SHA-384, HMAC, HKDF, AES-128-GCM über die ARMv8-Erweiterung, X25519, Montgomery-Arithmetik, ECDSA über P-256 und P-384 als Rechentabellen, strenger DER-Parser für X.509 mit Erweiterungen ohne Doppelungen, Kettenprüfung mit Berechtigungen, Kalender und Echtzeituhr, virtio-rng, Selbsttest gegen 28 Vektoren beim Start mit Sperre bei Fehlschlag |
+| `net_` `tcp_` `dhcp_` `dns_` `http_` `line_` | 295 | **Netzwerk**: virtio-net, ARP, IPv4, ICMP, UDP, DHCP mit Leaseerneuerung, DNS mit Bindung an Frage, Owner und CNAME-Kette, TCP mit Verbindungstabelle, Überlappung, CLOSE_WAIT und RST-Sequenzprüfung |
+| `tls_` | 216 | **TLS 1.3**: ClientHello mit variablem Servernamen, strenges ServerHello, Schlüsselableitung, stückweise Record- und Handshake-Puffer, erzwungene Nachrichtenfolge, Certificate, CertificateVerify, Finished, close_notify in beide Richtungen, Anwendungsdaten an einen austauschbaren Empfänger |
+| `term_` `curl_` `netlog_` `key_` `keyboard_` `gui_` `vin_` | 171 | **Terminal und Netzwerkfenster**: Befehlsauswertung, Zeilenausgabe mit Umbruch, `curl` über HTTP und HTTPS, Netzwerkfenster mit zeilenweiser Ergänzung im Fensterpuffer, Tastaturring mit Überlaufmeldung |
+| `win_` `dirty_` `desktop_` | 168 | **Fenster**: Basisklasse, Klassentabellen, Stapelreihenfolge, Ziehen, Knöpfe, Einklappen, Schließen mit Pufferverdichtung, Teilaktualisierung, Fensterpuffer, Start der Oberfläche |
 | `font_` `glyph_` | 117 | TrueType auswerten und über die Vektor-Engine zeichnen |
 | `blk_` `fat_` `files_` | 101 | Datenträger, Dateisystem, Dateifenster |
 | `fb_` `cursor_` | 86 | Bildschirm, Bildpunkte, Mauszeiger |
 | `anim_` | 85 | **Animationsschicht**: Zeitmessung, Verläufe, Beschleunigungskurven, Abschlussaufruf |
-| `mem_` `pmm_` `mmu_` `fdt_` `ram_` | 82 | Speicherverwaltung und Hardware-Erkennung |
-| `virtio_` `mouse_` `click_` | 78 | Gerätetreiber, Maus, Klickerkennung |
-| `console_` `string_` `out_` `power_` | 64 | Konsole, Textwerkzeuge, Herunterfahren |
-| `term_` `netlog_` `key_` `gui_` `vin_` | 62 | Terminalfenster, Netzwerkfenster, Tastaturring, Geräteerkennung für Tablet und Tastatur |
+| `mem_` `pmm_` `mmu_` `fdt_` `ram_` | 85 | Speicherverwaltung, Stackwächter und Hardware-Erkennung |
+| `virtio_` `mouse_` `click_` `release_` | 78 | Gerätetreiber, Maus, Klickerkennung |
+| `console_` `string_` `out_` `power_` | 70 | Konsole, Textwerkzeuge, Herunterfahren |
 | `vg_` `cov_` `edge_` `icon_` | 62 | **Vektor-Engine**: Pfade, Kurven, Füllung, Strich, Kantenglättung, Icons |
-| `vec_` `panic_` `irq_` `gic_` | 51 | Fehlerbehandlung und Unterbrechungen, GICv2 und GICv3 |
+| `vec_` `panic_` `irq_` `gic_` | 53 | Fehlerbehandlung und Unterbrechungen, GICv2 und GICv3 |
 | `uart_` | 32 | Serielle Schnittstelle, Textausgabe, Tastatureingabe |
 | `boot_` | 15 | Hochfahren, Privilegstufe, Speicher vorbereiten |
 | `fwcfg_` | 13 | Konfigurationsschnittstelle des Emulators |
@@ -182,7 +183,7 @@ In `kernel.S` stecken **2.026 Sprungmarken**. Jede gehört zu einem Zuständigke
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **70.961 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 57.896 Byte Code, 13.057 Byte Konstanten |
+| **`kernel.bin`** | **75.529 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 61.360 Byte Code, 14.169 Byte Konstanten |
 | `kernel.elf` | 254 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -198,10 +199,10 @@ Wollte man asmOS heute auf ein Gerät bringen, wären es genau drei Dateien:
 
 | Datei | Größe | Wozu |
 |---|---:|---|
-| `kernel.bin` | 70.961 Byte | das gesamte Betriebssystem |
+| `kernel.bin` | 75.529 Byte | das gesamte Betriebssystem |
 | `FONT.TTF` | 50.516 Byte | die Systemschrift, vom Kernel selbst ausgewertet |
 | `ROOT.DER` | 574 Byte | das Wurzelzertifikat für die TLS-Kettenprüfung |
-| **zusammen** | **122.051 Byte, also 119 KB** | |
+| **zusammen** | **126.619 Byte, also 124 KB** | |
 
 Das 64-MB-Abbild `disk.img` ist nur der leere FAT32-Testdatenträger, auf dem diese Dateien liegen. Die Selbsttests samt Testvektoren machen rund 9 KB des Kernels aus, ein Auslieferungsbau könnte sie weglassen. Dass es trotzdem noch nicht auf echter Hardware läuft, steht im nächsten Abschnitt.
 
@@ -211,8 +212,8 @@ Das 64-MB-Abbild `disk.img` ist nur der leere FAT32-Testdatenträger, auf dem di
 |---|---:|---|
 | Ausgabebild für die Grafikkarte | 25,2 MB | 3840 × 1600 mit 4 Byte je Punkt, aufgerundet auf 2-MB-Blöcke |
 | Internes Bild und Fensterpuffer | 41,4 MB | 24,6 MB Bild mit 4 Byte je Punkt, 16 MB Arena für die Fensterinhalte |
-| Variablen, Puffer, Stack | 266 KB | Schrifttabellen, TLS-Puffer, Netzringe, Seitenverwaltung, Animationsliste |
-| Kernel selbst | 69 KB | |
+| Variablen, Puffer, Stack | 268 KB | Schrifttabellen, TLS-Puffer, Netzringe, Seitenverwaltung, Animationsliste, Terminal und curl; vom 16-KB-Stack sind höchstens 3,5 KB belegt |
+| Kernel selbst | 74 KB | |
 | **zusammen** | **rund 67 MB** | |
 
 99,8 % davon sind Bildspeicher, und der hängt allein an der Auflösung: bei 1920 × 1080 wären es 17 MB, bei 1280 × 720 rund 8 MB. Beim Start genullt wird nur der Ausgabepuffer, denn das interne Bild wird ohnehin in der ersten Bildausgabe vollständig überschrieben.
@@ -314,14 +315,14 @@ Der Grund: In einer Unterbrechung darf nicht gewartet werden, und es darf nur **
 | 6. Mauszeiger, Klickerkennung | ✅ |
 | 7. Speicherverwaltung, MMU aktiv | ✅ |
 | 8. Datenträger und FAT32 lesend | ✅ |
-| 9. Fenstersystem | ✅ Basisklasse mit Klassentabellen, drei Fensterinhalte (Terminal, Netzwerk, Dateien), Knöpfe für Einklappen und Schließen |
-| 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP, DNS, TCP-Client mit Verbindungstabelle, eingehende Prüfsummen, zufällige Kennungen und Ports |
+| 9. Fenstersystem | ✅ Basisklasse mit Klassentabellen, drei Fensterinhalte (Terminal mit Befehlen, Netzwerk, Dateien), Knöpfe für Einklappen und Schließen |
+| 10. Netzwerk bis TCP | ✅ virtio-net, ARP, ICMP, UDP, DHCP mit Leaseerneuerung, DNS mit Antwortbindung, TCP-Client mit Verbindungstabelle, eingehende Prüfsummen, zufällige Kennungen und Ports, `curl` im Terminal |
 | 11. Verschlüsselte Verbindungen | ✅ TLS 1.3 gegen example.com: `HTTPS HTTP/1.1 200 OK`, Serversignatur, Kette bis zur Wurzel mit CA-Berechtigungen, Hostname und Gültigkeitszeitraum geprüft, Nachrichtenfolge erzwungen, Schlüssel aus dem Zufallsgerät. Nicht enthalten: Sperrlisten, Namensbeschränkungen, Sitzungswiederaufnahme |
 | 12. Vektorgrafik | ✅ Schrift, Zeiger und Icons, offen als Zeichenfläche für Anwendungen |
 | 13. Animationsschicht und Compositor | ✅ Verschiebung, Deckkraft, Fokus, Höhe, Abschlussaufruf, Fensterpuffer als Ebenen; Zoom und Drehung offen |
 | 14. Portierung auf Raspberry Pi 5 | offen |
 
-**Bewusst noch nicht enthalten:** Schreiben auf FAT32, Umlaute und andere Zeichen jenseits des Grundzeichensatzes, zusammengesetzte TrueType-Glyphen, Vergrößern von Fenstern, eine Leiste zum Wiederöffnen geschlossener Fenster, Befehle im Terminal, Speicherschutz zwischen Programmen.
+**Bewusst noch nicht enthalten:** Schreiben auf FAT32, Umlaute und andere Zeichen jenseits des Grundzeichensatzes, zusammengesetzte TrueType-Glyphen, Vergrößern von Fenstern, eine Leiste zum Wiederöffnen geschlossener Fenster, Befehle im Terminal außer `curl` und `hilfe`, mehr als eine Wurzel für HTTPS, RSA-Zertifikate, Speicherschutz zwischen Programmen.
 
 ---
 
@@ -375,11 +376,11 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 490 KB in drei Dateien |
-| Zeilen Assembler | 19.706 |
-| Sprungmarken | 2.026 |
-| **Fertiges Betriebssystem** | **70.961 Byte** |
-| Auf dem Datenträger mit Schrift und Wurzelzertifikat | 119 KB |
+| Eigener Quelltext | 519 KB in drei Dateien |
+| Zeilen Assembler | 20.888 |
+| Sprungmarken | 2.183 |
+| **Fertiges Betriebssystem** | **75.529 Byte** |
+| Auf dem Datenträger mit Schrift und Wurzelzertifikat | 124 KB |
 | Speicherbedarf im Betrieb | rund 67 MB: 25,2 MB Ausgabebild, 24,6 MB internes Bild, 16 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 171 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
@@ -396,7 +397,7 @@ Dieser Abschnitt wird nach jeder Messung fortgeschrieben. Alle Zahlen stammen au
 
 ### Die Runden im Überblick
 
-Vom 14. bis 15.09.2026 sind 25 Runden gelaufen. Jede Zeile nennt, was dazukam, wie groß das System danach war und die eine Zahl, die die Runde geprägt hat. Die ausführlichen Berichte der Runden 1 bis 21 stehen in der Versionsgeschichte dieser Datei.
+Vom 14. bis 15.09.2026 sind 26 Runden gelaufen. Jede Zeile nennt, was dazukam, wie groß das System danach war und die eine Zahl, die die Runde geprägt hat. Die ausführlichen Berichte der Runden 1 bis 21 stehen in der Versionsgeschichte dieser Datei.
 
 | Runde | Was | Größe danach | Die Zahl der Runde |
 |---:|---|---:|---|
@@ -424,7 +425,8 @@ Vom 14. bis 15.09.2026 sind 25 Runden gelaufen. Jede Zeile nennt, was dazukam, w
 | 22 | Kompression, Fensterklassen, Knöpfe, Animation, Fehlersuche, siehe unten | 66.977 Byte | Start 606,6 Mio. Befehle |
 | 23 | Alle Befunde der Fehlersuche behoben, dazu sechs weitere: Handshake-Folge, CA-Berechtigungen, virtio-rng, DNS-Zuordnung, TCP, virtio, Kalender, Tasten, Pufferverdichtung, siehe unten | 69.833 Byte | Start 606,6 Mio. Befehle, neun Gegenproben |
 | 24 | Dritte Fehlersuche, acht Durchsichten: drei Befunde behoben, zehn Behauptungen widerlegt, siehe unten | 69.929 Byte | drei Gegenproben, je vorher und nachher |
-| 25 | Vierte Fehlersuche mit Stackmessung, dann fünf Pakete aus einer fremden Durchsicht: Netz-Härtung, DNS-Bindung, TLS-Alerts, `make check-net`, Regeltreue, siehe unten | **70.961 Byte** | Stack 3.312 von 16.384 Byte belegt, elf Gegenproben |
+| 25 | Vierte Fehlersuche mit Stackmessung, dann fünf Pakete aus einer fremden Durchsicht: Netz-Härtung, DNS-Bindung, TLS-Alerts, `make check-net`, Regeltreue, siehe unten | 70.961 Byte | Stack 3.312 von 16.384 Byte belegt, elf Gegenproben |
+| 26 | Einblendung glatt, Stackwächter, Kleinigkeiten, strengere Zertifikate, DHCP-Lease, Terminal mit `curl`, siehe unten | **75.529 Byte** | Einblendung 10 → 13 Bilder ohne Unterbrechung, Textrasterung beim Start −67 % |
 
 ### Was aus den Runden bleibt
 
@@ -550,3 +552,54 @@ Acht Durchsichten, je eine pro Block (Fenster, Animation, Netz und Zufall, TCP, 
 | Gegenproben | 3 | 11 Testbauten und Mitschnitte |
 
 **Nicht gebaut:** der Stackwächter, die Kleinigkeiten aus Runde 24 (`net_poll_bad`, Tastenring, doppeltes Warten in `net_send`), die Einblendung (Netzkette erst nach der Einblendung, Netzfenster nur um die neue Zeile ergänzen). Bewusst offen wie zuvor: TCP-Empfangsfenster, TIME_WAIT, Sperrlisten, Namensbeschränkungen, Sitzungswiederaufnahme.
+
+### Stand 15.09.2026, Runde 26: glatte Einblendung, Aufräumen, Terminal mit curl
+
+**Warum die erste Einblendung hakte, gemessen.** Die Einblendung wurde vor den Selbsttests gestartet. Fünf ECDSA-Prüfungen liefen, bevor überhaupt das erste Bild entstand, danach brachen DHCP, Netzfensterzeilen und die Kettenprüfung mitten hinein. Von möglichen 13 Bildern (450 ms bei 30 Hz) entstanden 10, mit Lücken dazwischen. Drei Änderungen:
+
+- *Start nach den Selbsttests.* Die Einblendung beginnt erst, wenn die Hauptschleife bereit ist. Die Netzkette startet über den Abschlussaufruf der Animationsliste, also erst, wenn das Bild voll da ist.
+- *Netzfenster zeilenweise.* Neue Zeilen werden direkt im Fensterpuffer ergänzt: Der Textbereich rückt per Kopie um eine Zeilenhöhe hoch, nur die neuen Zeilen werden gerastert. Die Schrift reicht höchstens 20,1 Punkte über und 5,9 unter die Grundlinie, jede Zeile bekommt deshalb einen Streifen von 30 über bis 8 unter der Grundlinie. Beweis: ein Testbau rastert das Netzfenster nach acht Sekunden erzwungen komplett neu, zwei Bildschirmfotos davor und danach sind im Netzfenster byteweise gleich, 0 abweichende Bildpunkte bei 4.290 Textpunkten in der Stichprobe, nach mehrmaligem Scrollen.
+- *Einblendbild ohne Doppelausgabe.* Jede Einblendstufe gab bisher das Vollbild aus und zusätzlich die Fensterrechtecke einzeln, beides im teuren Mischpfad. Jetzt nur das Vollbild.
+
+| Messung, 6 s Start | vorher | nachher |
+|---|---|---|
+| Einblendbilder | 10, mit Selbsttest und Netz dazwischen | **13, ohne Unterbrechung** |
+| Vollrasterungen des Netzfensters | bei jeder Ausgabe mit neuer Zeile | 1 |
+| Befehle für Textrasterung (`font_fill_scan`) | 84,7 Mio. | **27,8 Mio.** (−67 %) |
+| Befehle gesamt | 608,3 Mio. | 621,1 Mio., mehr Befehle, weil jetzt alle Einblendbilder wirklich gezeichnet werden |
+
+**Aufräumen, jeder Punkt mit Gegenprobe.**
+
+- *Stackwächter.* Am Stackboden steht ein Wächterwort, der Blinktakt prüft es. Testbau, der den Stack bis zum Boden verbraucht: `PANIC STACK UEBERLAUF`. Gemessen belegt der Betrieb höchstens 3.488 von 16.384 Byte, auch drei curl-Abrufe mit TLS kommen nicht tiefer.
+- *Defekte Empfangslänge.* Ein Empfangspuffer mit ungültiger Länge wird neu eingereiht statt verloren. Testbau mit acht defekten Längen und schnellen DHCP-Wiederholungen: vorher ist das Netz danach tot, nachher läuft die Kette bis HTTPS 200.
+- *Tastenring.* Ein Überlauf meldet `TASTENPUFFER VOLL`. Die zwei Stellen, an denen der Interrupt selbst druckte, setzen jetzt Merker, gedruckt wird in der Hauptschleife.
+- *FIN_WAIT_2.* Der echte Server und slirp führen nicht zuverlässig in diesen Zustand, deshalb setzt ein Testbau einen Verbindungsplatz direkt hinein und misst über den Blinktakt: vorher Aufgabe nach rund 2 s, nachher nach 6 s.
+- *Eigene Meldung* für eine CertificateVerify-Nachricht mit falscher Länge.
+- *Doppeltes Warten in `net_send`* bleibt. Gemessen kostet es samt beiden Warteschleifen 786.000 Befehle in sechs Sekunden, 0,1 %, und es garantiert, dass der einzige Sendepuffer nicht überschrieben wird, solange das Gerät ihn noch hält.
+
+**Strengere Zertifikate und DHCP-Lease.**
+
+- *DER.* Längen nur in minimaler Form, BOOLEAN nur mit Länge 1 und den Werten 00 oder FF, jede Zertifikatserweiterung höchstens einmal. Drei Testbauten mit gezielt verändertem Testzertifikat beziehungsweise einer Längenform `81 05`: vorher angenommen, nachher abgelehnt. Die echte Kette von example.com besteht alle Prüfungen.
+- *ServerHello.* Nur supported_versions und key_share sind erlaubt, jede andere Extension bricht ab.
+- *DHCP.* Die Leasezeit wird gelesen, nach halber Laufzeit wird per REQUEST mit eigener Adresse erneuert, ohne die Startdemo erneut auszulösen. Ein NAK oder der Ablauf ohne Erneuerung führen zu einer neuen Anfrage. Testbauten mit 4 s Lease: Erneuerung alle 2 s; ohne Erneuerung Ablauf und neue Adresse.
+
+**Terminal mit curl.** Das Terminal wertet Befehle aus: `hilfe`, `curl http://host/pfad` und `curl https://host/pfad`. DNS und TLS kannten bisher nur example.com; jetzt nehmen sie Hostname, Anfrage und Empfänger der Antwort als Parameter, die Startdemo nutzt denselben Weg. Das ClientHello wird mit variablem Servernamen gebaut und ist für example.com bis auf Zufall und Schlüssel byteweise gleich dem alten. Dabei gefunden und behoben: `tls_on_data` prüfte nicht, zu welcher Verbindung ein Ereignis gehört, ein verspätetes Ende der Demo-Verbindung hätte eine neue curl-Sitzung gelöscht. Headless über QMP getippt und geprüft:
+
+| Befehl | Ergebnis im Terminal |
+|---|---|
+| `curl https://example.com/` | Statuszeile, Seiteninhalt, `curl: fertig, 559 Byte Inhalt` |
+| `curl http://httpforever.com/` | 11.513 Byte, nach 200 Zeilen `curl: Ausgabe gekuerzt` |
+| `curl http://gibtsnicht.invalid/` | `curl: Name nicht aufgeloest` |
+| `curl https://neverssl.com/` | TLS 1.3 kommt zustande, das Zertifikat ist RSA, Abbruch mit Hinweis aufs Netzwerkfenster |
+| `foo` | `unbekannter Befehl, hilfe zeigt die Befehle` |
+
+Grenzen, ehrlich benannt: HTTPS gelingt nur bei ECDSA-Zertifikaten, deren Kette bei der einen Wurzel auf dem Datenträger endet. Die Anfrage ist HTTP/1.0, der Inhalt erscheint roh, Zeichen außerhalb von ASCII werden zu `?`.
+
+| Kennzahl | Runde 25 | Runde 26 |
+|---|---|---|
+| Größe des fertigen Systems | 70.961 Byte | **75.529 Byte** (+4.568, davon der größte Teil Terminal und curl) |
+| Zeilen Assembler | 19.706 | 20.888 |
+| Sprungmarken | 2.026 | 2.183 |
+| Stack belegt, höchstens | 3.312 Byte | 3.488 Byte |
+| Bildvergleich | gleich | gleich, 0 abweichende Bildpunkte außerhalb der Maske |
+| Gegenproben | 11 | 15 Testbauten, ein Bildgleichheitsbeweis, ein QMP-Lauf |
