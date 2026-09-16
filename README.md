@@ -821,3 +821,39 @@ Damit die Prüfung nicht bloß sich selbst bestätigt, wurde in einem Testbau di
 | Sprungmarken | 2.427 | 2.469 |
 | Fakten über den eigenen Zustand | 24 | 26 |
 | Selbsttests beim Start | 66 | 72 |
+
+
+### Stand 16.09.2026, Fehlersuche über den neuen Bestand
+
+Nach vier Runden Neubau in Folge, von der Schrift über die Netzhärtung und den Rechenkern bis zur Speicherpolitik, eine rein lesende Durchsicht. Nichts davon wurde geändert, der Bericht steht hier, damit die Reihenfolge der Reparaturen nachvollziehbar bleibt.
+
+**Zwei schwere Befunde, beide im Rechenkern für Sprachmodelle.** Beide sind heute nicht auslösbar, weil der Selbsttest mit 64 Spalten rechnet, also mit genau zwei vollen Blöcken. Sie schnappen zu, sobald echte Modellmaße aus einer Datei kommen.
+
+- Das Skalarprodukt verarbeitet immer volle Blöcke zu zweiunddreißig Gewichten. Ist die Spaltenzahl kein Vielfaches davon, liest es über das Ende des Eingabevektors und der Gewichtszeile hinaus.
+- Die Matrixmultiplikation rundet die Zeilenbreite ab, während das Skalarprodukt aufrundet. Ab der zweiten Zeile zeigt der Zeiger mitten in die vorherige. Bei weniger als zweiunddreißig Spalten wird die Schrittweite null und alle Zeilen liefern denselben Wert.
+
+Das ist dieselbe Klasse wie der Sendepuffer, der in derselben Runde repariert wurde: eine Routine, die stillschweigend voraussetzt, dass der Aufrufer passende Werte liefert, ohne es zu prüfen oder zu melden.
+
+**Fünf mittlere Befunde.**
+
+| Befund | Auslösender Zustand |
+|---|---|
+| Die Seitenfreigabe prüft weder Eigentümer noch Belegtzustand. Ein Aufruf mit Basisadresse und Gesamtzahl gibt den ganzen Speicher frei, auch die Seiten des Device Tree. | falsche Adresse oder zu große Länge |
+| Die Exponentialfunktion liefert null statt des Höchstwerts bei sehr großem Argument, weil die Sättigung der Ganzzahlwandlung bei der Addition ins Negative läuft. | Argument ab etwa 1,5 Milliarden oder unendlich |
+| Die UTF-8-Auswertung prüft nicht auf überlange Kodierungen. Die Bytefolge C0 80 ergibt den Codepunkt null und beendet die Textausgabe mitten in der Zeile. | ein Dateiname vom Datenträger, der direkt in den Textpfad geht |
+| Die Zugriffe auf die Faktentabelle prüfen den Index nicht. Bei einem zu großen Index wird ein gelesener Wert als Funktionszeiger aufgerufen. | heute kein solcher Aufrufer |
+| Eine einzelne Seitenzuteilung ist teuer, weil die Politik zweimal die Statistik fragt und diese jedes Mal alle 42.496 Seiten durchzählt. | jede Zuteilung |
+
+Die letzte Zeile ist gemessen, nicht geschätzt: das Durchzählen kostet beim Start 4,76 Millionen Instruktionen, also eine Viertelmillion je Aufruf.
+
+**Vier kleinere Befunde.** Der Testlauf der Politik stellt auf dem Fehlerpfad das Kontingent nicht wieder her. Derselbe Test löscht beim Aufräumen alle Ablehnungszähler statt nur den eigenen. Die Rückgabewerte der neuen Selbsttests werden verworfen, anders als bei der Kryptografie sperrt ein Fehlschlag nichts. Und Werte über vier Milliarden werden in der Ausgabe abgeschnitten, was auffällt, sobald die Maschine mehr als vier Gigabyte bekommt, also genau dann, wenn ein Modell hineinpassen soll.
+
+**Was sich ausdrücklich nicht bestätigt hat.** Der Abbruch einer verschlüsselten Verbindung hinterlässt kein offenes Ende. Der Tiefenzähler der Glyphen-Rekursion ist auf allen Abbruchpfaden symmetrisch. Die Grenzprüfungen beim Lesen der Glyphenbauteile sind vollständig. Die Platzprüfung der Terminaleingabe stimmt mit der geschriebenen Bytezahl überein. Die Stackrahmen aller neuen Routinen liegen korrekt. Alle sechsundzwanzig Einträge der Faktentabelle stimmen in Typ und Breite mit ihren Variablen überein.
+
+Ein gemeldeter Befund war falsch und wurde am Flaggenverhalten widerlegt: die beiden Vergleichsroutinen des Rechenkerns gehen mit ungültigen Zahlenwerten nicht unterschiedlich um, sondern beide werten sie als bestanden. Der Befund ist damit schlimmer als gemeldet, aber anders begründet.
+
+| Messung | Wert |
+|---|---|
+| Stackbedarf, höchstens | 3.488 von 16.384 Byte, unverändert trotz Glyphen-Rekursion |
+| Befehle bis Ruhe, 6 s | 655 Mio. |
+| Anteil für das Durchzählen der Seiten | 0,7 Prozent |

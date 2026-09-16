@@ -31,6 +31,23 @@ Stand 16.09.2026, nach Runde 28.
 - [x] Terminal legt Eingaben als UTF-8 ab, Rücktaste löscht ganze Zeichen
 - [x] Textgröße an die feste Breite angepasst, keine abgeschnittenen Zeilen mehr
 
+## Offen aus der Fehlersuche vom 16.09.2026
+
+Gefunden, nicht behoben. Reihenfolge nach Dringlichkeit.
+
+- [ ] `llm_dot_q8` verarbeitet immer volle Blöcke zu 32 Gewichten und liest bei anderen Spaltenzahlen über Vektor und Gewichtszeile hinaus
+- [ ] `llm_matmul_q8` rundet die Zeilenbreite ab, während das Skalarprodukt aufrundet; bei unter 32 Spalten ist die Schrittweite null
+- [ ] `pmm_free_n` prüft weder Eigentümer noch Belegtzustand und kann die Seiten des Device Tree freigeben
+- [ ] `sys_value`, `sys_name` und `sys_fmt` prüfen den Index nicht; bei einem zu großen Index wird ein gelesener Wert als Funktionszeiger aufgerufen
+- [ ] `pmm_mark_range` und `pmm_bit_get` sind Schreib- und Leseprimitive ohne eigene Grenzprüfung
+- [ ] `llm_expf` liefert bei sehr großem Argument null statt des Höchstwerts
+- [ ] `font_utf8_next` nimmt überlange Kodierungen an; `C0 80` beendet die Textausgabe
+- [ ] Jede Zuteilung fragt zweimal die Statistik, die alle Seiten durchzählt; ein Suchzeiger und ein Zähler je Eigentümer würden das beheben
+- [ ] `pol_check` stellt auf dem Fehlerpfad das Kontingent nicht wieder her und löscht alle Ablehnungszähler statt nur den eigenen
+- [ ] Die Rückgabewerte von `llm_selftest`, `pmm_check`, `pol_check` und `sys_check` werden verworfen; ein Fehlschlag sperrt nichts
+- [ ] `term_put_dec` schneidet Werte über vier Milliarden ab, sichtbar ab vier Gigabyte Arbeitsspeicher
+- [ ] `llm_close` und `llm_cmp_arr` werten einen ungültigen Zahlenwert als bestanden
+
 ## Erledigt in Runde 33
 
 - [x] Block `pol_`: Kontingente je Eigentümer, Reserve, Ablehnungszähler
