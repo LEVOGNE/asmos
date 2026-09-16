@@ -2,6 +2,23 @@
 
 Entwicklungsgedächtnis von asmOS: Funktionen, Architekturentscheidungen, Sicherheitskorrekturen, Regressionen. Die Messwerte je Runde stehen in `README.md` unter "Messwerte", die Belege für Hardware-Werte in `docs/quellen.md`. Neueste Einträge oben.
 
+## 16.09.2026
+
+### Runde 27: Doppelpufferung und Anzeigetakt
+
+**Architektur**
+- Zwei Ausgabepuffer. Gezeichnet wird in den nicht angezeigten, danach schaltet `fb_flip` über den fw_cfg-Eintrag `etc/ramfb` auf den fertigen Puffer um. Der angezeigte Puffer wird nie beschrieben, damit kann kein halb fertiges Bild mehr sichtbar werden.
+- Nachziehen nur der Rechtecke des eben gezeigten Bildes. Ein Vollbild markiert den anderen Puffer als vollständig veraltet, das nächste Teilbild repariert ihn einmalig. Die Einblendung kostet dadurch weiterhin eine Vollausgabe je Bild.
+- Zeichnen ist auf den Zeitgeber getaktet, 30 mal je Sekunde. Die Fensterposition folgt davon unabhängig jedem Mausereignis.
+
+**Messung**
+- Schnelles Ziehen: Fensterbewegungen 281 auf 2.706 je Sekunde, Bildausgaben 651 auf 136 je Sekunde, Umschaltungen 30 je Sekunde.
+- Start unverändert: 13 Einblendbilder, 623 Mio. Befehle.
+
+**Gefunden beim Bau**
+- `ccmp` nimmt nur Werte bis 31, der Vergleich mit der Bildhöhe muss über ein Register laufen.
+- Das Prüfskript hielt einen fehlgeschlagenen Bau für erfolgreich, weil die alte `kernel.bin` noch dalag. Es prüft jetzt den Rückgabewert.
+
 ## 15.09.2026
 
 ### Runde 26: glatte Einblendung, Aufräumen, Terminal mit curl

@@ -60,5 +60,11 @@ Regel: Marker in Testbauten nutzen Texte ohne Netzvorsilbe, und jedes überrasch
 **Der Emulator erreicht nicht jeden Zustand** (Runde 26). slirp bestätigt einen FIN erst, wenn das Weiterleitungsziel endet, der echte Server schickt sein FIN mit dem close_notify. FIN_WAIT_2 war so nicht erreichbar.
 Regel: Ist ein Zustand von außen nicht herstellbar, setzt ein Testbau ihn direkt und misst nur die Logik dahinter. Das Protokoll sagt dann ehrlich, was belegt ist und was nicht.
 
+**Das Prüfskript hielt einen fehlgeschlagenen Bau für erfolgreich** (Runde 27). Es prüfte nur, ob `kernel.bin` existiert; die Datei lag vom vorigen Bau noch da, zwei Messungen liefen deshalb gegen den alten Kernel.
+Regel: Jedes Skript prüft den Rückgabewert des Baus, nicht das Vorhandensein des Ergebnisses. Zahlen, die sich nach einer Änderung nicht ändern, sind ein Verdachtsmoment.
+
+**Bedingte Vergleiche haben enge Grenzen** (Runde 27). `ccmp` nimmt nur Werte von 0 bis 31, der Vergleich mit der Bildhöhe war ungültig.
+Regel: Immediate-Grenzen prüfen, bevor eine Konstante in `ccmp`, `cmp` mit Schiebefeld oder `mov` landet; im Zweifel über ein Register vergleichen.
+
 **Behauptungen aus Durchsichten ungeprüft übernehmen.** Mehrere Durchsichten meldeten Fehler, die am Code nicht bestanden (NEON im Interrupt, Stackfehler, ungültiges Immediate, Pfadlängenzählung).
 Regel: Jeder gemeldete Befund wird am Code nachvollzogen, mit Zeile und auslösendem Zustand, bevor er gebaut oder weitergegeben wird.

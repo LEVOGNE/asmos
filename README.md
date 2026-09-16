@@ -11,7 +11,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <img src="https://img.shields.io/badge/Architektur-AArch64-blue?style=flat-square" alt="AArch64">
 <img src="https://img.shields.io/badge/Sprache-GNU%20Assembler-orange?style=flat-square" alt="Assembler">
-<img src="https://img.shields.io/badge/Kernel-75.529%20Byte-brightgreen?style=flat-square" alt="75529 Byte">
+<img src="https://img.shields.io/badge/Kernel-76.105%20Byte-brightgreen?style=flat-square" alt="76105 Byte">
 <img src="https://img.shields.io/badge/Ziel-QEMU%20virt-lightgrey?style=flat-square" alt="QEMU virt">
 
 <br>
@@ -22,7 +22,7 @@ Nur Maschinenbefehle für ARM-Prozessoren, ein Linker-Skript und ein Makefile.
 
 <br><br>
 
-Das fertige System ist <b>75.529&nbsp;Byte</b> groß, also <b>74&nbsp;KB</b>.<br>
+Das fertige System ist <b>76.105&nbsp;Byte</b> groß, also <b>74&nbsp;KB</b>.<br>
 Mit Systemschrift und Wurzelzertifikat sind es <b>124&nbsp;KB</b> auf dem Datenträger.<br>
 Ein handelsüblicher Linux-Kernel ist etwa <b>tausendmal</b> größer.
 
@@ -121,7 +121,7 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 
 <table>
 <tr>
-<td width="150"><b><code>kernel.S</code></b><br><sub>510 KB · 20.888 Zeilen</sub></td>
+<td width="150"><b><code>kernel.S</code></b><br><sub>514 KB · 21.101 Zeilen</sub></td>
 <td>Das <b>ganze Betriebssystem in einer einzigen Datei</b>. Das ist Absicht: keine Aufteilung in Module, keine Hilfsdateien. Struktur entsteht im Code, nicht im Dateisystem.</td>
 </tr>
 <tr>
@@ -150,11 +150,11 @@ Bei `make serial` läuft QEMU mit `-nographic` und legt Konsole und Monitor auf 
 > Bei hardwarenaher Programmierung ist Raten die teuerste Fehlerquelle überhaupt. Ein erfundener Registerwert kostet Tage an Fehlersuche. Deshalb gilt hier: **kein Wert ohne Beleg.**
 
 <details>
-<summary><b>Wie sich die 20.888 Zeilen aufteilen</b></summary>
+<summary><b>Wie sich die 21.101 Zeilen aufteilen</b></summary>
 
 <br>
 
-In `kernel.S` stecken **2.183 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
+In `kernel.S` stecken **2.212 Sprungmarken**. Jede gehört zu einem Zuständigkeitsbereich, erkennbar am Namensanfang. Ein Bereich fasst seinen Zustand selbst und wird von aussen nur über seine Einsprungpunkte benutzt:
 
 | Namensanfang | Anzahl | Zuständig für |
 |---|---:|---|
@@ -165,7 +165,7 @@ In `kernel.S` stecken **2.183 Sprungmarken**. Jede gehört zu einem Zuständigke
 | `win_` `dirty_` `desktop_` | 168 | **Fenster**: Basisklasse, Klassentabellen, Stapelreihenfolge, Ziehen, Knöpfe, Einklappen, Schließen mit Pufferverdichtung, Teilaktualisierung, Fensterpuffer, Start der Oberfläche |
 | `font_` `glyph_` | 117 | TrueType auswerten und über die Vektor-Engine zeichnen |
 | `blk_` `fat_` `files_` | 101 | Datenträger, Dateisystem, Dateifenster |
-| `fb_` `cursor_` | 86 | Bildschirm, Bildpunkte, Mauszeiger |
+| `fb_` `cursor_` | 115 | Bildschirm, Bildpunkte, Mauszeiger, Doppelpufferung mit Umschaltung |
 | `anim_` | 85 | **Animationsschicht**: Zeitmessung, Verläufe, Beschleunigungskurven, Abschlussaufruf |
 | `mem_` `pmm_` `mmu_` `fdt_` `ram_` | 85 | Speicherverwaltung, Stackwächter und Hardware-Erkennung |
 | `virtio_` `mouse_` `click_` `release_` | 78 | Gerätetreiber, Maus, Klickerkennung |
@@ -183,7 +183,7 @@ In `kernel.S` stecken **2.183 Sprungmarken**. Jede gehört zu einem Zuständigke
 
 | Datei | Größe | Was es ist |
 |---|---:|---|
-| **`kernel.bin`** | **75.529 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 61.360 Byte Code, 14.169 Byte Konstanten |
+| **`kernel.bin`** | **76.105 Byte** | **Das eigentliche Betriebssystem.** Genau die Bytes, die der Prozessor ausführt: 61.936 Byte Code, 14.169 Byte Konstanten |
 | `kernel.elf` | 254 KB | Dasselbe mit Namen und Debug-Informationen für den Debugger |
 | `kernel.lst` | | Der Maschinencode zurückübersetzt, zum Nachprüfen |
 | `kernel.map` | | Wo der Linker jedes Symbol hingelegt hat |
@@ -199,10 +199,10 @@ Wollte man asmOS heute auf ein Gerät bringen, wären es genau drei Dateien:
 
 | Datei | Größe | Wozu |
 |---|---:|---|
-| `kernel.bin` | 75.529 Byte | das gesamte Betriebssystem |
+| `kernel.bin` | 76.105 Byte | das gesamte Betriebssystem |
 | `FONT.TTF` | 50.516 Byte | die Systemschrift, vom Kernel selbst ausgewertet |
 | `ROOT.DER` | 574 Byte | das Wurzelzertifikat für die TLS-Kettenprüfung |
-| **zusammen** | **126.619 Byte, also 124 KB** | |
+| **zusammen** | **127.195 Byte, also 124 KB** | |
 
 Das 64-MB-Abbild `disk.img` ist nur der leere FAT32-Testdatenträger, auf dem diese Dateien liegen. Die Selbsttests samt Testvektoren machen rund 9 KB des Kernels aus, ein Auslieferungsbau könnte sie weglassen. Dass es trotzdem noch nicht auf echter Hardware läuft, steht im nächsten Abschnitt.
 
@@ -210,13 +210,13 @@ Das 64-MB-Abbild `disk.img` ist nur der leere FAT32-Testdatenträger, auf dem di
 
 | Bereich | Größe | Wozu |
 |---|---:|---|
-| Ausgabebild für die Grafikkarte | 25,2 MB | 3840 × 1600 mit 4 Byte je Punkt, aufgerundet auf 2-MB-Blöcke |
+| Zwei Ausgabebilder für die Grafikkarte | 50,3 MB | 3840 × 1600 mit 4 Byte je Punkt, aufgerundet auf 2-MB-Blöcke. Gezeichnet wird immer in das gerade nicht angezeigte, danach wird umgeschaltet |
 | Internes Bild und Fensterpuffer | 41,4 MB | 24,6 MB Bild mit 4 Byte je Punkt, 16 MB Arena für die Fensterinhalte |
 | Variablen, Puffer, Stack | 268 KB | Schrifttabellen, TLS-Puffer, Netzringe, Seitenverwaltung, Animationsliste, Terminal und curl; vom 16-KB-Stack sind höchstens 3,5 KB belegt |
 | Kernel selbst | 74 KB | |
-| **zusammen** | **rund 67 MB** | |
+| **zusammen** | **rund 92 MB** | |
 
-99,8 % davon sind Bildspeicher, und der hängt allein an der Auflösung: bei 1920 × 1080 wären es 17 MB, bei 1280 × 720 rund 8 MB. Beim Start genullt wird nur der Ausgabepuffer, denn das interne Bild wird ohnehin in der ersten Bildausgabe vollständig überschrieben.
+99,8 % davon sind Bildspeicher, und der hängt allein an der Auflösung: bei 1920 × 1080 wären es 25 MB, bei 1280 × 720 rund 12 MB. Beim Start genullt wird nur der Ausgabepuffer, denn das interne Bild wird ohnehin in der ersten Bildausgabe vollständig überschrieben.
 
 ---
 
@@ -376,12 +376,12 @@ Die Schriftdatei liegt <b>nicht</b> im Repository, nur der Code, der sie liest. 
 
 | | |
 |---|---|
-| Eigener Quelltext | 519 KB in drei Dateien |
-| Zeilen Assembler | 20.888 |
-| Sprungmarken | 2.183 |
-| **Fertiges Betriebssystem** | **75.529 Byte** |
+| Eigener Quelltext | 523 KB in drei Dateien |
+| Zeilen Assembler | 21.101 |
+| Sprungmarken | 2.212 |
+| **Fertiges Betriebssystem** | **76.105 Byte** |
 | Auf dem Datenträger mit Schrift und Wurzelzertifikat | 124 KB |
-| Speicherbedarf im Betrieb | rund 67 MB: 25,2 MB Ausgabebild, 24,6 MB internes Bild, 16 MB Fensterpuffer, 0,3 MB Rest |
+| Speicherbedarf im Betrieb | rund 92 MB: zweimal 25,2 MB Ausgabebild, 24,6 MB internes Bild, 16 MB Fensterpuffer, 0,3 MB Rest |
 | Dokumentation | 171 KB Quellenbelege |
 | Zielarchitektur | AArch64, ARM 64 Bit |
 | Entwicklungsziel | QEMU `virt` |
@@ -397,7 +397,7 @@ Dieser Abschnitt wird nach jeder Messung fortgeschrieben. Alle Zahlen stammen au
 
 ### Die Runden im Überblick
 
-Vom 14. bis 15.09.2026 sind 26 Runden gelaufen. Jede Zeile nennt, was dazukam, wie groß das System danach war und die eine Zahl, die die Runde geprägt hat. Die ausführlichen Berichte der Runden 1 bis 21 stehen in der Versionsgeschichte dieser Datei.
+Vom 14. bis 16.09.2026 sind 27 Runden gelaufen. Jede Zeile nennt, was dazukam, wie groß das System danach war und die eine Zahl, die die Runde geprägt hat. Die ausführlichen Berichte der Runden 1 bis 21 stehen in der Versionsgeschichte dieser Datei.
 
 | Runde | Was | Größe danach | Die Zahl der Runde |
 |---:|---|---:|---|
@@ -426,7 +426,8 @@ Vom 14. bis 15.09.2026 sind 26 Runden gelaufen. Jede Zeile nennt, was dazukam, w
 | 23 | Alle Befunde der Fehlersuche behoben, dazu sechs weitere: Handshake-Folge, CA-Berechtigungen, virtio-rng, DNS-Zuordnung, TCP, virtio, Kalender, Tasten, Pufferverdichtung, siehe unten | 69.833 Byte | Start 606,6 Mio. Befehle, neun Gegenproben |
 | 24 | Dritte Fehlersuche, acht Durchsichten: drei Befunde behoben, zehn Behauptungen widerlegt, siehe unten | 69.929 Byte | drei Gegenproben, je vorher und nachher |
 | 25 | Vierte Fehlersuche mit Stackmessung, dann fünf Pakete aus einer fremden Durchsicht: Netz-Härtung, DNS-Bindung, TLS-Alerts, `make check-net`, Regeltreue, siehe unten | 70.961 Byte | Stack 3.312 von 16.384 Byte belegt, elf Gegenproben |
-| 26 | Einblendung glatt, Stackwächter, Kleinigkeiten, strengere Zertifikate, DHCP-Lease, Terminal mit `curl`, siehe unten | **75.529 Byte** | Einblendung 10 → 13 Bilder ohne Unterbrechung, Textrasterung beim Start −67 % |
+| 26 | Einblendung glatt, Stackwächter, Kleinigkeiten, strengere Zertifikate, DHCP-Lease, Terminal mit `curl`, siehe unten | 75.529 Byte | Einblendung 10 → 13 Bilder ohne Unterbrechung, Textrasterung beim Start −67 % |
+| 27 | Doppelpufferung mit Umschaltung des Bildspeichers, Ausgabe auf die Anzeigerate getaktet, siehe unten | **76.105 Byte** | Fenster folgt der Maus 281 → 2.706 mal je Sekunde, Ausgaben 651 → 136 je Sekunde |
 
 ### Was aus den Runden bleibt
 
@@ -603,3 +604,38 @@ Grenzen, ehrlich benannt: HTTPS gelingt nur bei ECDSA-Zertifikaten, deren Kette 
 | Stack belegt, höchstens | 3.312 Byte | 3.488 Byte |
 | Bildvergleich | gleich | gleich, 0 abweichende Bildpunkte außerhalb der Maske |
 | Gegenproben | 11 | 15 Testbauten, ein Bildgleichheitsbeweis, ein QMP-Lauf |
+
+### Stand 16.09.2026, Runde 27: Doppelpufferung, tapetenfreies Ziehen
+
+**Die Frage war: warum wirkt schnelles Hin- und Herziehen eines Fensters nicht ganz sauber.** Gemessen wurde mit einem QMP-Lauf, der vier Sekunden lang so schnell wackelt, wie der Emulator Ereignisse annimmt, mit Sprüngen von 800 Bildpunkten.
+
+| Vorgang, je Sekunde | vorher | nachher |
+|---|---|---|
+| Gesendete Mausereignisse | 3.246 | 3.238 |
+| Vom Kernel verarbeitete Achsenereignisse | 6.476 | 6.476 |
+| Fensterbewegungen | 281 | **2.706** |
+| Bildausgaben | 651 | **136** |
+| Pufferumschaltungen | 0 | **30** |
+| Was QEMU anzeigt | 33 | 33 |
+
+Die Ursache lag nicht im Ziehen. Der Kernel verlor kein Eingabeereignis, er zeichnete nur öfter, als je gezeigt werden konnte, und schrieb dabei in genau den Puffer, den QEMU gerade ausliest. QEMU tastet den Bildspeicher alle 30 ms ab (`GUI_REFRESH_INTERVAL_DEFAULT` im QEMU-Quelltext), ohne jede Absprache mit dem Gast. Ein Abtasten mitten in einer laufenden Kopie zeigt oben die neue und unten die alte Fensterlage.
+
+**Drei Änderungen:**
+
+- *Zwei Ausgabepuffer.* Gezeichnet wird immer in den Puffer, der gerade nicht angezeigt wird. Ist das Bild fertig, bekommt `ramfb` über den fw_cfg-Eintrag `etc/ramfb` die Adresse des fertigen Puffers, QEMU legt daraufhin eine neue Anzeigefläche an (`ramfb_fw_cfg_write` im QEMU-Quelltext). Der angezeigte Puffer wird ab dann nicht mehr beschrieben.
+- *Nachziehen statt Vollkopie.* Der neue Rückpuffer ist genau um die Rechtecke veraltet, die das eben gezeigte Bild geschrieben hat. Nur diese werden nachgezogen. War das Bild ein Vollbild, etwa während der Einblendung, wird gar nicht nachgezogen: Der andere Puffer gilt als vollständig veraltet, und das nächste Teilbild repariert ihn einmalig. Dadurch kostet die Einblendung weiterhin genau eine Vollausgabe je Bild, gemessen unverändert 13 Bilder und 623 Mio. Befehle beim Start.
+- *Takt der Anzeige.* Gezeichnet wird höchstens einmal je Zeitgeberschritt, also 30 mal je Sekunde. Die Fensterposition wird davon unabhängig bei jedem Mausereignis nachgeführt. Deshalb steigt die Zahl der Bewegungen um das Neunfache, während die Ausgabearbeit auf ein Fünftel fällt.
+
+**Nachweise.** Das Ruhebild ist byteweise gleich der Referenz. Ein vollständiger Ziehvorgang über QMP, 100 Zwischenschritte hin und zurück, endet auf dem Bildpunkt genau im selben Bild wie vor dem Umbau: 0 Abweichungen außerhalb des Netzfensters, gegen das Ruhebild 990.155 geänderte Bildpunkte, das Fenster ist also wirklich gewandert. `make check` und `make check-net` laufen durch.
+
+**Dabei gefunden.** Mein Prüfskript hat einen Assemblerfehler übersehen, weil es nur auf das Vorhandensein von `kernel.bin` geprüft hat und die alte Datei noch dalag. Zwei Messungen liefen dadurch gegen den alten Kernel. Das Skript prüft jetzt den Rückgabewert des Baus. Der Fehler selbst: `ccmp` nimmt nur Werte bis 31, der Vergleich mit der Bildhöhe muss über ein Register laufen.
+
+| Kennzahl | Runde 26 | Runde 27 |
+|---|---|---|
+| Größe des fertigen Systems | 75.529 Byte | **76.105 Byte** (+576) |
+| Zeilen Assembler | 20.888 | 21.101 |
+| Arbeitsspeicher | rund 67 MB | rund 92 MB (zweiter Ausgabepuffer) |
+| Befehle bis Ruhe, 6 s | 621,1 Mio. | 623,3 Mio. |
+| Einblendbilder | 13 | 13 |
+
+**Offen bleibt**, was allein am Emulator liegt: QEMU zeigt 33 Bilder je Sekunde, mehr geht dort nicht. Auf dem Raspberry Pi 5 kommt der Pufferwechsel an das Vertikalsignal, dann sind es 60 Bilder je Sekunde ohne Zerreißen.

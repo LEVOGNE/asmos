@@ -15,6 +15,13 @@ Stand 15.09.2026, nach Runde 26.
 - [x] Terminal mit `hilfe` und `curl` über HTTP und HTTPS
 - [x] CLAUDE.md, CHANGELOG.md, README fortgeschrieben
 
+## Erledigt in Runde 27
+
+- [x] Doppelpufferung mit Umschaltung des Bildspeichers, kein Zerreißen mehr
+- [x] Zeichnen auf die Anzeigerate getaktet, Position weiter pro Ereignis
+- [x] Zeiger und Fenster erscheinen zusammen, weil beide vor der Umschaltung im selben Puffer stehen
+- [x] Prüfskript bricht bei Baufehlern ab
+
 ## Offen, klein
 
 - [ ] Mausposition in einem Stück übernehmen, heute kann ein Bild einen Zeiger mit neuem x und altem y zeigen
