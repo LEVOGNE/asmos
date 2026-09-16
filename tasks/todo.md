@@ -31,6 +31,21 @@ Stand 16.09.2026, nach Runde 28.
 - [x] Terminal legt Eingaben als UTF-8 ab, Rücktaste löscht ganze Zeichen
 - [x] Textgröße an die feste Breite angepasst, keine abgeschnittenen Zeilen mehr
 
+## Offen aus der zweiten Fehlersuche vom 16.09.2026
+
+- [ ] Beim Überlauf der Nachziehliste wird das Bild fälschlich als Vollbild markiert, die Reparatur des anderen Puffers entfällt. Gemessen bei 13.602 Mausereignissen nicht auslösbar, der Code ist trotzdem falsch
+- [ ] `fb_stale_front` wird nirgends gesetzt, die halbe Veraltungsverfolgung ist toter Code
+- [ ] Der Listenüberlauf wird stumm verschluckt, ohne Meldung und ohne Zähler
+- [ ] `rng_get` setzt das Gerät nach Fehler oder Zeitüberschreitung nicht zurück; die nächste Anforderung läuft gegen einen offenen Deskriptor. Betrifft die Quelle der TLS-Schlüssel
+- [ ] `fb_init` lässt den ramfb-Schlüssel gültig, wenn die erste Umschaltung scheitert; jede weitere wartet dann auf den vollen Zeitablauf
+- [ ] `fb_flip_show` prüft den Rückgabewert der Umschaltung nicht
+- [ ] Zwei Stellen halten einen Wert über einen Aufruf in einem flüchtigen Register (`win_dirty_bounds`, `win_button_hit`)
+- [ ] `ccmp` in der Vollbilderkennung setzt bei Nichtgleichheit das falsche Flagbild
+- [ ] `anim_set_done` prüft die Generation des Handles nicht, `anim_start` nullt beim Verdrängen die Generation nicht
+- [ ] 276 Byte Code, den niemand erreicht, davon 116 aus den letzten beiden Runden
+- [ ] `DIRTY_MAX` ist 16, `FB_FLIP_MAX` nur 8; ein Bild kann mehr Rechtecke erzeugen, als die Liste fasst
+- [ ] `fwcfg_find_ramfb` läuft über eine geräteseitig gelieferte Anzahl ohne Obergrenze
+
 ## Offen aus der Fehlersuche vom 16.09.2026
 
 Gefunden, nicht behoben. Reihenfolge nach Dringlichkeit.

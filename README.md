@@ -857,3 +857,33 @@ Ein gemeldeter Befund war falsch und wurde am Flaggenverhalten widerlegt: die be
 | Stackbedarf, höchstens | 3.488 von 16.384 Byte, unverändert trotz Glyphen-Rekursion |
 | Befehle bis Ruhe, 6 s | 655 Mio. |
 | Anteil für das Durchzählen der Seiten | 0,7 Prozent |
+
+
+### Stand 16.09.2026, zweite Fehlersuche: Grafik, Geräte und eine maschinelle Analyse
+
+Diese Runde nahm die Bereiche, die beim letzten Mal nicht dran waren, und ergänzte vier maschinelle Prüfungen über alle 429 Einsprungpunkte des Kernels. Wieder nichts geändert.
+
+**Die maschinelle Analyse ist das ruhigste Ergebnis.** Geprüft wurde jeder Einsprungpunkt entlang seines Kontrollflusses:
+
+| Prüfung | Ergebnis |
+|---|---|
+| Stackbilanz an jedem Rücksprung | kein Fehler |
+| Rücksprung vor einem Aufruf gesichert | kein Fehler, zwei Routinen ohne Sicherung kehren nie zurück |
+| Geschützte Register vor Benutzung gesichert | kein Fehler |
+| Wert überlebt einen Aufruf in einem flüchtigen Register | zwei Verstöße gegen die eigene Regel |
+
+Die zwei Verstöße liegen in der Fenstererkennung. Beide funktionieren heute nur, weil die gerufene Routine das betroffene Register zufällig nicht anfasst. Genau diese Klasse hat das Projekt dreimal getroffen, und die eigene Regel verbietet sie ohne Ausnahme. Dazu fanden sich 276 Byte Code, den niemand erreicht.
+
+**Die Doppelpufferung hat drei Fehler, alle aus derselben Runde.**
+
+- Läuft die Nachziehliste über, markiert der Kernel das Bild fälschlich als Vollbild. Dadurch entfällt die fällige Reparatur des anderen Puffers, und veraltete Bildpunkte bleiben stehen. Gemessen wurde dann, wie oft das praktisch vorkommt: bei 13.602 Mausereignissen in vier Sekunden schnellstem Ziehen kein einziges Mal. Der Fehler ist real, im heutigen Betrieb aber nicht auslösbar, weil acht Listenplätze bisher immer reichen.
+- Die Hälfte der Veraltungsverfolgung ist toter Code. Einer der beiden Merker wird nirgends gesetzt, nur gelesen und gelöscht.
+- Der Überlauf selbst wird stumm verschluckt. Es gibt weder Meldung noch Zähler, anders als bei der Fensterarena und der Animationsliste, die beide melden.
+
+Dazu zwei kleinere: ein bedingter Vergleich setzt bei Nichtgleichheit das falsche Flagbild, was nur deshalb folgenlos bleibt, weil eine Klemmung davor den Fall ausschließt. Und die Umschaltung des Bildspeichers prüft ihren Rückgabewert nicht, tauscht die Puffer also auch dann, wenn die Hardware sie nicht übernommen hat.
+
+**Bei den Geräten sticht das Zufallsgerät heraus.** Scheitert eine Anforderung, wischt der Kernel den Puffer und kehrt zurück, ohne das Gerät zurückzusetzen oder zu sperren. Die nächste Anforderung veröffentlicht denselben Deskriptor erneut, während die alte noch offen ist. Das Blockgerät macht es an derselben Stelle richtig. Weil aus dieser Quelle die TLS-Schlüssel kommen, ist das der Befund mit dem höchsten Gewicht, auch wenn er einen Gerätefehler voraussetzt.
+
+**Was sich ausdrücklich nicht bestätigt hat, und eine veraltete Angabe.** Die FAT32-Auswertung prüft ihren Bootsektor vollständig, bis hin zu Zweierpotenz der Clustergröße und Zyklen in der Clusterkette. Kein virtio-Pfad benutzt einen Geräteindex ungeprüft als Offset. Der Tastenring ist gegen Verlust und Doppellesung korrekt. Die Fensterarena erschöpft sich nicht, weil das Schließen verdichtet. Abschluss-Callbacks laufen nicht doppelt. Der Zeigerhintergrund wird auch bei Vollbildern nicht beschädigt.
+
+Und eine Angabe in der Dokumentation stimmt nicht mehr: die Notiz, dass ungeklemmte Rechtecke an die Bildausgabe gehen, ist überholt. Es gibt inzwischen drei unabhängige Klemmungen auf dem Weg. Die Zeile wurde entsprechend korrigiert.
